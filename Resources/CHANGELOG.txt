@@ -1,0 +1,61 @@
+RadioPocket 0.8
+* Added: Ogg Opus radio streams play, using the Opus decoder built into macOS (no bundled codec); stream titles come from the Opus tags
+* Added: HLS streams play through RadioPocket's own HLS client: master playlists, live playlists, MPEG-TS and packed AAC/MP3 segments, AES-128 encryption and ID3 titles
+* Improved: HLS and Opus now have the equalizer and the visualizer, because every stream goes through the same pipeline
+* Added: Pause keeps the connection and buffers up to five minutes, so Play continues where you stopped; Left/Right (or [ and ]) rewind and forward 10 seconds and L (or Cmd-J) jumps back to live
+* Added: Media-key and Control Center skip buttons rewind and forward 10 seconds
+* Improved: Dropped connections reconnect automatically with backoff instead of giving up after three tries, and a stream that goes silent without closing is restarted after 20 seconds
+* Improved: Playback reconnects when the network returns or changes (Wi-Fi to Ethernet) and after the Mac wakes from sleep
+* Added: When a station can't be reached, RadioPocket asks the directory whether it moved and retries the new address, then offers the closest alternative, Find Similar, or the next favorite
+* Added: Opus filter in the library; Opus and Ogg stations are listed as playable
+* Fixed: The display line shows reconnecting, paused and delayed status instead of only failures
+* Removed: The old 8-buffer network backpressure; a slow output can no longer stall the connection
+* Added: Ogg Vorbis streams play (stb_vorbis, MIT/public domain, bundled unmodified in ThirdParty/stb); chained streams and title changes are followed
+* Added: Ogg Vorbis filter in the library
+* Misc: AVPlayer remains only as a fallback for fragmented-MP4 and SAMPLE-AES HLS; those streams have no EQ or visualizer
+* Misc: test-streams.sh runs the app against local Opus, HLS (TS, packed, AES, master), ICY, reconnect and time-shift fixtures
+
+RadioPocket 0.7
+* Added: Native Preferences window with category sidebar, installed skin list and player preview
+* Added: Imported skins stay installed; playback, appearance and equalizer preferences are accessible with Command-comma
+* Improved: Always-on-top preference survives relaunch
+* Improved: Main display follows the original 275 x 116 Winamp coordinate grid
+* Improved: Station name now occupies the former seek-bar area, leaving kbps/kHz labels intact
+* Improved: Bitmap text is clipped to whole character cells with an ellipsis for overflow
+* Improved: Display colors come from the selected skin
+* Fixed: Missing audio metrics are shown as dashes instead of guessed values
+* Fixed: Volume readout stays inside the former balance-control rectangle
+* Fixed: Library headers and custom button labels use integer-aligned baselines
+* Added: Version history window (RadioPocket > About RadioPocket) backed by Resources/CHANGELOG.txt
+* Added: Real spectrum analyzer and oscilloscope in the player's visualizer slot, driven by the decoded audio (FFT, peak markers, falloff)
+* Added: Click the player visualizer to cycle Spectrum / Oscilloscope / Off; right-click for coloring, peaks, falloff, scope style and refresh rate
+* Added: Visualization window (Shift-Cmd-V) with Spectrum Bars, Oscilloscope, Mirror, Circular and Spectrogram modes
+* Added: Full-screen visualization (double-click the player visualizer or the window, Ctrl-Cmd-F, or F) with Esc to leave, title overlay and an on-screen key list (H)
+* Added: Winamp transport hotkeys Z X C V B in the player and visualizer, plus visualizer hotkeys for mode, coloring, peaks, falloff and auto-cycle
+* Added: Visualizer colors follow the skin's VISCOLOR.TXT
+* Misc: Visualizer timer runs only while a visualizer is on screen and audio is playing, then stops when the bars have fallen
+* Misc: Visualizer and EQ are not available for HLS streams: macOS does not give AVPlayer audio to a processing tap, so those streams show their status instead
+* Added: Mac media keys (Play/Pause, Next, Previous), AirPods and headset controls now control RadioPocket
+* Added: Station and current song title appear in Control Center and the Now Playing menu-bar widget
+* Misc: Version number in the app bundle is now read from the top of this file
+
+RadioPocket 0.6
+* Improved: Title buttons and transport sprites keep their original dimensions
+* Improved: Custom buttons have centered labels, full bevels and consistent sizing
+* Improved: Equalizer uses the skin's slider backgrounds and shows a compact band-gain curve
+* Improved: Library, favorites and stream-entry windows share classic square controls and GEN.BMP borders
+* Improved: Library defaults to 860 x 500 and resizes down to 800 x 430
+* Fixed: Volume clicks track the thumb's actual travel
+* Fixed: Player and equalizer collapse buttons restore on a second click
+* Fixed: Empty favorites disable selection-dependent actions
+* Fixed: Stream entry shows URL validation errors inside the dialog
+* Misc: Imported skins need to be reimported to pick up generic-window artwork
+
+RadioPocket 0.5 and earlier
+* Added: Direct MP3/AAC streaming through AudioFileStream and AudioQueue with ICY title metadata
+* Added: HLS and other formats through an AVFoundation fallback
+* Added: M3U and PLS playlist resolution
+* Added: Ten-band equalizer with all 18 stock Winamp presets and .eqf import/export
+* Added: Station library with Radio Browser discovery, favorites and recently played
+* Added: Classic .wsz skin import and 11 bundled skins
+* Added: radiopocket:// links and Open With support for playlist files
