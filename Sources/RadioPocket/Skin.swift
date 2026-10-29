@@ -3,7 +3,7 @@ import ImageIO
 
 /// Reads only known bitmap entries into bounded memory. Never extracts archive paths to disk.
 final class ClassicSkin {
-    static let supported = ["main.bmp", "cbuttons.bmp", "titlebar.bmp", "text.bmp", "numbers.bmp", "volume.bmp", "eqmain.bmp", "gen.bmp", "shufrep.bmp", "nums_ex.bmp", "playpaus.bmp", "monoster.bmp", "genex.bmp"]
+    static let supported = ["main.bmp", "cbuttons.bmp", "titlebar.bmp", "text.bmp", "numbers.bmp", "volume.bmp", "balance.bmp", "eqmain.bmp", "gen.bmp", "shufrep.bmp", "nums_ex.bmp", "playpaus.bmp", "monoster.bmp", "genex.bmp"]
     static let visColorFile = "viscolor.txt"
     static let playlistColorFile = "pledit.txt"
     /// Winamp draws any bitmap a skin leaves out from its default skin. NUMS_EX is the exception: without it, NUMBERS is used.
@@ -90,9 +90,10 @@ final class ClassicSkin {
         return result
     }
 
-    /// The skin's own bitmap, or the default skin's when it has none.
+    /// The skin's own bitmap, or the default skin's when it has none. A skin without BALANCE.BMP draws its balance from VOLUME.BMP, as Winamp does.
     private func sheet(_ name: String) -> CGImage? {
         if let own = sheets[name] { return own }
+        if name == "balance.bmp", let volume = sheets["volume.bmp"] { return volume }
         guard !isFallback, name != "nums_ex.bmp" else { return nil }
         return Self.fallback?.sheets[name]
     }
