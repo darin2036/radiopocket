@@ -1,4 +1,7 @@
 RadioPocket 0.8
+* Added: A left/right balance slider beside the volume slider; it snaps to center when dragged near the middle and is remembered between launches
+* Added: The scroll wheel over the volume slider adjusts the volume
+* Added: Clicking the logo at the bottom right of the player opens About
 * Fixed: Station lists no longer include unnamed entries (a bare host name instead of a station name), web addresses used as names, or links that point at pages and images
 * Improved: Downloaded station lists no longer linger in memory: they are freed 2½ minutes after your last search, after the app has been in the background for 90 seconds, and whenever macOS asks apps to give memory back; the freed pages are returned to the system
 * Fixed: Rare crash while the player was starting up; loading a skin no longer lets the half-built window repaint

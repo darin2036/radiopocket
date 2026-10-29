@@ -358,6 +358,22 @@ do {
     for i in 0..<1024 { worst = max(worst, abs(captured[i] - (expected[2 * (3072 + i)] + expected[2 * (3072 + i) + 1]) / 2)) }
     try check(worst < 1e-5, "Visualizer capture is the newest stereo-mixed audio, independent of volume (\(worst))")
     try check(abs(stereo[2 * 100] - expected[2 * 100] * 0.1) < 1e-5, "Playback volume still applies after capture")
+    let panDSP = rp_eq_create()!
+    defer { rp_eq_destroy(panDSP) }
+    rp_eq_prepare(panDSP, 44100); rp_eq_channels(panDSP, 2)
+    func panned(_ balance: Float) -> (Float, Float) {
+        rp_eq_balance(panDSP, balance)
+        var frame: [Float] = [1, 1, 1, 1]
+        rp_eq_process(panDSP, &frame, 2, 2, 0)
+        return (frame[2], frame[3])
+    }
+    try check(panned(0) == (1, 1), "Centered balance leaves both channels untouched")
+    try check(panned(0.5) == (0.5, 1) && panned(-0.25) == (1, 0.75) && panned(1) == (0, 1) && panned(-1) == (1, 0), "Balance turns down only the opposite channel")
+    rp_eq_channels(panDSP, 1); rp_eq_balance(panDSP, 1)
+    var lone: [Float] = [1, 1]
+    rp_eq_process(panDSP, &lone, 2, 1, 0)
+    try check(lone == [1, 1], "A mono stream is left to the output's pan, not silenced by the balance")
+    try check(StereoBalance.snapped(0.15) == 0 && StereoBalance.snapped(-0.19) == 0 && StereoBalance.snapped(0.25) == 0.25 && StereoBalance.snapped(-3) == -1 && StereoBalance.snapped(2) == 1, "Dragging near the middle snaps to center balance and the ends clamp")
     var short = [Float](repeating: 1, count: 8)
     let fresh = rp_eq_create()!
     defer { rp_eq_destroy(fresh) }

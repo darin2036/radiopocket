@@ -25,8 +25,21 @@ final class AudioOutput: @unchecked Sendable {
     private var paused = false
     private var thread: Thread?
     private var failureReported = false
+    private let panLock = NSLock()
+    private var pan: Float = 0
+    private var streamChannels: UInt32 = 2
 
     init(dsp: OpaquePointer, ring: PacketRing) { self.dsp = dsp; self.ring = ring }
+
+    /// Mono streams have no left or right channel for the DSP to turn down, so the queue pans them instead.
+    func setBalance(_ value: Float) {
+        panLock.lock(); pan = value; panLock.unlock()
+        applyPan()
+    }
+    private func applyPan() {
+        panLock.lock(); let value = streamChannels == 1 ? pan : 0; panLock.unlock()
+        queueLock.lock(); if let queue { AudioQueueSetParameter(queue, kAudioQueueParam_Pan, value) }; queueLock.unlock()
+    }
 
     /// Seconds of audio the queue holds that the ring’s cursor has already passed.
     var queuedSeconds: Double { condition.lock(); defer { condition.unlock() }; return Double(inFlight) / ring.sampleRate }
@@ -70,12 +83,15 @@ final class AudioOutput: @unchecked Sendable {
             report("The stream’s decoded audio format cannot be equalized (\(tapStatus))."); return
         }
         rp_eq_prepare(dsp, processing.mSampleRate)
+        rp_eq_channels(dsp, processing.mChannelsPerFrame)
+        panLock.lock(); streamChannels = processing.mChannelsPerFrame; panLock.unlock()
         for _ in 0..<Self.bufferCount {
             var buffer: AudioQueueBufferRef?
             guard AudioQueueAllocateBuffer(created, Self.bufferCapacity, &buffer) == noErr, let buffer else { report("Could not allocate an audio buffer."); return }
             available.append(buffer)
         }
         AudioQueueSetParameter(created, kAudioQueueParam_Volume, 1)
+        applyPan()
         let pump = Thread { [weak self] in self?.pump() }
         pump.qualityOfService = .userInitiated; pump.name = "RadioPocket audio pump"
         thread = pump; pump.start()

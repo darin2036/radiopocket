@@ -70,11 +70,22 @@ enum StreamAddress {
     }
 }
 
+enum StereoBalance {
+    /// Dragging within this distance of the middle settles on exact center balance.
+    static let snap: Float = 0.2
+    /// Clamps to -1…1 and settles on exact center near the middle, so dragging back is easy to land on.
+    static func snapped(_ raw: Float) -> Float {
+        let value = min(1, max(-1, raw))
+        return abs(value) < snap ? 0 : value
+    }
+}
+
 final class Library {
     struct State: Codable {
         var favorites: [Station] = []
         var lastStation: Station?
         var volume: Float = 0.65
+        var balance: Float?
         var alwaysOnTop: Bool?
         var scale: Double = 2
         var equalizer: EQSettings?
@@ -97,6 +108,7 @@ final class Library {
             state = try JSONDecoder().decode(State.self, from: Data(contentsOf: file))
         } else { state = State() }
         state.volume = min(1, max(0, state.volume))
+        state.balance = state.balance.map { min(1, max(-1, $0)) }
         if ![1.0, 2.0, 3.0].contains(state.scale) { state.scale = 2 }
     }
 

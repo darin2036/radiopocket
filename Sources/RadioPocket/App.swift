@@ -89,7 +89,7 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     var window: PlayerWindow!
     var view: PlayerView!
     var library: Library!
@@ -116,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil); return
         }
         engine.setVolume(smokePath == nil ? library.state.volume : 0)
+        engine.setBalance(library.state.balance ?? 0)
         engine.equalizer.settings = library.state.equalizer ?? EQSettings()
         engine.leveling = library.state.leveling ?? false
         buildMenu()
@@ -149,10 +150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             self.engine.setVolume(value)
             if self.sleepBaseVolume != nil { self.sleepBaseVolume = value }   // the fade continues from the new level
-            self.volumeSave?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.persistVolume() }
-            self.volumeSave = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+            self.scheduleVolumeSave()
+        }
+        view.balanceChanged = { [weak self] value in
+            self?.engine.setBalance(value)
+            self?.scheduleVolumeSave()
         }
         engine.onGiveUp = { [weak self] station, message in self?.stationFailed(station, message) }
         nowPlaying.action = { [weak self] in self?.handle($0) }
@@ -413,58 +415,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// Menu bar in the standard macOS order: app, File, Edit, the app's own Controls, View, Visualization, Window, Help.
     private func buildMenu() {
         let menu = NSMenu()
-        let appRoot = NSMenuItem(); menu.addItem(appRoot)
-        let app = NSMenu(); appRoot.submenu = app
-        let about = NSMenuItem(title: "About RadioPocket", action: #selector(aboutApp), keyEquivalent: ""); about.target = self; app.addItem(about)
-        let settings = NSMenuItem(title: "Preferences…", action: #selector(menuAction(_:)), keyEquivalent: ",")
-        settings.target = self; settings.representedObject = "preferences"; app.addItem(settings)
-        app.addItem(.separator())
-        app.addItem(withTitle: "Quit RadioPocket", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        for (title, items) in [
-            ("Radio", [("Open Stream…", "open", "o"), ("Copy Open-in-Player Link", "copyLink", ""), ("Play / Pause", "toggle", "p"), ("Stop", "stop", "."), ("Rewind 10 Seconds", "back10", "["), ("Forward 10 Seconds", "forward10", "]"), ("Jump to Live", "live", "j"), ("Jump to Station…", "jump", "J"), ("Station Info…", "info", "I"), ("Loudness Leveling", "leveling", ""), ("Save Favorite…", "favorite", "d"), ("Station Library", "discovery", "b"), ("Favorite Stations", "favorites", "l"), ("Equalizer", "equalizer", "e")]),
-            ("Appearance", [("Choose Skin…", "skins", "k"), ("Import Classic Skin…", "skin", "i"), ("Use RadioPocket Theme", "resetSkin", ""), ("Size: 1×", "scale1", "1"), ("Size: 2×", "scale2", "2"), ("Size: 3×", "scale3", "3"), ("Always on Top", "ontop", "t")])
-        ] {
+        @discardableResult
+        func add(_ title: String, to bar: NSMenu = menu) -> NSMenu {
             let root = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            menu.addItem(root)
-            let submenu = NSMenu(title: title); root.submenu = submenu
-            for (title, id, key) in items {
-                let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
-                item.representedObject = id; item.target = self; submenu.addItem(item)
-            }
+            let submenu = NSMenu(title: title); root.submenu = submenu; bar.addItem(root)
+            return submenu
         }
-        if let radio = menu.items.first(where: { $0.title == "Radio" })?.submenu {
-            let root = NSMenuItem(title: "Sleep Timer", action: nil, keyEquivalent: ""), sleep = NSMenu(title: "Sleep Timer")
-            for (title, minutes) in [("Off", 0), ("15 Minutes", 15), ("30 Minutes", 30), ("45 Minutes", 45), ("60 Minutes", 60), ("90 Minutes", 90), ("2 Hours", 120)] {
-                let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
-                item.target = self; item.representedObject = "sleep:\(minutes)"; sleep.addItem(item)
-            }
-            root.submenu = sleep
-            radio.insertItem(root, at: (radio.items.firstIndex { ($0.representedObject as? String) == "favorite" } ?? radio.items.count))
+        func command(_ title: String, _ id: String, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = [.command], to target: NSMenu) {
+            let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers; item.representedObject = id; item.target = self; target.addItem(item)
         }
-        let visualizationRoot = NSMenuItem(title: "Visualization", action: nil, keyEquivalent: "")
-        visualizationRoot.submenu = visuals.menu(withKeys: true); menu.addItem(visualizationRoot)
-        let editRoot = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
-        let edit = NSMenu(title: "Edit"); editRoot.submenu = edit; menu.addItem(editRoot)
-        for (name, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
-            edit.addItem(withTitle: name, action: Selector(action), keyEquivalent: key)
+        func standard(_ title: String, _ action: Selector, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = [.command], target: AnyObject? = nil, to menu: NSMenu) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers; item.target = target; menu.addItem(item)
         }
+        let arrow = { (key: Int) in String(UnicodeScalar(key)!) }
+
+        let app = add("RadioPocket")
+        standard("About RadioPocket", #selector(aboutApp), target: self, to: app)
+        app.addItem(.separator())
+        command("Preferences…", "preferences", ",", to: app)
+        app.addItem(.separator())
+        let services = NSMenu(title: "Services")
+        let servicesRoot = NSMenuItem(title: "Services", action: nil, keyEquivalent: ""); servicesRoot.submenu = services; app.addItem(servicesRoot)
+        NSApp.servicesMenu = services
+        app.addItem(.separator())
+        standard("Hide RadioPocket", #selector(NSApplication.hide(_:)), "h", to: app)
+        standard("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], to: app)
+        standard("Show All", #selector(NSApplication.unhideAllApplications(_:)), to: app)
+        app.addItem(.separator())
+        standard("Quit RadioPocket", #selector(NSApplication.terminate(_:)), "q", to: app)
+
+        let file = add("File")
+        command("Open Stream…", "open", "o", to: file)
+        file.addItem(.separator())
+        command("Save Favorite…", "favorite", "d", to: file)
+        command("Station Info…", "info", "i", [.command, .shift], to: file)
+        command("Copy Open-in-Player Link", "copyLink", to: file)
+        file.addItem(.separator())
+        command("Import Classic Skin…", "skin", "i", to: file)
+        file.addItem(.separator())
+        standard("Close Window", #selector(closeKeyWindow), "w", target: self, to: file)
+
+        let edit = add("Edit")
+        standard("Undo", Selector(("undo:")), "z", to: edit)
+        standard("Redo", Selector(("redo:")), "z", [.command, .shift], to: edit)
+        edit.addItem(.separator())
+        for (name, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v")] { standard(name, Selector(action), key, to: edit) }
+        standard("Delete", Selector(("delete:")), to: edit)
+        standard("Select All", Selector(("selectAll:")), "a", to: edit)
+
+        let controls = add("Controls")
+        command("Play", "toggle", "p", to: controls)
+        command("Stop", "stop", ".", to: controls)
+        controls.addItem(.separator())
+        command("Rewind 10 Seconds", "back10", "[", to: controls)
+        command("Forward 10 Seconds", "forward10", "]", to: controls)
+        command("Jump to Live", "live", "j", to: controls)
+        controls.addItem(.separator())
+        command("Previous Favorite", "previous", arrow(NSLeftArrowFunctionKey), [.command, .option], to: controls)
+        command("Next Favorite", "next", arrow(NSRightArrowFunctionKey), [.command, .option], to: controls)
+        command("Jump to Station…", "jump", "j", [.command, .shift], to: controls)
+        controls.addItem(.separator())
+        command("Volume Up", "volumeUp", arrow(NSUpArrowFunctionKey), to: controls)
+        command("Volume Down", "volumeDown", arrow(NSDownArrowFunctionKey), to: controls)
+        controls.addItem(.separator())
+        let sleep = add("Sleep Timer", to: controls)
+        for (title, minutes) in [("Off", 0), ("15 Minutes", 15), ("30 Minutes", 30), ("45 Minutes", 45), ("60 Minutes", 60), ("90 Minutes", 90), ("2 Hours", 120)] {
+            command(title, "sleep:\(minutes)", to: sleep)
+            if minutes == 0 { sleep.addItem(.separator()) }
+        }
+        command("Loudness Leveling", "leveling", to: controls)
+
+        let view = add("View")
+        for factor in 1...3 { command("Size: \(factor)×", "scale\(factor)", "\(factor)", to: view) }
+        view.addItem(.separator())
+        command("Compact Player", "shade", to: view)
+        command("Always on Top", "ontop", "t", to: view)
+        view.addItem(.separator())
+        command("Choose Skin…", "skins", "k", to: view)
+        command("Use RadioPocket Theme", "resetSkin", to: view)
+
+        let visualization = NSMenuItem(title: "Visualization", action: nil, keyEquivalent: "")
+        visualization.submenu = visuals.menu(withKeys: true); menu.addItem(visualization)
+
+        let windows = add("Window")
+        standard("Minimize", #selector(minimizeKeyWindow), "m", target: self, to: windows)
+        windows.addItem(.separator())
+        command("RadioPocket", "player", to: windows)
+        command("Station Library", "discovery", "b", to: windows)
+        command("Favorite Stations", "favorites", "l", to: windows)
+        command("Equalizer", "equalizer", "e", to: windows)
+        command("Visualization", "vis:panel", to: windows)
+        windows.addItem(.separator())
+        standard("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), to: windows)
+
+        let help = add("Help")
+        command("Keyboard Shortcuts", "help:shortcuts", to: help)
+        command("Version History", "help:history", to: help)
+
         NSApp.mainMenu = menu
+        NSApp.helpMenu = help
     }
     @objc private func menuAction(_ sender: NSMenuItem) {
         if sender.representedObject as? String == "ontop" {
             window.level = window.level == .floating ? .normal : .floating
-            sender.state = window.level == .floating ? .on : .off
             eqWindow?.level = window.level
             saveWindowLevel()
         } else if let id = sender.representedObject as? String { handle(id) }
     }
+    @objc private func minimizeKeyWindow() { NSApp.keyWindow?.miniaturize(nil) }
+    /// Closing the player quits, as its × button does; any other panel just closes.
+    @objc private func closeKeyWindow() {
+        guard let key = NSApp.keyWindow else { return }
+        if key === window { handle("close") }
+        else if key === visuals.panelWindow { visuals.closePanel() }
+        else { key.close() }
+    }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        let id = item.representedObject as? String
-        if id == "leveling" { item.state = engine.leveling ? .on : .off }
-        else if let id, id.hasPrefix("sleep:") { item.state = Int(id.dropFirst(6)) == sleepMinutes ? .on : .off }
-        return true
+        if item.action == #selector(closeKeyWindow) { return NSApp.modalWindow == nil && NSApp.keyWindow != nil }
+        if item.action == #selector(minimizeKeyWindow) { return NSApp.keyWindow?.styleMask.contains(.miniaturizable) == true }
+        guard let id = item.representedObject as? String, library != nil else { return true }
+        if id.hasPrefix("vis:") { return visuals.validateMenuItem(item) }
+        func mark(_ on: Bool) { item.state = on ? .on : .off }
+        var enabled = true
+        switch id {
+        case "toggle":
+            item.title = engine.status == .playing || engine.status == .connecting ? "Pause" : "Play"
+            enabled = engine.station != nil || library.state.lastStation != nil
+        case "stop": enabled = engine.status != .stopped
+        case "back10", "forward10", "live": enabled = engine.canTimeShift
+        case "previous", "next": enabled = !library.state.favorites.isEmpty
+        case "leveling": mark(engine.leveling)
+        case "ontop": mark(window.level == .floating)
+        case "shade": mark(view.shaded)
+        case "resetSkin": mark(view.skin == nil)
+        case "discovery": mark(discovery?.window?.isVisible == true)
+        case "favorites": mark(favorites.window?.isVisible == true)
+        case "equalizer": mark(eqWindow.isVisible)
+        case "player": mark(window.isVisible)
+        case "scale1", "scale2", "scale3": mark(library.state.scale == Double(id.dropFirst(5)))
+        default:
+            if id.hasPrefix("sleep:") { mark(Int(id.dropFirst(6)) == sleepMinutes) }
+        }
+        return enabled
     }
     private var about: AboutController?
     private var jump: JumpToStationController?
@@ -556,6 +653,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "scale2": scale(2)
         case "scale3": scale(3)
         case "minimize": window.miniaturize(nil)
+        case "player":
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        case "about": aboutApp()
+        case "help:shortcuts", "help:history":
+            if about == nil { about = AboutController() }
+            about?.present(tab: id == "help:history" ? .history : .shortcuts)
         case "close": NSApp.terminate(nil)
         case "menu":
             let menu = NSMenu()
@@ -683,9 +787,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func saveWindowLevel() {
         do { try library.update { $0.alwaysOnTop = window.level == .floating } } catch { showError(error) }
     }
+    private func scheduleVolumeSave() {
+        volumeSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.persistVolume() }
+        volumeSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
     private func persistVolume() {
         guard library != nil, smokePath == nil else { return }
-        do { try library.update { $0.volume = sleepBaseVolume ?? engine.player.volume } } catch { showError(error) }
+        do { try library.update { $0.volume = sleepBaseVolume ?? engine.player.volume; $0.balance = engine.balance } } catch { showError(error) }
     }
     func openDialog(station: Station? = nil, favoriteOnly: Bool = false) {
         let dialog = StreamDialog(station: station, favoriteOnly: favoriteOnly)

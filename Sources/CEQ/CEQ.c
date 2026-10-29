@@ -12,6 +12,8 @@ struct RPEQ {
     _Atomic float target[11];
     _Atomic int enabled;
     _Atomic float volume;
+    _Atomic float balance;
+    _Atomic int channelCount;
     _Atomic uint64_t frames;
     _Atomic double ratio;
     // Loudness leveler: slow RMS follower steering a gain toward a fixed target, then a soft limiter.
@@ -34,6 +36,8 @@ void rp_eq_set(RPEQ *e, int enabled, float preamp, const float *bands) {
     atomic_store_explicit(&e->enabled,enabled,memory_order_relaxed);
 }
 void rp_eq_volume(RPEQ *e, float volume) { atomic_store_explicit(&e->volume,fmaxf(0,fminf(1,volume)),memory_order_relaxed); }
+void rp_eq_balance(RPEQ *e, float balance) { atomic_store_explicit(&e->balance,fmaxf(-1,fminf(1,balance)),memory_order_relaxed); }
+void rp_eq_channels(RPEQ *e, uint32_t channels) { atomic_store_explicit(&e->channelCount,(int)channels,memory_order_relaxed); }
 void rp_level_set(RPEQ *e, int enabled) { if(e) atomic_store_explicit(&e->level,enabled,memory_order_relaxed); }
 double rp_level_db(RPEQ *e) { return e ? atomic_load_explicit(&e->levelDb,memory_order_relaxed) : 0; }
 #define LEVEL_TARGET_DB (-18.0)
@@ -41,9 +45,19 @@ double rp_level_db(RPEQ *e) { return e ? atomic_load_explicit(&e->levelDb,memory
 #define LEVEL_MAX_CUT_DB (-12.0)
 // Applies volume and, when enabled, the leveler to one buffer. Runs after the EQ, before the output.
 static void finish(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_t firstChannel,float volume) {
+    // Balance only turns down the far side, as Winamp's does: left is channel 0, right is channel 1. A mono stream is panned by the output instead.
+    const float balance=atomic_load_explicit(&e->balance,memory_order_relaxed);
+    const int declared=atomic_load_explicit(&e->channelCount,memory_order_relaxed);
+    const uint32_t total=declared>0?(uint32_t)declared:firstChannel+channels;
+    float vg[8];
+    for(uint32_t c=0;c<channels && c<8;c++) {
+        float side=1;
+        if(total>=2) { uint32_t index=firstChannel+c; if(index==0 && balance>0) side=1-balance; else if(index==1 && balance<0) side=1+balance; }
+        vg[c]=volume*side;
+    }
     if(!atomic_load_explicit(&e->level,memory_order_relaxed)) {
         if(firstChannel==0) { e->levelGain=1; e->levelPower=0; atomic_store_explicit(&e->levelDb,0,memory_order_relaxed); }
-        for(uint32_t i=0;i<frames*channels;i++) data[i]*=volume;
+        for(uint32_t f=0;f<frames;f++) for(uint32_t c=0;c<channels;c++) data[f*channels+c]*=vg[c];
         return;
     }
     double startGain=e->levelGain;
@@ -67,7 +81,7 @@ static void finish(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_
         for(uint32_t c=0;c<channels;c++) {
             double x=data[f*channels+c]*g, a=fabs(x);
             if(a>0.89) x=copysign(0.89+0.11*tanh((a-0.89)/0.11),x);
-            data[f*channels+c]=(float)x*volume;
+            data[f*channels+c]=(float)x*vg[c];
         }
     }
 }

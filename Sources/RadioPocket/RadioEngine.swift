@@ -16,6 +16,8 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     var sleepRemaining: Int?
     /// Evens out loud and quiet stations. Applies to every stream RadioPocket decodes itself.
     var leveling = false { didSet { stream?.setLeveling(leveling); refreshEQStatus() } }
+    /// Left/right balance, -1 to 1.
+    private(set) var balance: Float = 0
     var changed: (() -> Void)?
     /// Called once when automatic reconnection gives up (or the stream can never play), so the app can offer alternatives.
     var onGiveUp: ((Station, String) -> Void)?
@@ -143,7 +145,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     }
 
     private func install(_ url: URL, token: UUID) {
-        let direct = RadioStream(volume: player.volume, leveling: leveling)
+        let direct = RadioStream(volume: player.volume, balance: balance, leveling: leveling)
         stream = direct
         equalizer.bind(direct.dsp)
         direct.playing = { [weak self] in
@@ -356,6 +358,12 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         player.volume = min(1, max(0, value))
         stream?.setVolume(player.volume)
         refreshEQStatus()
+        changed?()
+    }
+
+    func setBalance(_ value: Float) {
+        balance = min(1, max(-1, value))
+        stream?.setBalance(balance)
         changed?()
     }
 

@@ -14,9 +14,12 @@ final class PlayerView: NSView {
     } }
     var action: ((String) -> Void)?
     var volumeChanged: ((Float) -> Void)?
+    var balanceChanged: ((Float) -> Void)?
+    private static let balanceSlot = NSRect(x: 177, y: 57, width: 38, height: 16)
     private(set) var visuals: VisualizerController?
     private var controls: [PixelButton] = []
     private var trackingVolume = false
+    private var trackingBalance = false
     private var green: NSColor { skin?.displayForeground ?? NSColor(calibratedRed: 0.68, green: 0.96, blue: 0.39, alpha: 1) }
     private var ink: NSColor { skin?.displayBackground ?? NSColor(calibratedRed: 0.04, green: 0.065, blue: 0.065, alpha: 1) }
     override var isFlipped: Bool { true }
@@ -154,8 +157,14 @@ final class PlayerView: NSView {
             for i in 0..<18 { fill(NSRect(x: 110 + i * 3, y: 62, width: 2, height: 5), CGFloat(i) / 18 < volume ? green : NSColor(white: 0.20, alpha: 1)) }
         }
         _ = drawSprite("volume.bmp", NSRect(x: 15, y: 422, width: 14, height: 11), in: NSRect(x: 107 + (51 * volume).rounded(), y: 58, width: 14, height: 11))
+        let balance = CGFloat(engine.balance)
+        if !drawSprite("balance.bmp", NSRect(x: 9, y: Int((abs(balance) * 27).rounded()) * 15, width: 38, height: 13), in: NSRect(x: 177, y: 57, width: 38, height: 13)) {
+            fill(NSRect(x: 177, y: 62, width: 38, height: 3), NSColor(white: 0.20, alpha: 1))
+            fill(NSRect(x: 195, y: 59, width: 1, height: 9), NSColor(white: 0.45, alpha: 1))
+        }
+        let balanceThumb = NSRect(x: 177 + ((balance + 1) * 12).rounded(), y: 58, width: 14, height: 11)
+        if !drawSprite("balance.bmp", NSRect(x: 15, y: 422, width: 14, height: 11), in: balanceThumb) { fill(NSRect(x: balanceThumb.midX - 1, y: 59, width: 3, height: 9), green) }
         // Classic skins draw their balance slider here; only the native theme has room for the readout.
-        if skin == nil { bitmapText(String(format: "%3d%%", Int((volume * 100).rounded())), rect: NSRect(x: 184, y: 60, width: 20, height: 6)) }
         if skin == nil { fill(NSRect(x: 16, y: 72, width: 248, height: 10), ink) }
         let showsDetail = [.failed, .connecting, .paused].contains(engine.status) || (engine.status == .playing && engine.delay >= 2)
         // Classic skins have no info strip here; only the native theme draws one.
@@ -233,15 +242,27 @@ final class PlayerView: NSView {
             }
         }
         else if !shaded, event.clickCount == 2, NSRect(x: 111, y: 24, width: 154, height: 12).contains(p) { action?("info") }   // double-click the title display for Station Info
+        else if !shaded, NSRect(x: 247, y: 91, width: 20, height: 25).contains(p) { action?("about") }   // the logo at the bottom right, as in Winamp
         else if NSRect(x: 107, y: 57, width: 68, height: 16).contains(p) { trackingVolume = true; adjustVolume(p) }
+        else if !shaded, Self.balanceSlot.contains(p) { trackingBalance = true; adjustBalance(p) }
     }
     override func rightMouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if let visuals, !shaded, VisDraw.miniSlot.contains(p) { NSMenu.popUpContextMenu(visuals.menu(), with: event, for: self) }
         else { super.rightMouseDown(with: event) }
     }
-    override func mouseDragged(with event: NSEvent) { if trackingVolume { adjustVolume(convert(event.locationInWindow, from: nil)) } }
-    override func mouseUp(with event: NSEvent) { trackingVolume = false }
+    override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if trackingVolume { adjustVolume(p) } else if trackingBalance { adjustBalance(p) }
+    }
+    override func mouseUp(with event: NSEvent) { trackingVolume = false; trackingBalance = false }
+    private func adjustBalance(_ point: NSPoint) { balanceChanged?(StereoBalance.snapped(Float((point.x - 184) / 12 - 1))) }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard !shaded, NSRect(x: 107, y: 57, width: 68, height: 16).contains(convert(event.locationInWindow, from: nil)), event.scrollingDeltaY != 0 else { return super.scrollWheel(with: event) }
+        let step = Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.004 : 0.03)
+        volumeChanged?(min(1, max(0, engine.player.volume + step)))
+    }
     private func adjustVolume(_ point: NSPoint) { volumeChanged?(Float(min(1, max(0, (point.x - 114) / 51)))) }
     override func keyDown(with event: NSEvent) {
         if event.characters == " " { action?(engine.status == .playing || engine.status == .connecting ? "pause" : "play") }

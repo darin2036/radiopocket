@@ -6,6 +6,10 @@ RPEQ *rp_eq_create(void);
 void rp_eq_destroy(RPEQ *eq);
 void rp_eq_set(RPEQ *eq, int enabled, float preamp, const float *bands);
 void rp_eq_volume(RPEQ *eq, float volume);
+/// Left/right balance, -1 (left only) to 1 (right only). Turns down the opposite channel; 0 leaves both untouched.
+void rp_eq_balance(RPEQ *eq, float balance);
+/// Total channels in the stream, so a lone mono buffer is not mistaken for the left channel. 0 infers it from each call.
+void rp_eq_channels(RPEQ *eq, uint32_t channels);
 void rp_eq_prepare(RPEQ *eq, double sampleRate);
 void rp_eq_process(RPEQ *eq, float *data, uint32_t frames, uint32_t channels, uint32_t firstChannel);
 double rp_eq_rate(RPEQ *eq);

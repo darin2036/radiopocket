@@ -25,14 +25,21 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     private var formatInfo: (codec: String, rate: Double, channels: Int)?
     private var rateMark: (date: Date, bytes: Int, kbps: Int)?
 
-    init(volume: Float, leveling: Bool = false) {
+    init(volume: Float, balance: Float = 0, leveling: Bool = false) {
         super.init()
         rp_eq_volume(dsp, volume)
+        rp_eq_balance(dsp, balance)
         rp_level_set(dsp, leveling ? 1 : 0)
     }
     deinit { rp_eq_destroy(dsp) }
 
+    private var panned = 0 as Float
     func setVolume(_ value: Float) { rp_eq_volume(dsp, value) }
+    func setBalance(_ value: Float) {
+        rp_eq_balance(dsp, value)
+        lock.lock(); panned = value; let out = output; lock.unlock()
+        out?.setBalance(value)
+    }
     func setLeveling(_ on: Bool) { rp_level_set(dsp, on ? 1 : 0) }
     /// Gain in dB the loudness leveler is applying right now (0 when off).
     var levelGain: Double { rp_level_db(dsp) }
@@ -171,7 +178,8 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
             self.playing?()
         }
         out.failed = { [weak self] message in self?.failed?(message) }
-        output = out
+        lock.lock(); output = out; let pending = panned; lock.unlock()
+        out.setBalance(pending)
         out.configure(format, cookie: cookie)
     }
     func sinkPacket(_ packet: AudioPacket) { ring.append(packet) }
