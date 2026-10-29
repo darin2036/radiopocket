@@ -1,10 +1,5 @@
 import AppKit
 
-final class PlayerWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
 final class PixelButton: NSButton {
     var paint: ((NSRect, Bool) -> Void)?
     override func draw(_ dirtyRect: NSRect) { NSGraphicsContext.current?.imageInterpolation = .none; paint?(bounds, isHighlighted) }
@@ -20,7 +15,6 @@ final class PlayerView: NSView {
     var action: ((String) -> Void)?
     var volumeChanged: ((Float) -> Void)?
     private(set) var visuals: VisualizerController?
-    private var visModeBeforeClick = MiniVisMode.spectrum
     private var controls: [PixelButton] = []
     private var trackingVolume = false
     private var green: NSColor { skin?.displayForeground ?? NSColor(calibratedRed: 0.68, green: 0.96, blue: 0.39, alpha: 1) }
@@ -49,17 +43,16 @@ final class PlayerView: NSView {
                 self.bevel(rect, down: down); self.text("+", at: NSPoint(x: 7, y: 1), size: 11, color: .black)
             }
         }
-        for (id, label, caption, rect) in [
-            ("favorite", "Save current station as favorite", "+ FAV", NSRect(x: 164, y: 89, width: 46, height: 15)),
-            ("discovery", "Browse internet radio library", "LIB", NSRect(x: 210, y: 89, width: 28, height: 15)),
-            ("equalizer", "Show equalizer", "EQ", NSRect(x: 219, y: 58, width: 23, height: 12)),
-            ("skins", "Choose bundled skin", "SK", NSRect(x: 242, y: 58, width: 23, height: 12))
+        // EQ and PL live in shufrep.bmp, as in classic Winamp. PL opens the station library in place of a playlist.
+        for (id, label, rect, spriteX) in [
+            ("equalizer", "Show equalizer", NSRect(x: 219, y: 58, width: 23, height: 12), 0),
+            ("discovery", "Browse internet radio library", NSRect(x: 242, y: 58, width: 23, height: 12), 23)
         ] {
             add(id, label: label, rect: rect) { [weak self] rect, down in
                 guard let self else { return }
-                if id == "equalizer", self.drawSprite("shufrep.bmp", NSRect(x: down ? 46 : 0, y: 61, width: 23, height: 12), in: rect) { return }
+                if self.drawSprite("shufrep.bmp", NSRect(x: spriteX + (down ? 46 : 0), y: 61, width: 23, height: 12), in: rect) { return }
                 ClassicUI.bevel(rect, down: down)
-                ClassicUI.caption(caption, rect: rect.offsetBy(dx: down ? 1 : 0, dy: down ? 1 : 0), font: .monospacedSystemFont(ofSize: 6, weight: .semibold))
+                ClassicUI.caption(id == "equalizer" ? "EQ" : "PL", rect: rect.offsetBy(dx: down ? 1 : 0, dy: down ? 1 : 0), font: .monospacedSystemFont(ofSize: 6, weight: .semibold))
             }
         }
         for (id, label, caption, x) in [("menu", "Player menu", "≡", 6), ("minimize", "Minimize", "−", 244), ("shade", "Toggle compact title bar", "▱", 254), ("close", "Close player and stop radio", "×", 264)] {
@@ -85,7 +78,7 @@ final class PlayerView: NSView {
             return VisualizerHub.windowVisible(self.window)
         }, redraw: { [weak self] in self?.setNeedsDisplay(VisDraw.miniSlot) })
         visuals.hub.observeSettings { [weak self] _ in self?.needsDisplay = true }
-        addToolTip(VisDraw.miniSlot, owner: "Visualizer — click to change mode, double-click for full screen, right-click for options" as NSString, userData: nil)
+        addToolTip(VisDraw.miniSlot, owner: "Visualizer — click to open the visualization window, double-click for full screen, right-click for options" as NSString, userData: nil)
     }
     private var showsMiniVisualizer: Bool { !shaded && visuals?.hub.settings.mini != .off && visuals?.hub.hasSignal() == true }
 
@@ -143,8 +136,18 @@ final class PlayerView: NSView {
         
         bitmapText(engine.title, rect: NSRect(x: 111, y: 27, width: 154, height: 6))
         // Keep the skin’s kbps/kHz/channel labels intact; unavailable values are not invented.
-        bitmapText("---", rect: NSRect(x: 111, y: 43, width: 15, height: 6))
-        bitmapText("--", rect: NSRect(x: 156, y: 43, width: 10, height: 6))
+        // Measured from the live connection; shown as dashes until the stream has told us.
+        let info = engine.status == .playing || engine.status == .paused ? engine.streamInfo : nil
+        bitmapText(info?.kbps.map { String(min($0, 999)) } ?? "---", rect: NSRect(x: 111, y: 43, width: 15, height: 6))
+        bitmapText(info.map { String(Int(($0.sampleRate / 1000).rounded())) } ?? "--", rect: NSRect(x: 156, y: 43, width: 10, height: 6))
+        if let info {
+            let stereo = info.channels > 1
+            _ = drawSprite("monoster.bmp", NSRect(x: 29, y: stereo ? 12 : 0, width: 27, height: 12), in: NSRect(x: 212, y: 41, width: 27, height: 12))
+            _ = drawSprite("monoster.bmp", NSRect(x: 0, y: stereo ? 0 : 12, width: 29, height: 12), in: NSRect(x: 239, y: 41, width: 29, height: 12))
+        } else {
+            _ = drawSprite("monoster.bmp", NSRect(x: 29, y: 12, width: 27, height: 12), in: NSRect(x: 212, y: 41, width: 27, height: 12))
+            _ = drawSprite("monoster.bmp", NSRect(x: 0, y: 12, width: 29, height: 12), in: NSRect(x: 239, y: 41, width: 29, height: 12))
+        }
         if skin == nil { fill(NSRect(x: 177, y: 57, width: 38, height: 13), ink) }
         let volume = CGFloat(engine.player.volume)
         if !drawSprite("volume.bmp", NSRect(x: 0, y: Int(volume * 27) * 15, width: 68, height: 13), in: NSRect(x: 107, y: 57, width: 68, height: 13)) {
@@ -155,7 +158,8 @@ final class PlayerView: NSView {
         if skin == nil { bitmapText(String(format: "%3d%%", Int((volume * 100).rounded())), rect: NSRect(x: 184, y: 60, width: 20, height: 6)) }
         if skin == nil { fill(NSRect(x: 16, y: 72, width: 248, height: 10), ink) }
         let showsDetail = [.failed, .connecting, .paused].contains(engine.status) || (engine.status == .playing && engine.delay >= 2)
-        bitmapText(showsDetail ? engine.detail : engine.station?.name ?? "", rect: NSRect(x: 19, y: 74, width: 240, height: 6))
+        // Classic skins have no info strip here; only the native theme draws one.
+        if skin == nil { bitmapText(showsDetail ? engine.detail : engine.station?.name ?? "", rect: NSRect(x: 19, y: 74, width: 240, height: 6)) }
         
         toolTip = "\(engine.title)\n\(engine.detail)"
     }
@@ -210,14 +214,25 @@ final class PlayerView: NSView {
             path.close(); path.fill()
         }
     }
+    private var miniCycle: DispatchWorkItem?
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if p.y < 15 { window?.performDrag(with: event) }
-        else if let visuals, !shaded, VisDraw.miniSlot.contains(p) {
-            // Winamp: click cycles the mode. A double-click restores the mode the first click changed, then goes full screen.
-            if event.clickCount >= 2 { visuals.hub.settings.mini = visModeBeforeClick; visuals.toggleFullscreen() }
-            else { visModeBeforeClick = visuals.hub.settings.mini; visuals.cycleMini() }
+        if p.y < 15 {
+            if event.clickCount == 2 { action?("shade") }          // Winamp: double-click the title bar to window-shade
+            else { (window as? PlayerWindow)?.trackDrag(event, movesDockedWindows: true) }
         }
+        else if let visuals, !shaded, VisDraw.miniSlot.contains(p) {
+            // A click cycles Bars → Fire → Oscilloscope; a double-click opens the visualization window instead. The cycle waits out the
+            // double-click interval so the first click of a double-click doesn't also change the mode.
+            miniCycle?.cancel(); miniCycle = nil
+            if event.clickCount >= 2 { visuals.showPanel() }
+            else {
+                let work = DispatchWorkItem { [weak self] in self?.miniCycle = nil; self?.visuals?.cycleMini() }
+                miniCycle = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+            }
+        }
+        else if !shaded, event.clickCount == 2, NSRect(x: 111, y: 24, width: 154, height: 12).contains(p) { action?("info") }   // double-click the title display for Station Info
         else if NSRect(x: 107, y: 57, width: 68, height: 16).contains(p) { trackingVolume = true; adjustVolume(p) }
     }
     override func rightMouseDown(with event: NSEvent) {
@@ -234,6 +249,8 @@ final class PlayerView: NSView {
         else if event.keyCode == 123 { action?("back10") }
         else if event.keyCode == 124 { action?("forward10") }
         else if event.charactersIgnoringModifiers?.lowercased() == "l", !event.modifierFlags.contains(.command) { action?("live") }
+        else if event.charactersIgnoringModifiers?.lowercased() == "j", !event.modifierFlags.contains(.command) { action?("jump") }
+        else if event.charactersIgnoringModifiers?.lowercased() == "i", !event.modifierFlags.contains(.command) { action?("info") }
         else if event.keyCode == 126 { volumeChanged?(min(1, engine.player.volume + 0.05)) }
         else if event.keyCode == 125 { volumeChanged?(max(0, engine.player.volume - 0.05)) }
         else { super.keyDown(with: event) }

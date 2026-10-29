@@ -6,17 +6,17 @@ private typealias LibraryButton = ClassicButton
 
 final class LibraryHeader: NSTableHeaderCell {
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-        NSColor(white: 0.26, alpha: 1).setFill(); cellFrame.fill()
-        NSColor(white: 0.46, alpha: 1).setFill(); NSRect(x: cellFrame.minX, y: cellFrame.minY, width: cellFrame.width, height: 1).fill()
+        ClassicUI.palette.headerBackground.setFill(); cellFrame.fill()
+        ClassicUI.palette.headerText.withAlphaComponent(0.35).setFill(); NSRect(x: cellFrame.minX, y: cellFrame.minY, width: cellFrame.width, height: 1).fill()
         let style = NSMutableParagraphStyle(); style.lineBreakMode = .byTruncatingTail
-        ClassicUI.caption(stringValue, rect: cellFrame.insetBy(dx: 3, dy: 0), color: BrowserTheme.text, font: BrowserTheme.small, alignment: .left)
+        ClassicUI.caption(stringValue, rect: cellFrame.insetBy(dx: 3, dy: 0), color: ClassicUI.palette.headerText, font: BrowserTheme.small, alignment: .left)
     }
 }
 
 final class LibraryRow: NSTableRowView {
     var alternating = false
     override func drawBackground(in dirtyRect: NSRect) {
-        (alternating ? NSColor(calibratedRed: 0.065, green: 0.075, blue: 0.085, alpha: 1) : BrowserTheme.black).setFill(); bounds.fill()
+        (alternating ? ClassicUI.palette.itemAlternate : BrowserTheme.black).setFill(); bounds.fill()
     }
     override func drawSelection(in dirtyRect: NSRect) { BrowserTheme.selection.setFill(); bounds.fill() }
 }
@@ -68,6 +68,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let format = ClassicPopup()
     private let bitrate = ClassicPopup()
     private let order = ClassicPopup()
+    private let sourceMenu = ClassicPopup()
     private let heading = NSTextField(labelWithString: "POPULAR STATIONS")
     private let status = NSTextField(labelWithString: "Open radio from independent broadcasters around the world.")
     private let nowPlaying = NSTextField(labelWithString: "READY • Choose a station and press Tune In")
@@ -77,12 +78,14 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let spinner = NSProgressIndicator()
     private var tune: NSButton!
     private var save: NSButton!
-    private var previous: NSButton!
-    private var next: NSButton!
     private var scope: LibraryScope = .popular
     private var query = DirectoryQuery()
     private var rows: [RadioListing] = []
     private var hasMore = false
+    private var loadingMore = false
+    private var hiddenCount = 0
+    private var sourceTitle = "directories"
+    private var pageWasCached = false
     private var busy = false
     private var hasLoaded = false
     private var generation = UUID()
@@ -91,12 +94,19 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private var suppressSort = false
     private let genres = ["Alternative", "Ambient", "Blues", "Classical", "Country", "Electronic", "Folk", "Hip Hop", "Indie", "Jazz", "Metal", "News", "Pop", "Reggae", "Rock", "Soul", "Talk", "World"]
     private var nodes: [LibraryNode] = []
+    private var sideWidth: NSLayoutConstraint!, sideGap: NSLayoutConstraint!
+    private var filterHeight: NSLayoutConstraint!, filterGap: NSLayoutConstraint!, tableGap: NSLayoutConstraint!
+    private weak var filterRowView: NSView?
+    private weak var sideScrollView: NSView?
+    /// Column share of the table width and the narrowest width each stays readable at; the least important drop out first.
+    private let columnLayout: [(id: String, share: CGFloat, minimum: CGFloat, hideBelow: CGFloat)] = [
+        ("name", 0.36, 90, 0), ("tags", 0.22, 60, 520), ("country", 0.14, 50, 440), ("codec", 0.11, 44, 0), ("quality", 0.10, 52, 0), ("votes", 0.09, 40, 360)]
 
     init(library: Library, directory: RadioDirectory = RadioDirectory()) {
         self.library = library; self.directory = directory
-        let window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 500), styleMask: [.borderless, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        let window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 500), styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
         window.title = "RadioPocket — Internet Radio Library"
-        window.minSize = NSSize(width: 800, height: 430)
+        window.minSize = NSSize(width: 480, height: 300); window.isUserResizable = true
         window.isReleasedWhenClosed = false; window.hasShadow = true
         window.appearance = NSAppearance(named: .darkAqua)
         super.init(window: window)
@@ -115,14 +125,56 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             if sidebar.selectedRow == row { searchNow() } else { sidebar.selectRowIndexes([row], byExtendingSelection: false) }
         }
     }
+    /// Rebuilds the directory picker from Preferences, keeping the current choice when it still exists.
+    func refreshSources() {
+        let current = sourceMenu.selectedItem?.representedObject as? String ?? "all"
+        let enabled = DirectorySource.resolved(library.state.directories).filter(\.enabled)
+        sourceMenu.removeAllItems()
+        sourceMenu.addItem(withTitle: "All Directories"); sourceMenu.lastItem?.representedObject = "all"
+        for source in enabled { sourceMenu.addItem(withTitle: source.name); sourceMenu.lastItem?.representedObject = source.id }
+        if let index = sourceMenu.itemArray.firstIndex(where: { ($0.representedObject as? String) == current }) { sourceMenu.selectItem(at: index) }
+        else { sourceMenu.selectItem(at: 0) }
+        query.sourceID = sourceMenu.selectedItem?.representedObject as? String ?? "all"
+    }
     func showLibrary() {
+        let previous = query.sourceID
+        refreshSources()
+        if hasLoaded, previous != query.sourceID { hasLoaded = false }
         showWindow(nil); window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(search)
         if !hasLoaded { load() }
     }
+    func windowDidResize(_ notification: Notification) { adaptLayout() }
+    /// Compact windows shed the genre sidebar, then the filter row; the table keeps its columns proportional to its width.
+    private func adaptLayout() {
+        guard let root = window?.contentView, sideWidth != nil else { return }
+        let showSide = root.bounds.width >= 700
+        sideWidth.constant = showSide ? 145 : 0; sideGap.constant = showSide ? 9 : 0; sideScrollView?.isHidden = !showSide
+        let mainWidth = root.bounds.width - 24 - (showSide ? 154 : 0)
+        let showFilters = mainWidth >= 580 && root.bounds.height >= 380
+        filterRowView.map { ($0 as? NSStackView)?.arrangedSubviews.forEach { $0.isHidden = !showFilters } }
+        filterHeight.constant = showFilters ? 22 : 0; filterGap.constant = showFilters ? 7 : 0; tableGap.constant = showFilters ? 6 : 0
+        layoutColumns(width: mainWidth)
+    }
+    private func layoutColumns(width: CGFloat) {
+        // Fit the columns to the clip view itself: the border, the legacy scroller and the 1pt cell spacing
+        // between columns all come out of the width, or the table scrolls sideways and slides under the scroller.
+        let clip = table.enclosingScrollView.map { $0.contentSize.width } ?? 0
+        let usable = clip > 100 ? clip : width - 4 - 16
+        let shown = columnLayout.filter { usable - CGFloat(columnLayout.count) >= $0.hideBelow }
+        let available = max(120, usable - table.intercellSpacing.width * CGFloat(shown.count))
+        let total = shown.reduce(0) { $0 + $1.share }
+        for entry in columnLayout {
+            guard let column = table.tableColumn(withIdentifier: .init(entry.id)) else { continue }
+            column.isHidden = !shown.contains { $0.id == entry.id }
+            column.minWidth = min(entry.minimum, 30)
+            column.width = max(entry.minimum, (available * entry.share / total).rounded(.down))
+        }
+    }
     func windowWillClose(_ notification: Notification) {
         task?.cancel(); generation = UUID()
-        if busy { hasLoaded = false }
+        if busy || loadingMore { hasLoaded = false }
+        loadingMore = false
         setBusy(false)
     }
     func libraryChanged() {
@@ -152,7 +204,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         return row
     }
     private func popup(_ popup: NSPopUpButton, label: String, values: [String], width: CGFloat) {
-        popup.addItems(withTitles: values); popup.font = BrowserTheme.small; popup.controlSize = .small
+        popup.addItems(withTitles: values); popup.menu?.autoenablesItems = false; popup.font = BrowserTheme.small; popup.controlSize = .small
         popup.heightAnchor.constraint(equalToConstant: 22).isActive = true
         popup.target = self; popup.action = #selector(filtersChanged)
         popup.setAccessibilityLabel(label); popup.toolTip = label
@@ -188,49 +240,54 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         sidebar.indentationPerLevel = 9; sidebar.delegate = self; sidebar.dataSource = self; sidebar.rowHeight = 19
         sidebar.setAccessibilityLabel("Radio library categories")
         let sideScroll = scroll(sidebar); sideScroll.hasHorizontalScroller = false
-        add(sideScroll, to: root)
+        add(sideScroll, to: root); sideScrollView = sideScroll
         let main = NSView(); add(main, to: root)
+        sideWidth = sideScroll.widthAnchor.constraint(equalToConstant: 145); sideGap = main.leadingAnchor.constraint(equalTo: sideScroll.trailingAnchor, constant: 9)
         add(nowPlaying, to: root); nowPlaying.font = BrowserTheme.small; nowPlaying.textColor = BrowserTheme.green; nowPlaying.lineBreakMode = .byTruncatingTail
         NSLayoutConstraint.activate([
             sideScroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), sideScroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 25),
-            sideScroll.widthAnchor.constraint(equalToConstant: 145), sideScroll.bottomAnchor.constraint(equalTo: nowPlaying.topAnchor, constant: -9),
-            main.leadingAnchor.constraint(equalTo: sideScroll.trailingAnchor, constant: 9), main.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            sideWidth!, sideScroll.bottomAnchor.constraint(equalTo: nowPlaying.topAnchor, constant: -9),
+            sideGap!, main.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             main.topAnchor.constraint(equalTo: sideScroll.topAnchor), main.bottomAnchor.constraint(equalTo: sideScroll.bottomAnchor),
             nowPlaying.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), nowPlaying.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -22),
             nowPlaying.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20), nowPlaying.heightAnchor.constraint(equalToConstant: 15)
         ])
         heading.font = .monospacedSystemFont(ofSize: 11, weight: .bold); heading.textColor = BrowserTheme.green
-        let provider = button("Radio Browser ↗", #selector(openProvider), width: 108)
-        provider.toolTip = "Stations provided by the community-maintained Radio Browser directory"
-        let refresh = button("Refresh", #selector(refresh), width: 66)
-        let titleRow = row([heading, NSView(), provider, refresh]); add(titleRow, to: main)
+        popup(sourceMenu, label: "Radio directory", values: [], width: 118)
+        sourceMenu.toolTip = "Which radio directories to search. Add more in Preferences ▸ Directories."
+        refreshSources()
+        let refresh = button("Refresh", #selector(refresh), width: 56)
+        let titleRow = row([heading, NSView(), sourceMenu, refresh]); add(titleRow, to: main)
         search.placeholderString = "Search station names…"; ClassicUI.field(search)
         search.target = self; search.action = #selector(searchNow)
         search.setAccessibilityLabel("Search radio station names")
         search.heightAnchor.constraint(equalToConstant: 22).isActive = true
         search.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
-        popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Highest bitrate"], width: 120)
-        for (i, sort) in ["clickcount:1", "votes:1", "name:0", "bitrate:1"].enumerated() { order.item(at: i)?.representedObject = sort }
-        let searchRow = row([search, button("Search", #selector(searchNow), width: 64), order]); add(searchRow, to: main)
+        popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Best quality"], width: 104)
+        for (i, sort) in ["clickcount:1", "votes:1", "name:0", "quality:1"].enumerated() { order.item(at: i)?.representedObject = sort }
+        let searchRow = row([search, button("Search", #selector(searchNow), width: 54), order]); add(searchRow, to: main)
         genre.addItems(withObjectValues: ["All genres"] + genres.map { $0.lowercased() }); genre.stringValue = "All genres"
         genre.font = BrowserTheme.small; genre.textColor = BrowserTheme.text; genre.focusRingType = .none; genre.heightAnchor.constraint(equalToConstant: 22).isActive = true; genre.controlSize = .small; genre.target = self; genre.action = #selector(filtersChanged)
         genre.delegate = self; genre.setAccessibilityLabel("Genre filter"); genre.toolTip = "Choose a genre, or enter an exact Radio Browser genre tag"
-        genre.widthAnchor.constraint(equalToConstant: 115).isActive = true
-        popup(country, label: "Country filter", values: ["Any country"], width: 146)
+        genre.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        popup(country, label: "Country filter", values: ["Any country"], width: 112)
         let codes = Locale.Region.isoRegions.map(\.identifier).filter { $0.count == 2 }.map { ($0, Locale.current.localizedString(forRegionCode: $0) ?? $0) }.sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
         for (code, name) in codes { country.addItem(withTitle: name); country.lastItem?.representedObject = code }
-        popup(format, label: "Audio format filter", values: ["MP3 / AAC / Ogg / Opus / HLS", "MP3", "AAC", "Opus", "Ogg Vorbis", "All formats"], width: 132)
-        popup(bitrate, label: "Minimum bitrate filter", values: ["Any bitrate", "64+ kbps", "128+ kbps", "192+ kbps", "256+ kbps"], width: 103)
-        let filterRow = row([label("Genre"), genre, country, format, bitrate, NSView()], spacing: 6); add(filterRow, to: main)
+        popup(format, label: "Audio format filter", values: ["Common formats", "MP3", "AAC", "Opus", "Ogg Vorbis", "All formats"], width: 100)
+        popup(bitrate, label: "Minimum bitrate filter", values: ["Any kbps", "64+ kbps", "128+ kbps", "192+ kbps", "256+ kbps"], width: 84)
+        let filterRow = row([label("Genre"), genre, country, format, bitrate, NSView()], spacing: 4); add(filterRow, to: main); filterRowView = filterRow
         table.delegate = self; table.dataSource = self; table.target = self; table.doubleAction = #selector(playSelected)
         table.enter = { [weak self] in self?.playSelected() }; table.setAccessibilityLabel("Internet radio stations")
-        for (id, title, width) in [("name", "Station", 235.0), ("tags", "Genre", 140.0), ("country", "Country", 90.0), ("codec", "Format", 75.0), ("bitrate", "kbps", 50.0), ("votes", "Votes", 55.0)] {
+        for (id, title, width) in [("name", "Station", 235.0), ("tags", "Genre", 140.0), ("country", "Country", 90.0), ("codec", "Format", 75.0), ("quality", "Quality", 62.0), ("votes", "Votes", 55.0)] {
             let c = NSTableColumn(identifier: .init(id)); c.width = width; c.minWidth = id == "name" ? 150 : 42
             c.headerCell = LibraryHeader(textCell: title); c.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true)
             table.addTableColumn(c)
         }
-        table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        let tableScroll = scroll(table); add(tableScroll, to: main)
+        table.columnAutoresizingStyle = .noColumnAutoresizing
+        let tableScroll = scroll(table); tableScroll.hasHorizontalScroller = false; add(tableScroll, to: main)
+        // One continuous list: the next page of stations is fetched as the list is scrolled toward its end.
+        tableScroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: tableScroll.contentView)
         let context = NSMenu()
         for (title, selector) in [("Tune In", #selector(playSelected)), ("Add to Favorites", #selector(saveSelected)), ("Copy Stream URL", #selector(copySelected))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
@@ -244,15 +301,20 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         add(selectedTitle, to: main); add(selectedInfo, to: main)
         tune = button("▶ Tune In", #selector(playSelected), width: 88)
         save = button("+ Favorite", #selector(saveSelected), width: 92)
-        previous = button("‹ Previous", #selector(previousPage), width: 80)
-        next = button("Next ›", #selector(nextPage), width: 65)
-        let actionRow = row([tune, save, button("Open URL…", #selector(openURL), width: 85), NSView(), previous, next]); add(actionRow, to: main)
+        let actionRow = row([tune, save, button("Open URL…", #selector(openURL), width: 85), NSView()]); add(actionRow, to: main)
         status.font = BrowserTheme.small; status.textColor = BrowserTheme.dim; status.lineBreakMode = .byTruncatingTail; add(status, to: main)
+        // Long names and URLs must truncate, never widen the window.
+        for label in [selectedTitle, selectedInfo, status, nowPlaying, heading] {
+            label.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+            label.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        }
+        filterHeight = filterRow.heightAnchor.constraint(equalToConstant: 22); filterGap = filterRow.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 7)
+        tableGap = tableScroll.topAnchor.constraint(equalTo: filterRow.bottomAnchor, constant: 6)
         NSLayoutConstraint.activate([
             titleRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), titleRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), titleRow.topAnchor.constraint(equalTo: main.topAnchor), titleRow.heightAnchor.constraint(equalToConstant: 22),
             searchRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), searchRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), searchRow.topAnchor.constraint(equalTo: titleRow.bottomAnchor, constant: 6),
-            filterRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), filterRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), filterRow.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 7), filterRow.heightAnchor.constraint(equalToConstant: 22),
-            tableScroll.leadingAnchor.constraint(equalTo: main.leadingAnchor), tableScroll.trailingAnchor.constraint(equalTo: main.trailingAnchor), tableScroll.topAnchor.constraint(equalTo: filterRow.bottomAnchor, constant: 6),
+            filterRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), filterRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), filterGap!, filterHeight!,
+            tableScroll.leadingAnchor.constraint(equalTo: main.leadingAnchor), tableScroll.trailingAnchor.constraint(equalTo: main.trailingAnchor), tableGap!,
             tableScroll.bottomAnchor.constraint(equalTo: selectedTitle.topAnchor, constant: -9),
             selectedTitle.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 2), selectedTitle.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedTitle.heightAnchor.constraint(equalToConstant: 16),
             selectedInfo.leadingAnchor.constraint(equalTo: selectedTitle.leadingAnchor), selectedInfo.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedInfo.topAnchor.constraint(equalTo: selectedTitle.bottomAnchor, constant: 3), selectedInfo.heightAnchor.constraint(equalToConstant: 15),
@@ -265,7 +327,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         suppressSelection = true
         if let popular = nodes[1].children.first { sidebar.selectRowIndexes(IndexSet(integer: sidebar.row(forItem: popular)), byExtendingSelection: false) }
         suppressSelection = false
-        updateSelection(); updatePaging()
+        adaptLayout()
+        updateSelection()
     }
 
     private func captureQuery(resetPage: Bool = true) {
@@ -275,6 +338,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         query.countryCode = country.selectedItem?.representedObject as? String ?? ""
         query.codec = ["", "MP3", "AAC", "OPUS", "OGG", ""][min(5, max(0, format.indexOfSelectedItem))]
         query.supportedOnly = format.indexOfSelectedItem != 5
+        query.sourceID = sourceMenu.selectedItem?.representedObject as? String ?? "all"
         query.minimumBitrate = [0,64,128,192,256][max(0, bitrate.indexOfSelectedItem)]
         let sorting = (order.selectedItem?.representedObject as? String ?? "clickcount:1").split(separator: ":")
         query.order = String(sorting[0]); query.reverse = sorting.count > 1 && sorting[1] == "1"
@@ -286,23 +350,27 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         let token = generation
         let request = query
         heading.stringValue = scope.title
-        rows = []; table.reloadData(); table.deselectAll(nil)
+        rows = []; hiddenCount = 0; hasMore = false; loadingMore = false; table.reloadData(); table.deselectAll(nil)
         message.stringValue = "Loading stations…"; message.isHidden = false
         status.toolTip = nil
-        setBusy(true); status.stringValue = "Contacting Radio Browser…"; hasLoaded = false
+        sourceTitle = sourceMenu.titleOfSelectedItem ?? "directories"
+        let sources = library.state.directories ?? []
+        setBusy(true); status.stringValue = "Contacting \(sourceTitle)…"; hasLoaded = false
         task = Task { @MainActor [weak self, directory] in
             do {
+                await directory.configure(sources)
                 let page = try await directory.search(request, refresh: refresh)
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
                 self.rows = page.stations; self.hasMore = page.hasMore; self.hasLoaded = true
+                self.hiddenCount = max(0, page.rawCount - page.stations.count); self.pageWasCached = page.cached
                 self.setBusy(false); self.table.reloadData()
-                self.message.stringValue = !page.stations.isEmpty ? "" : (page.hasMore ? "No supported streams on this page. Try Next or choose All formats." : "No stations found. Try a broader search or change the filters.")
+                self.message.stringValue = !page.stations.isEmpty ? "" : (page.hasMore ? "Looking for supported streams…" : "No stations found. Try a broader search or change the filters.")
                 self.message.isHidden = !page.stations.isEmpty
-                let hidden = max(0, page.rawCount - page.stations.count)
-                self.status.stringValue = "\(page.stations.count) stations • Page \(request.offset / DirectoryQuery.pageSize + 1)\(hidden > 0 ? " • \(hidden) other entries hidden" : "")\(page.cached ? " • Cached" : "") • Radio Browser"
-                self.status.toolTip = "Community-maintained directory. Working status is from its last check, not a guarantee of current availability. Popularity uses directory clicks, not live listener counts."
+                self.showCount()
+                self.status.toolTip = "Working status comes from each directory’s last check, not a guarantee of current availability. Popularity uses directory clicks or listener counts, not live audience."
                 self.updateSelection(); self.loaded?(true)
+                self.loadMoreIfNeeded()
             } catch {
                 guard let self, self.generation == token, !Task.isCancelled else { return }
                 self.hasMore = false; self.setBusy(false)
@@ -312,9 +380,46 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             }
         }
     }
+    private func showCount() {
+        status.stringValue = "\(rows.count) stations\(hiddenCount > 0 ? " • \(hiddenCount) other entries hidden" : "")\(pageWasCached ? " • Cached" : "") • \(sourceTitle)\(hasMore ? " • Scroll for more" : "")"
+    }
+    /// Fetches the next page once the list is scrolled within a screenful of its end, appending it so the list reads as one.
+    private func loadMoreIfNeeded() {
+        guard hasMore, !busy, !loadingMore, !scope.local, hasLoaded, let scroll = table.enclosingScrollView else { return }
+        let visible = scroll.contentView.bounds
+        guard visible.maxY >= table.frame.height - visible.height else { return }
+        loadingMore = true
+        var request = query; request.offset += DirectoryQuery.pageSize
+        let token = generation
+        status.stringValue = "\(rows.count) stations • Loading more…"
+        task = Task { @MainActor [weak self, directory] in
+            do {
+                let page = try await directory.search(request, refresh: false)
+                try Task.checkCancellation()
+                guard let self, self.generation == token else { return }
+                self.query.offset = request.offset; self.loadingMore = false
+                let known = Set(self.rows.map(\.id))
+                let fresh = page.stations.filter { !known.contains($0.id) }
+                let start = self.rows.count
+                self.rows += fresh; self.hasMore = page.hasMore
+                self.hiddenCount += max(0, page.rawCount - page.stations.count)
+                if !fresh.isEmpty { self.table.insertRows(at: IndexSet(integersIn: start..<self.rows.count), withAnimation: []) }
+                self.message.isHidden = !self.rows.isEmpty
+                if self.rows.isEmpty, !page.hasMore { self.message.stringValue = "No stations found. Try a broader search or change the filters." }
+                self.showCount()
+                self.loadMoreIfNeeded()
+            } catch {
+                guard let self, self.generation == token, !Task.isCancelled else { return }
+                self.loadingMore = false; self.hasMore = false
+                if self.rows.isEmpty { self.message.stringValue = "Couldn’t reach the station directory.\nTry Refresh, or use Favorites and Open URL."; self.message.isHidden = false }
+                self.status.stringValue = "\(self.rows.count) stations • \(error.localizedDescription)"; self.status.toolTip = error.localizedDescription
+            }
+        }
+    }
+    @objc private func listScrolled() { loadMoreIfNeeded() }
     private func loadLocal(preservingSelection: Bool = false) {
         let selectedID = preservingSelection ? selected?.id : nil
-        task?.cancel(); generation = UUID(); setBusy(false); hasMore = false; hasLoaded = true
+        task?.cancel(); generation = UUID(); setBusy(false); hasMore = false; loadingMore = false; hasLoaded = true
         heading.stringValue = scope.title
         let local = scope == .favorites ? library.state.favorites : (library.state.recentStations ?? [])
         rows = local.filter(query.matchesLocal).map(RadioListing.init(station:))
@@ -325,7 +430,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         message.isHidden = !rows.isEmpty
         status.stringValue = "\(rows.count) stations • Stored on this Mac"
         status.toolTip = "Local favorites and recent playback remain available without the station directory."
-        updateSelection(); updatePaging()
+        updateSelection()
     }
     private func reloadKeepingSelection() {
         let id = selected?.id
@@ -335,7 +440,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private func setBusy(_ value: Bool) {
         busy = value
         if value { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
-        updateSelection(); updatePaging()
+        updateSelection()
     }
     private var selected: RadioListing? { !busy && rows.indices.contains(table.selectedRow) ? rows[table.selectedRow] : nil }
     private func updateSelection() {
@@ -343,20 +448,26 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         tune?.isEnabled = entry != nil; save?.isEnabled = entry != nil
         selectedTitle.stringValue = entry?.name ?? "Select a station"
         if let entry {
-            let info = [entry.country, entry.tags, entry.codec.isEmpty ? "" : entry.formatLabel, entry.bitrate > 0 ? "\(entry.bitrate) kbps" : ""].filter { !$0.isEmpty }.joined(separator: " • ")
+            let info = [entry.country, entry.tags, entry.codec.isEmpty ? "" : entry.formatLabel, entry.bitrate > 0 ? "\(entry.bitrate) kbps" : "", entry.sourceName ?? ""].filter { !$0.isEmpty }.joined(separator: " • ")
             selectedInfo.stringValue = info.isEmpty ? entry.address : info
             selectedInfo.toolTip = entry.address + (entry.directoryID != nil && !entry.likelyPlayable ? "\nThis format may not play on this Mac." : "")
             let saved = library.state.favorites.contains { $0.address == entry.address }
             save?.title = saved ? "✓ Favorite" : "+ Favorite"; save?.isEnabled = !saved
         } else { selectedInfo.stringValue = "Double-click a station to play its stream."; selectedInfo.toolTip = nil; save?.title = "+ Favorite" }
     }
-    private func updatePaging() { previous?.isEnabled = !busy && !scope.local && query.offset > 0; next?.isEnabled = !busy && !scope.local && hasMore }
     private func clearSortIndicators() { suppressSort = true; table.sortDescriptors = []; suppressSort = false }
     @objc private func searchNow() { clearSortIndicators(); captureQuery(); load() }
-    @objc private func filtersChanged() { clearSortIndicators(); captureQuery(); load() }
-    @objc private func refresh() { captureQuery(resetPage: false); load(refresh: true) }
-    @objc private func previousPage() { guard query.offset > 0, !busy else { return }; query.offset = max(0, query.offset - DirectoryQuery.pageSize); load() }
-    @objc private func nextPage() { guard hasMore, !busy else { return }; query.offset += DirectoryQuery.pageSize; load() }
+    /// Favorites and Recently Played are on-disk lists, so choosing a directory, filter or Refresh means the user wants the
+    /// directory: move to Popular instead of leaving those controls greyed out and inert.
+    private func leaveLocalScope() {
+        guard scope.local, let popular = nodes[1].children.first, let target = popular.scope else { return }
+        scope = target
+        suppressSelection = true
+        sidebar.selectRowIndexes(IndexSet(integer: sidebar.row(forItem: popular)), byExtendingSelection: false)
+        suppressSelection = false
+    }
+    @objc private func filtersChanged() { leaveLocalScope(); clearSortIndicators(); captureQuery(); load() }
+    @objc private func refresh() { leaveLocalScope(); captureQuery(); load(refresh: true) }
     @objc private func playSelected() {
         guard let selected else { return }
         play?(selected.station)
@@ -369,13 +480,18 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     @objc private func copySelected() { guard let selected else { return }; NSPasteboard.general.clearContents(); NSPasteboard.general.setString(selected.address, forType: .string) }
     @objc private func openURL() { openStream?() }
-    @objc private func openProvider() { NSWorkspace.shared.open(URL(string: "https://www.radio-browser.info/")!) }
     @objc private func closeLibrary() { window?.close() }
     @objc private func minimizeLibrary() { window?.miniaturize(nil) }
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { selected != nil }
+    /// The popups share this target, so only the row context menu depends on a selection;
+    /// otherwise every directory/country/format choice greys out whenever no row is selected or a load is running.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let action = menuItem.action, [#selector(playSelected), #selector(saveSelected), #selector(copySelected)].contains(action) else { return true }
+        return selected != nil
+    }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableViewSelectionDidChange(_ notification: Notification) { updateSelection() }
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? { LibraryRow() }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { let view = LibraryRow(); view.alternating = row % 2 == 1; return view }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let entry = rows[row]; let key = tableColumn?.identifier.rawValue ?? "name"
@@ -388,19 +504,22 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         case "tags": cell.stringValue = entry.tags.replacingOccurrences(of: ",", with: ", ")
         case "country": cell.stringValue = entry.country
         case "codec": cell.stringValue = entry.formatLabel
-        case "bitrate": cell.stringValue = entry.bitrate > 0 ? "\(entry.bitrate)" : "—"
+        case "quality": cell.stringValue = entry.qualityStars
         case "votes": cell.stringValue = entry.directoryID == nil ? "—" : entry.votes.formatted()
         default:
             let star = library.state.favorites.contains { $0.address == entry.address } ? "★ " : ""
             cell.stringValue = star + entry.name
         }
-        cell.toolTip = key == "name" ? entry.name + "\n" + entry.address : cell.stringValue
+        cell.toolTip = key == "name" ? entry.name + "\n" + entry.address : key == "quality" ? (entry.quality == 0 ? "Bitrate unknown" : "\(entry.quality) of 5 • \(entry.formatLabel) \(entry.bitrate) kbps") : cell.stringValue
         return cell
     }
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         guard !suppressSort, let sort = table.sortDescriptors.first, let key = sort.key else { return }
         if scope.local {
-            if key == "name" { rows.sort { sort.ascending ? $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedDescending }; table.reloadData(); updateSelection() }
+            let selectedID = selected?.id
+            rows = RadioListing.ordered(rows, by: key, reverse: !sort.ascending); table.reloadData()
+            if let selectedID, let index = rows.firstIndex(where: { $0.id == selectedID }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
+            updateSelection()
         } else {
             if order.numberOfItems > 4 { order.removeItem(at: 4) }
             let title = table.tableColumn(withIdentifier: .init(key))?.headerCell.stringValue ?? key
@@ -425,7 +544,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         guard !suppressSelection, let node = sidebar.item(atRow: sidebar.selectedRow) as? LibraryNode, let scope = node.scope else { return }
         self.scope = scope
         clearSortIndicators()
-        for control in [genre, country, format, bitrate, order] as [NSControl] { control.isEnabled = !scope.local }
         switch scope {
         case .genre(let tag): genre.stringValue = tag
         case .popular: genre.stringValue = "All genres"; order.selectItem(at: 0)

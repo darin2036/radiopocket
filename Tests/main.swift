@@ -167,6 +167,94 @@ do {
     if let path = ProcessInfo.processInfo.environment["RADIOPOCKET_DIRECTORY_FIXTURE"] {
         try check(!RadioDirectory.decodePage(Data(contentsOf: URL(fileURLWithPath: path)), query: DirectoryQuery()).stations.isEmpty, "Decode live Radio Browser response")
     }
+    // Multiple directories
+    let m3u = "#EXTM3U\n#EXTINF:-1 group-title=\"Jazz\",Late Night Jazz\nhttps://jazz.example/live.mp3\n#EXTINF:-1,Dupe\nhttps://jazz.example/live.mp3\nftp://bad.example/x\n#EXTINF:-1,Relative\n/streams/two\n"
+    let listed = StationListDirectory.parse(m3u, base: URL(string: "https://lists.example/radio.m3u")!, label: "Mine", sourceID: "custom-1")
+    try check(listed.count == 2 && listed[0].name == "Late Night Jazz" && listed[0].tags == "Jazz" && listed[0].codec == "MP3", "M3U station lists keep names and groups, and skip duplicates and non-HTTP entries")
+    try check(listed[1].address == "https://lists.example/streams/two" && listed[1].likelyPlayable, "Relative M3U entries resolve against the list URL and unknown codecs stay playable")
+    let pls = "[playlist]\nFile1=https://a.example/one\nTitle1=One\nFile2=https://a.example/two\nTitle2=Two\n"
+    func listing(_ name: String, _ codec: String, _ bitrate: Int, votes: Int = 0) -> RadioListing {
+        RadioListing(id: name, name: name, address: "http://x/\(name)", tags: "", country: "", countryCode: "", codec: codec, bitrate: bitrate, votes: votes, clicks: 0, hls: false, sourceName: nil)
+    }
+    try check(listing("a", "MP3", 128).quality == 3 && listing("b", "AAC+", 64).quality == 3 && listing("c", "OPUS", 32).quality == 2 && listing("d", "MP3", 0).quality == 0 && listing("e", "FLAC", 0).quality == 5 && listing("f", "MP3", 320).quality == 5, "Quality stars normalise codec and bitrate")
+    let sortRows = [listing("lo", "MP3", 64, votes: 5), listing("hi", "MP3", 320, votes: 1), listing("opus", "OPUS", 96, votes: 9), listing("none", "MP3", 0, votes: 3)]
+    try check(RadioListing.ordered(sortRows, by: "bitrate", reverse: true).map(\.name) == ["hi", "opus", "lo", "none"], "Bitrate sort is numeric and descending")
+    try check(RadioListing.ordered(sortRows, by: "votes", reverse: false).map(\.name) == ["hi", "none", "lo", "opus"], "Votes sort is numeric and ascending")
+    try check(RadioListing.ordered(sortRows, by: "quality", reverse: true).map(\.name) == ["hi", "opus", "lo", "none"], "Quality sort ranks best first")
+    try check(StationListDirectory.parse(pls, base: URL(string: "https://lists.example/r.pls")!, label: "Mine", sourceID: "c").map(\.name) == ["One", "Two"], "PLS station lists are parsed in order")
+    try check(listed[0].id == StationListDirectory.parse(m3u, base: URL(string: "https://lists.example/radio.m3u")!, label: "Mine", sourceID: "custom-1")[0].id, "Station identifiers are stable between loads")
+    var filtered = DirectoryQuery(); filtered.name = "jazz"
+    try check(DirectoryFilter.page(listed, query: filtered).stations.count == 1, "Local directories filter by name or genre")
+    var paged = DirectoryQuery(); paged.offset = 1
+    try check(DirectoryFilter.page(listed, query: paged).stations.count == 1 && !DirectoryFilter.page(listed, query: paged).hasMore, "Local directories page like the network ones")
+    let resolvedSources = DirectorySource.resolved([DirectorySource(id: "somafm", name: "x", kind: .somaFM, enabled: false), try DirectorySource.custom(name: "Mine", url: "https://lists.example/radio.m3u", kind: .stationList)])
+    try check(resolvedSources.map(\.id).prefix(2) == ["radio-browser", "somafm"] && !resolvedSources[1].enabled && resolvedSources.count == 9, "Built-in directories always exist; saved choices and custom directories are kept")
+    try check(DirectorySource.defaults.count == 8 && DirectorySource.defaults.filter(\.enabled).count == 5, "Eight built-in catalogs; larger feeds are opt-in")
+    try check(DirectorySource.defaults.allSatisfy(\.builtIn) && DirectorySource.resolved(resolvedSources).count == 9, "Built-in migration is idempotent and does not duplicate saved sources")
+    let oldChoices = [DirectorySource.radioBrowser, DirectorySource.somaFM, DirectorySource.lautFM, DirectorySource.icecast, DirectorySource.iprd]
+    let upgradedChoices = DirectorySource.resolved(oldChoices)
+    try check(upgradedChoices.count == 8 && upgradedChoices.contains { $0.id == "curated-streams" && $0.enabled } && upgradedChoices.contains { $0.id == "junguler" && !$0.enabled }, "Existing five-source settings gain the new sources with lightweight defaults")
+    let collectionDirectory = root.appendingPathComponent("Collection")
+    try FileManager.default.createDirectory(at: collectionDirectory.appendingPathComponent("DEMOTED"), withIntermediateDirectories: true)
+    try Data("#EXTM3U\n#EXTINF:-1,Keep Radio\n#EXTGENRE: electronic\nhttps://keep.example/live\n".utf8).write(to: collectionDirectory.appendingPathComponent("Keep.m3u"))
+    try Data("#EXTM3U\n#EXTINF:-1,Old Radio\nhttps://old.example/live\n".utf8).write(to: collectionDirectory.appendingPathComponent("DEMOTED/Old.m3u"))
+    let collectionZIP = root.appendingPathComponent("collection.zip")
+    let collectionProcess = Process(); collectionProcess.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+    collectionProcess.currentDirectoryURL = root; collectionProcess.arguments = ["-q", "-r", collectionZIP.path, "Collection"]
+    try collectionProcess.run(); collectionProcess.waitUntilExit()
+    let collectionText = try CuratedStreamsDirectory.playlist(Data(contentsOf: collectionZIP))
+    let collectionRows = StationListDirectory.parse(collectionText, base: URL(string: "https://collection.example/")!, label: "Curated", sourceID: "curated")
+    try check(collectionRows.count == 1 && collectionRows.first?.name == "Keep Radio" && collectionRows.first?.tags == "electronic", "Curated archive retains station names and EXTGENRE, excluding DEMOTED playlists")
+    try rejects("Curated archive rejects invalid ZIP data") { _ = try CuratedStreamsDirectory.playlist(Data("bad zip".utf8)) }
+    try rejects("Curated archive enforces its download cap") { _ = try CuratedStreamsDirectory.playlist(Data(repeating: 0, count: 1_048_577)) }
+    let groupedText = "#EXTM3U\n#PLAYLIST: smooth_jazz.m3u\n#EXTINF:-1,First\nhttps://one.example/live\n#EXTINF:-1 group-title=\"Fusion\",Second\nhttps://two.example/live\n#PLAYLIST: ambient.m3u\n#EXTINF:-1,Third\nhttps://three.example/live\n"
+    let grouped = StationListDirectory.parse(groupedText, base: URL(string: "https://collection.example/")!, label: "Junguler", sourceID: "junguler")
+    try check(grouped.map(\.tags) == ["smooth jazz", "Fusion", "ambient"], "Junguler playlist sections become searchable genres while explicit tags take precedence")
+    let paradise = try await RadioParadiseDirectory().search(DirectoryQuery(), refresh: false)
+    try check(paradise.stations.count == 4 && paradise.stations.allSatisfy { $0.codec == "AAC" && $0.bitrate == 128 && $0.sourceName == "Radio Paradise" }, "Radio Paradise exposes four direct AAC mixes without a catalog download")
+    var rockQuery = DirectoryQuery(); rockQuery.genre = "rock"
+    let rockParadise = try await RadioParadiseDirectory().search(rockQuery, refresh: false)
+    try check(rockParadise.stations.contains { $0.name.contains("Rock Mix") }, "Radio Paradise mixes participate in genre filtering")
+    let quotedList = "#EXTM3U\n#EXTINF:-1 group-title=\"Jazz,Blues\" tvg-logo=\"https://img.example/a,b.png\",Station, One\nhttps://radio.example/live\n"
+    let quotedRows = StationListDirectory.parse(quotedList, base: URL(string: "https://lists.example/r.m3u")!, label: "IPRD", sourceID: "iprd")
+    try check(quotedRows.first?.name == "Station, One" && quotedRows.first?.tags == "Jazz,Blues", "IPRD-style M3U commas in quoted attributes preserve station names")
+    let xml = "<directory><entry><server_name>Jazz &amp; Soul</server_name><server_type>audio/mpeg</server_type><bitrate>128</bitrate><genre>Jazz</genre><listen_url>https://radio.example/live</listen_url></entry><entry><listen_url>file:///etc/passwd</listen_url></entry><entry><listen_url></listen_url></entry></directory>"
+    let ice = try IcecastDirectory.parse(Data(xml.utf8))
+    try check(ice.count == 1 && ice[0].name == "Jazz & Soul" && ice[0].codec == "MP3" && ice[0].bitrate == 128, "Icecast decodes XML entities, formats and bitrate while skipping invalid streams")
+    try rejects("Icecast rejects malformed XML") { _ = try IcecastDirectory.parse(Data("<directory><entry>".utf8)) }
+    try rejects("Icecast rejects entity declarations") { _ = try IcecastDirectory.parse(Data("<!DOCTYPE directory [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><directory/>".utf8)) }
+    let lautBrowse = Data(#"{"items":[{"name":"jazz","display_name":"Jazz","stream_url":"https://jazz.example/live","genres":["Jazz"],"active":true},{"name":"bad","stream_url":"file:///tmp/audio"},{"name":"off","stream_url":"https://off.example/live","active":false}],"next_offset":100}"#.utf8)
+    let lautPage = try LautFMDirectory.decode(lautBrowse, query: DirectoryQuery())
+    try check(lautPage.stations.count == 1 && lautPage.hasMore && lautPage.rawCount == 3 && lautPage.stations[0].sourceName == "laut.fm", "laut.fm browse pages skip invalid and inactive stations while retaining server pagination")
+    var lautQuery = DirectoryQuery(); lautQuery.name = "Jazz & Soul"; lautQuery.offset = 100
+    let lautURL = URLComponents(url: LautFMDirectory.requestURL(lautQuery), resolvingAgainstBaseURL: false)!
+    try check(lautURL.host == "search.api.laut.fm" && lautURL.queryItems?.first(where: { $0.name == "query" })?.value == "Jazz & Soul" && lautURL.queryItems?.first(where: { $0.name == "offset" })?.value == "100", "laut.fm search safely encodes names and page offsets")
+    let lautSearch = Data(#"{"results":[{"station":{"name":"jazz","stream_url":"https://jazz.example/live","genres":["Jazz"]}}],"next_offset":null}"#.utf8)
+    var jazzQuery = DirectoryQuery(); jazzQuery.genre = "Jazz"
+    try check(try LautFMDirectory.decode(lautSearch, query: jazzQuery).stations.count == 1 && !LautFMDirectory.decode(lautSearch, query: jazzQuery).hasMore, "laut.fm search envelope and final-page detection")
+    try rejects("Custom directories need an http(s) address") { _ = try DirectorySource.custom(name: "x", url: "ftp://lists.example/a.m3u", kind: .stationList) }
+    if ProcessInfo.processInfo.environment["RADIOPOCKET_LIVE_DIRECTORIES"] != nil {
+        let curatedClient = CuratedStreamsDirectory()
+        let curatedPage = try await curatedClient.search(DirectoryQuery(), refresh: true)
+        try check(curatedPage.stations.count > 30 && curatedPage.stations.allSatisfy { $0.sourceName == "Curated Internet Radio Streams" }, "Live curated collection loads named stations in a single archive request")
+        let cachedCurated = try await curatedClient.search(DirectoryQuery(), refresh: false)
+        try check(cachedCurated.cached && cachedCurated.stations.map(\.id) == curatedPage.stations.map(\.id), "Curated catalog cache retains stable station IDs")
+        let jungulerClient = DirectorySource.junguler.makeBackend()!
+        var lastPage = DirectoryQuery(); lastPage.offset = 6000
+        let jungulerPage = try await jungulerClient.search(lastPage, refresh: true)
+        try check(!jungulerPage.stations.isEmpty && jungulerPage.stations.allSatisfy { !$0.name.isEmpty }, "Live named Junguler catalog includes stations beyond the custom-list cap")
+        let laut = try await LautFMDirectory().search(DirectoryQuery(), refresh: true)
+        try check(!laut.stations.isEmpty && laut.hasMore, "Live laut.fm browse loads a bounded page")
+        var liveJazz = DirectoryQuery(); liveJazz.name = "jazz"
+        let lautSearch = try await LautFMDirectory().search(liveJazz, refresh: true)
+        try check(!lautSearch.stations.isEmpty, "Live laut.fm keyword search loads")
+        let ice = try await IcecastDirectory().search(DirectoryQuery(), refresh: true)
+        try check(!ice.stations.isEmpty, "Live Icecast catalog loads")
+        let iprd = try await DirectorySource.iprd.makeBackend()!.search(DirectoryQuery(), refresh: true)
+        try check(!iprd.stations.isEmpty && iprd.hasMore, "Live IPRD catalog loads beyond the first page")
+        let soma = try await SomaFMDirectory().search(DirectoryQuery(), refresh: true)
+        try check(!soma.stations.isEmpty && soma.stations.allSatisfy { $0.sourceName == "SomaFM" }, "Live SomaFM channels load")
+    }
     let bundled = URL(fileURLWithPath: "Resources/Skins", isDirectory: true)
     let skinFiles = try FileManager.default.contentsOfDirectory(at: bundled, includingPropertiesForKeys: nil).filter { $0.pathExtension == "wsz" }
     try check(skinFiles.count == 11, "Eleven distinct classic skins are bundled")
@@ -211,7 +299,7 @@ do {
     try check(sample[0].entries == ["* Added: Thing", "* Fixed: Other"], "Changelog keeps entries in order")
     let shipped = Changelog.parse(try String(contentsOfFile: "Resources/CHANGELOG.txt", encoding: .utf8))
     try check(!shipped.isEmpty && shipped.allSatisfy { !$0.entries.isEmpty }, "Shipped CHANGELOG.txt parses with entries for every release")
-    let kinds = ["Added", "Improved", "Fixed", "Removed", "Updated", "Misc"]
+    let kinds = ["Changed", "Added", "Improved", "Fixed", "Removed", "Updated", "Misc"]
     try check(shipped.flatMap(\.entries).allSatisfy { line in kinds.contains { line.hasPrefix("* \($0): ") } }, "Every changelog entry uses a standard kind prefix")
     // Visualizer: capture ring, analyzer, palette and settings
     let visDSP = rp_eq_create()!
@@ -401,6 +489,36 @@ do {
         CCCrypt(CCOperation(kCCEncrypt), CCAlgorithm(kCCAlgorithmAES128), 0, k.baseAddress, 16, v.baseAddress, input.baseAddress, plain.count, out.baseAddress, out.count, &produced) } } } }
     try check(cryptStatus == kCCSuccess && HLSSource.decrypt(encrypted.prefix(produced), key: key, iv: iv) == Data((0..<64).map { UInt8($0) }), "HLS AES-128 segments decrypt and drop PKCS#7 padding")
     key = Data(); iv = Data()
+    // Window snapping
+    let screenRect = NSRect(x: 0, y: 0, width: 1000, height: 800), anchor = NSRect(x: 300, y: 400, width: 550, height: 232)
+    let nearBelow = NSRect(x: 306, y: 400 - 232 - 6, width: 550, height: 232)
+    let docked = PlayerWindow.snapped(nearBelow, to: [anchor], screen: screenRect)
+    try check(docked.minX == 300 && docked.maxY == anchor.minY, "A window dropped near another snaps flush under it")
+    try check(PlayerWindow.snapped(NSRect(x: 5, y: 300, width: 100, height: 50), to: [], screen: screenRect).minX == 0, "A window near the screen edge snaps to it")
+    try check(PlayerWindow.snapped(NSRect(x: 400, y: 100, width: 100, height: 50), to: [anchor], screen: screenRect).origin == NSPoint(x: 400, y: 100), "Distant windows do not snap")
+    try check(PlayerWindow.touching(anchor, NSRect(x: 300, y: 168, width: 550, height: 232)) && !PlayerWindow.touching(anchor, NSRect(x: 300, y: 100, width: 550, height: 232)), "Docked windows are detected by touching edges")
+    // Jump to Station matching
+    let jumpList = [Station(name: "Groove Salad", address: "https://a.example/gs"), Station(name: "Deep Space One", address: "https://a.example/ds"), Station(name: "Space Station Soma", address: "https://a.example/sss")]
+    try check(StationSearch.match("space", in: jumpList).map(\.name) == ["Space Station Soma", "Deep Space One"], "Jump matching ranks names that start with the text first")
+    try check(StationSearch.match("station soma", in: jumpList).map(\.name) == ["Space Station Soma"], "Jump matching requires every typed word")
+    try check(StationSearch.match("", in: jumpList).count == 3 && StationSearch.match("zzz", in: jumpList).isEmpty, "Jump matching: empty query lists all, no match lists none")
+    // Loudness leveler
+    func leveled(amplitude: Float, enabled: Bool, seconds: Double = 40) -> (peak: Float, gain: Double) {
+        let level = rp_eq_create()!
+        defer { rp_eq_destroy(level) }
+        rp_eq_prepare(level, 44100); rp_level_set(level, enabled ? 1 : 0)
+        var peak: Float = 0, phase = 0.0
+        for block in 0..<Int(seconds * 44100 / 512) {
+            var buffer = (0..<512).map { _ -> Float in phase += 2 * Double.pi * 440 / 44100; return amplitude * Float(sin(phase)) }
+            rp_eq_process(level, &buffer, 512, 1, 0)
+            if block > Int(seconds * 44100 / 512) - 20 { peak = max(peak, buffer.map(abs).max() ?? 0) }
+        }
+        return (peak, rp_level_db(level))
+    }
+    let quiet = leveled(amplitude: 0.02, enabled: true), loud = leveled(amplitude: 0.95, enabled: true), off = leveled(amplitude: 0.02, enabled: false)
+    try check(quiet.gain > 6 && quiet.gain <= 10.01 && quiet.peak > 0.02 * 2, "Leveler raises a quiet station (\(String(format: "%+.1f", quiet.gain)) dB)")
+    try check(loud.gain < -3 && loud.peak < 0.9, "Leveler lowers a loud station and stays below full scale (\(String(format: "%+.1f", loud.gain)) dB)")
+    try check(off.gain == 0 && abs(off.peak - 0.02) < 0.0005, "Leveler off leaves audio untouched")
     print("\(checks) checks passed.")
 } catch {
     fputs("\(error.localizedDescription)\n", stderr)

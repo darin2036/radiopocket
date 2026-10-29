@@ -14,13 +14,17 @@ struct RPEQ {
     _Atomic float volume;
     _Atomic uint64_t frames;
     _Atomic double ratio;
+    // Loudness leveler: slow RMS follower steering a gain toward a fixed target, then a soft limiter.
+    _Atomic int level;
+    _Atomic double levelDb;
+    double levelPower, levelGain;
     double rate, b0[10], b1[10], b2[10], a1[10], a2[10];
     double z1[8][10], z2[8][10], current[11];
 };
 static const double frequencies[10] = {60,170,310,600,1000,3000,6000,12000,14000,16000};
 RPEQ *rp_eq_create(void) {
     RPEQ *e=calloc(1,sizeof(RPEQ));
-    if(e) { e->rate=44100; atomic_store(&e->volume,1); atomic_store(&e->ratio,1); }
+    if(e) { e->rate=44100; atomic_store(&e->volume,1); atomic_store(&e->ratio,1); e->levelGain=1; }
     return e;
 }
 void rp_eq_destroy(RPEQ *e) { free(e); }
@@ -30,8 +34,46 @@ void rp_eq_set(RPEQ *e, int enabled, float preamp, const float *bands) {
     atomic_store_explicit(&e->enabled,enabled,memory_order_relaxed);
 }
 void rp_eq_volume(RPEQ *e, float volume) { atomic_store_explicit(&e->volume,fmaxf(0,fminf(1,volume)),memory_order_relaxed); }
+void rp_level_set(RPEQ *e, int enabled) { if(e) atomic_store_explicit(&e->level,enabled,memory_order_relaxed); }
+double rp_level_db(RPEQ *e) { return e ? atomic_load_explicit(&e->levelDb,memory_order_relaxed) : 0; }
+#define LEVEL_TARGET_DB (-18.0)
+#define LEVEL_MAX_BOOST_DB 10.0
+#define LEVEL_MAX_CUT_DB (-12.0)
+// Applies volume and, when enabled, the leveler to one buffer. Runs after the EQ, before the output.
+static void finish(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_t firstChannel,float volume) {
+    if(!atomic_load_explicit(&e->level,memory_order_relaxed)) {
+        if(firstChannel==0) { e->levelGain=1; e->levelPower=0; atomic_store_explicit(&e->levelDb,0,memory_order_relaxed); }
+        for(uint32_t i=0;i<frames*channels;i++) data[i]*=volume;
+        return;
+    }
+    double startGain=e->levelGain;
+    if(firstChannel==0 && frames) {
+        double sum=0; for(uint32_t i=0;i<frames*channels;i++) sum+=(double)data[i]*data[i];
+        double ms=sum/((double)frames*channels);
+        // Silence and gaps between songs must not pull the gain up: hold the last value.
+        if(ms>1e-7) {
+            if(e->levelPower<=0) e->levelPower=ms;
+            double tau=ms>e->levelPower?1.0:5.0;
+            e->levelPower+=(1-exp(-(double)frames/(e->rate*tau)))*(ms-e->levelPower);
+            double db=LEVEL_TARGET_DB-10*log10(e->levelPower);
+            db=fmax(LEVEL_MAX_CUT_DB,fmin(LEVEL_MAX_BOOST_DB,db));
+            e->levelGain=pow(10,db/20);
+            atomic_store_explicit(&e->levelDb,db,memory_order_relaxed);
+        }
+    }
+    double endGain=e->levelGain, step=frames?(endGain-startGain)/frames:0;
+    for(uint32_t f=0;f<frames;f++) {
+        double g=startGain+step*f;
+        for(uint32_t c=0;c<channels;c++) {
+            double x=data[f*channels+c]*g, a=fabs(x);
+            if(a>0.89) x=copysign(0.89+0.11*tanh((a-0.89)/0.11),x);
+            data[f*channels+c]=(float)x*volume;
+        }
+    }
+}
 void rp_eq_prepare(RPEQ *e, double sampleRate) {
     e->rate=sampleRate>0?sampleRate:44100;
+    e->levelPower=0; e->levelGain=1; atomic_store(&e->levelDb,0);
     memset(e->z1,0,sizeof(e->z1)); memset(e->z2,0,sizeof(e->z2));
     memset(e->current,0,sizeof(e->current));
     atomic_store(&e->frames,0);
@@ -74,7 +116,7 @@ void rp_eq_process(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_
             for(uint32_t f=0;f<frames;f++) vis_push(e,&cursor,channels>1?(data[f*channels]+data[f*channels+1])*.5f:data[f*channels]);
             atomic_store_explicit(&e->visWrite,cursor,memory_order_release);
         }
-        for(uint32_t i=0;i<frames*channels;i++) data[i]*=volume;
+        finish(e,data,frames,channels,firstChannel,volume);
         atomic_fetch_add_explicit(&e->frames,frames,memory_order_relaxed);
         atomic_store_explicit(&e->ratio,1,memory_order_relaxed); return;
     }
@@ -100,12 +142,13 @@ void rp_eq_process(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_
         }
         // Prevent boosted presets from sending out-of-range samples to the device.
         if(!isfinite(x)) x=0;
-        x=fmax(-1,fmin(1,x)); data[index]=(float)x*volume; outputEnergy+=x*x;
+        x=fmax(-1,fmin(1,x)); data[index]=(float)x; outputEnergy+=x*x;
         if(firstChannel==0 && c<2) mix+=(float)x*(channels>1?.5f:1.f);
     }
     if(firstChannel==0) vis_push(e,&cursor,mix);
     }
     if(firstChannel==0) atomic_store_explicit(&e->visWrite,cursor,memory_order_release);
+    finish(e,data,frames,channels,firstChannel,volume);
     atomic_fetch_add_explicit(&e->frames,frames,memory_order_relaxed);
     atomic_store_explicit(&e->ratio,inputEnergy>1e-15?sqrt(outputEnergy/inputEnergy):1,memory_order_relaxed);
 }

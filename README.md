@@ -1,6 +1,6 @@
 # RadioPocket 0.8
 
-A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, bundled station database. Station discovery uses the public Radio Browser directory.
+A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, large bundled station database. Station discovery offers eight built-in sources: Radio Browser, SomaFM, laut.fm, Radio Paradise, Curated Internet Radio Streams, Icecast / Xiph, IPRD, and Junguler Radio Playlists.
 
 
 ## At a glance
@@ -28,6 +28,10 @@ A small, native macOS internet-radio player inspired by classic Winamp. Swift + 
 **Preferences — installed skins and player preview**
 
 <img src="previews/RadioPocket-preferences.png" alt="RadioPocket preferences with category sidebar, installed skin list and player preview" width="760">
+
+**Directories — eight sources and custom lists**
+
+<img src="previews/RadioPocket-directories.png" alt="Directory settings showing Radio Browser, SomaFM, laut.fm, Icecast and IPRD" width="760">
 
 Screenshots show the current 0.7 player, equalizer, and library. Directory listings change over time.
 
@@ -83,22 +87,34 @@ References: [Apple URL/document handling](https://developer.apple.com/documentat
 Click **LIB** or press **⌘B** to open the classic-style station library. The compact player remains separate. Browse **Popular**, **Top Rated**, **All Stations**, or the genre tree; **Favorites** and **Recently Played** are local collections.
 
 - Search station names, choose or enter a genre, and filter by country, format, or minimum bitrate.
-- Sort using the dropdown or column headings. Results arrive in pages of up to 100 directory records; format filtering can leave fewer visible rows. Previous/Next navigates pages.
+- Sort using the dropdown or column headings. The station list is one continuous list: the next 100 directory records load automatically as you scroll toward the end, and format filtering can hide some of them.
 - Double-click a station, press Return, or click **Tune In**. **+ Favorite** saves it locally without changing the selection. The context menu can copy its stream URL.
 - Recent history contains up to 30 unique stations that actually reached playback. Failed connection attempts are not added.
 - The default format filter favors MP3/AAC/HLS. **All formats** reveals other entries, including codecs macOS may not support. Directory codec and working-status metadata can be stale.
 
-Discovery uses [Radio Browser](https://www.radio-browser.info/), an open community-maintained directory, without an API key. Popularity reflects directory clicks; votes are directory votes, not live listener counts. Station availability varies. Directory errors do not interrupt current audio, and local favorites, history, and direct URLs remain usable.
+Open **Preferences → Directories** to choose from eight built-in sources or add your own M3U / PLS list or Radio Browser API server. Radio Browser, SomaFM, laut.fm, Radio Paradise, and Mike Pierce’s Curated Internet Radio Streams start enabled. Icecast / Xiph, IPRD, and Junguler Radio Playlists are available but unchecked initially because they download larger catalogs. Saved on/off choices survive upgrades; new built-ins appear automatically. The directory list scrolls when needed.
 
-There is no directory request at app startup. Opening or querying the library fetches results on demand, with mirror failover, cancellation of obsolete searches, a six-page in-memory cache lasting five minutes, and a 2 MB response limit. No artwork downloads, background catalogue sync, or directory polling. Refresh bypasses the cache. An explicit Tune In from the directory sends its standard station-click request to Radio Browser; browsing alone does not. There is no separate app analytics service.
+[Source documentation and limits](Resources/DIRECTORY-SOURCES.md) lists the public endpoints and attribution. No API key or account is needed for these eight sources. Some catalogs omit country, codec, or bitrate metadata, so those filters can hide their listings. laut.fm filters and sorts within each provider page.
+
+The primary source remains [Radio Browser](https://www.radio-browser.info/), an open community-maintained directory, without an API key. Popularity reflects directory clicks; votes are directory votes, not live listener counts. Station availability varies. Directory errors do not interrupt current audio, and local favorites, history, and direct URLs remain usable.
+
+There is no directory request at app startup. Opening or querying the library fetches results on demand, with mirror failover, cancellation of obsolete searches, a six-page in-memory cache lasting five minutes, and a 2 MB response limit for Radio Browser. SomaFM, laut.fm and custom lists also have bounded requests; optional full-catalog feeds have separate documented caps. No artwork downloads, background catalogue sync, or directory polling. Refresh bypasses the cache. An explicit Tune In from the directory sends its standard station-click request to Radio Browser; browsing alone does not. There is no separate app analytics service.
+
+## Station tools, windows and sleep
+
+- **Jump to Station** (**J** in the player, or **⇧⌘J**): type part of a station name, **↑ / ↓** to choose, **Return** to tune in. It searches your favorites and recently played stations.
+- **Station Info** (**I**, or **⇧⌘I**): the live format and sample rate, the bitrate measured from the connection, how much time-shift buffer is kept and how far behind live you are, and the leveler's gain. **Look Up Details** asks Radio Browser for the country, genre and homepage; nothing is sent until you press it.
+- **Sleep Timer** (Radio menu): stops playback after 15, 30, 45, 60, 90 or 120 minutes, fading the volume over the last 20 seconds and restoring it afterwards. The countdown shows on the station line.
+- **Loudness Leveling** (Radio menu): a slow level follower with a soft limiter that brings quiet stations up (to +10 dB) and loud ones down (to −12 dB) toward one average level. It follows the EQ, applies to every stream RadioPocket decodes itself, and is off by default. Station switches take a few seconds to settle.
+- **Window snapping and docking**: the player, equalizer, library and favorites snap to screen edges and to one another. The equalizer opens docked under the player, and dragging the player carries docked windows with it. Hold **Option** while dragging to move freely. Double-click a title bar to window-shade it.
 
 ## Visualizer
 
 The player’s 76 × 16 visualizer slot shows a real spectrum analyzer or oscilloscope of the audio being played (post-EQ, before the volume control, so quiet listening still moves the bars). While stopped, paused or on an HLS stream the slot shows the status text instead.
 
 - **Analysis:** the AudioQueue processing tap that already runs the EQ copies the mono-mixed output into a fixed 8192-sample lock-free ring. On the main thread a 2048-point Hann-windowed vDSP FFT is folded into 76 log-spaced bands (45 Hz–16 kHz, +3 dB/octave tilt) with Winamp-style bar falloff and peak hold.
-- **Player slot:** click to cycle Spectrum → Oscilloscope → Off. Double-click for full screen. Right-click for coloring (Normal / Fire / Line), peaks, falloff, oscilloscope style and refresh rate (60 / 30 / 15 fps). Colors come from the skin’s `VISCOLOR.TXT` when it has one, otherwise Winamp’s stock palette.
-- **Visualization window (⇧⌘V):** Spectrum Bars, Oscilloscope, Mirror Spectrum, Circular Spectrum and Spectrogram. ⌃⌘F or the FULL SCREEN button goes full screen.
+- **Player slot:** click to cycle Bars → Fire → Oscilloscope. Double-click to open the visualization window. Right-click for coloring (Normal / Fire / Line), peaks, falloff, oscilloscope style and refresh rate (60 / 30 / 15 fps). Colors come from the skin’s `VISCOLOR.TXT` when it has one, otherwise Winamp’s stock palette.
+- **Visualization window (⇧⌘V):** Spectrum Bars, Oscilloscope, Mirror Spectrum, Circular Spectrum, Spectrogram, Waveform Ring, Vectorscope, Waterfall, Starfield, Spectrum Tunnel, Plasma, Kaleidoscope, Fireworks and Aurora (keys 1–9 and 0 jump to the first ten). ⌃⌘F or the FULL SCREEN button goes full screen.
 - **Idle cost:** one timer exists only while a visualizer is actually on screen (window visible, not minimized or covered) and audio is playing or the bars are still falling; it stops itself afterwards. Full screen runs at 60 fps.
 
 Hotkeys in the visualization window and full screen (press **H** or **F1** for the same list on screen):
@@ -228,7 +244,7 @@ Smoke playback is muted and exits after reaching the playing state. Add `--test-
 - 110 regression checks with a real classic skin, including a generated nested uppercase-filename skin, gain measurements at all ten frequencies, stereo smoothing, and EQF round trips for every stock preset.
 - 12 directory network checks against an isolated HTTP server.
 - Live Radio Browser responses decoded and the populated library inspected visually.
-- Library UI checks: search, pagination, saving while preserving selection, playback, recent history, and directory failure while audio continues.
+- Library UI checks: search, scrolling to load more stations, saving while preserving selection, playback, recent history, and directory failure while audio continues.
 - Local continuous HTTP MP3/AAC playback, including measured -12 dB attenuation through the live DSP path.
 - ICY metadata playback with title extraction and working EQ.
 - HLS fallback playback with an explicit EQ-unavailable status.

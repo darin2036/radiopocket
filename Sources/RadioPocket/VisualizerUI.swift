@@ -6,7 +6,7 @@ enum VisualizerKeys {
         ("Double-click · F · ⌥↩", "Toggle full screen (Esc leaves)"),
         ("Space · → · N", "Next visualization"),
         ("Backspace · ← ", "Previous visualization"),
-        ("1 – 5", "Jump to a visualization"),
+        ("1 – 9 · 0", "Jump to one of the first ten visualizations"),
         ("R", "Auto-cycle every 15 seconds"),
         ("K", "Cycle colors: Normal / Fire / Line"),
         ("P", "Show / hide peak markers"),
@@ -29,6 +29,8 @@ final class VisCanvasView: NSView {
     var perform: ((String) -> Void)?
     var nowPlaying: () -> (station: String, title: String, signal: VisSignal) = { ("", "", .idle) }
     private var history: [[Float]] = []
+    private let state = VisState()
+    private var lastTick = CACurrentMediaTime()
     private var lastActivity = Date()
     private var lastTitle = ""
     private var showHelp = false
@@ -41,7 +43,7 @@ final class VisCanvasView: NSView {
     init(hub: VisualizerHub, fullscreen: Bool) {
         self.hub = hub; self.fullscreen = fullscreen; lastPanel = hub.settings.panel
         super.init(frame: .zero)
-        hub.register(owner: self, fullRate: { [unowned self] in self.fullscreen }, visible: { [unowned self] in VisualizerHub.windowVisible(self.window) }, redraw: { [unowned self] in self.tick() })
+        hub.register(owner: self, fullRate: { [unowned self] in self.fullscreen }, visible: { [unowned self] in VisualizerHub.windowVisible(self.window) }, redraw: { [unowned self] in self.tick() }, busy: { [unowned self] in self.hub.settings.panel == .fire && self.state.fire.isHot })
         hub.observeSettings { [weak self] settings in
             guard let self else { return }
             if settings.panel != self.lastPanel { self.lastPanel = settings.panel; self.show(settings.panel.title) }
@@ -51,8 +53,11 @@ final class VisCanvasView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private func tick() {
-        if hub.settings.panel == .spectrogram {
+    private func tick(dt fixed: Double? = nil) {
+        let now = CACurrentMediaTime()
+        state.update(hub.frame, dt: fixed ?? now - lastTick, aspect: max(0.1, bounds.width / max(1, bounds.height)), mode: hub.settings.panel, settings: hub.settings)
+        lastTick = now
+        if hub.settings.panel == .spectrogram || hub.settings.panel == .waterfall {
             history.append(hub.frame.bars)
             if history.count > SpectrogramLimit.columns { history.removeFirst(history.count - SpectrogramLimit.columns) }
         }
@@ -71,12 +76,12 @@ final class VisCanvasView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let (station, title, signal) = nowPlaying()
         if title != lastTitle { lastTitle = title; lastActivity = Date() }
-        VisDraw.panel(hub.settings.panel, hub: hub, in: bounds, history: history)
+        VisDraw.panel(hub.settings.panel, hub: hub, in: bounds, history: history, state: state)
         let active = Date().timeIntervalSince(lastActivity) < 5
         let big: CGFloat = fullscreen ? max(18, bounds.height / 34) : 13
         if signal != .playing {
             let message = signal == .unavailable ? "Visualization isn’t available for this stream (macOS fallback decoder)" : "Nothing playing — tune in a station"
-            text(message, at: NSPoint(x: bounds.midX, y: bounds.midY), size: big, color: hub.colors[22], centered: true)
+            text(message, at: NSPoint(x: bounds.midX, y: bounds.midY), size: min(big, bounds.width * 0.9 / (CGFloat(message.count) * 0.62)), color: hub.colors[22], centered: true)
         }
         if fullscreen, hub.settings.overlay, active || signal != .playing {
             if !station.isEmpty { text(station, at: NSPoint(x: big * 1.5, y: big * 3.2), size: big * 1.3, color: hub.colors[18], bold: true) }
@@ -127,7 +132,7 @@ final class VisCanvasView: NSView {
                        "z": "previous", "x": "play", "c": "pause", "v": "stop", "b": "next", "l": "live", "[": "back10", "]": "forward10"]
         if event.keyCode == 122 || key == "h" { showHelp.toggle(); needsDisplay = true }
         else if let id = routes[event.keyCode] ?? letters[key] { perform?(id) }
-        else if let number = Int(key), (1...VisPanelMode.allCases.count).contains(number) { perform?("vis:mode:\(VisPanelMode.allCases[number - 1].rawValue)") }
+        else if let number = Int(key), case let index = (number + 9) % 10, index < VisPanelMode.allCases.count { perform?("vis:mode:\(VisPanelMode.allCases[index].rawValue)") }
         else { super.keyDown(with: event) }
     }
 
@@ -138,7 +143,7 @@ final class VisCanvasView: NSView {
         for mode in VisPanelMode.allCases {
             hub.settings.panel = mode
             history.removeAll()
-            for step in 0..<90 { hub.injectDemoFrame(phase: Float(step) * 0.25); tick() }
+            for step in 0..<90 { hub.injectDemoFrame(phase: Float(step) * 0.25); tick(dt: 1.0 / 30) }
             exportPreview(directory.appendingPathComponent("RadioPocket-vis-\(mode.rawValue).png"))
         }
         hub.settings.panel = original
@@ -158,13 +163,13 @@ private final class FullscreenWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
-/// The classic-styled visualization window: mode and coloring pickers around a resizable canvas.
+/// The classic-styled visualization window: mode picker and peaks toggle around a resizable canvas.
 final class VisPanelController: NSObject {
     let window: PlayerWindow
     let canvas: VisCanvasView
     private let modes = ClassicPopup(frame: .zero, pullsDown: false)
-    private let colors = ClassicPopup(frame: .zero, pullsDown: false)
     private let peaks = ClassicCheckBox(title: "Peaks", target: nil, action: nil)
+    private let full: ClassicButton
     private let hub: VisualizerHub
     var perform: ((String) -> Void)? { didSet { canvas.perform = perform } }
 
@@ -172,10 +177,11 @@ final class VisPanelController: NSObject {
         self.hub = hub
         canvas = VisCanvasView(hub: hub, fullscreen: false)
         let size = NSSize(width: 720, height: 460)
-        window = PlayerWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        window = PlayerWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        full = ClassicButton(title: "FULL SCREEN", target: nil, action: nil)
         super.init()
-        window.isReleasedWhenClosed = false; window.hasShadow = true; window.appearance = NSAppearance(named: .darkAqua)
-        window.title = "RadioPocket Visualization"; window.minSize = NSSize(width: 480, height: 320)
+        window.isReleasedWhenClosed = false; window.hasShadow = true; window.appearance = NSAppearance(named: .darkAqua); window.isUserResizable = true
+        window.title = "RadioPocket Visualization"; window.minSize = NSSize(width: 275, height: 200)
         window.setFrameAutosaveName("RadioPocket.Visualization")
         let root = ClassicChrome(frame: NSRect(origin: .zero, size: size)); root.title = "VISUALIZATION"; window.contentView = root
         let close = ClassicWindowButton(title: "×", target: self, action: #selector(closeWindow))
@@ -184,27 +190,36 @@ final class VisPanelController: NSObject {
 
         modes.frame = NSRect(x: 14, y: 22, width: 170, height: 20); modes.isBordered = false
         modes.addItems(withTitles: VisPanelMode.allCases.map(\.title)); modes.target = self; modes.action = #selector(modeChanged); modes.setAccessibilityLabel("Visualization")
-        colors.frame = NSRect(x: 192, y: 22, width: 96, height: 20); colors.isBordered = false
-        colors.addItems(withTitles: VisColoring.allCases.map(\.title)); colors.target = self; colors.action = #selector(colorChanged); colors.setAccessibilityLabel("Coloring")
-        peaks.frame = NSRect(x: 298, y: 22, width: 70, height: 20); peaks.setButtonType(.switch); peaks.isBordered = false; peaks.font = ClassicUI.font
+        peaks.frame = NSRect(x: 192, y: 22, width: 70, height: 20); peaks.setButtonType(.switch); peaks.isBordered = false; peaks.font = ClassicUI.font
         peaks.target = self; peaks.action = #selector(peaksChanged)
-        let full = ClassicButton(title: "FULL SCREEN", target: self, action: #selector(fullScreen))
-        full.frame = NSRect(x: size.width - 124, y: 22, width: 108, height: 20); full.isBordered = false; full.autoresizingMask = [.minXMargin]
+        full.target = self; full.action = #selector(fullScreen); full.isBordered = false
         full.setAccessibilityLabel("Full screen visualization")
-        [modes, colors, peaks, full].forEach(root.addSubview)
+        [modes, peaks, full].forEach(root.addSubview)
 
         canvas.frame = NSRect(x: 12, y: 48, width: size.width - 24, height: size.height - 48 - 16)
         canvas.autoresizingMask = [.width, .height]
         root.addSubview(canvas)
         hub.observeSettings { [weak self] _ in self?.sync() }
-        sync()
+        NotificationCenter.default.addObserver(self, selector: #selector(layoutControls), name: NSWindow.didResizeNotification, object: window)
+        layoutControls(); sync()
+    }
+
+    /// Below 480 pt (down to the player's 275 pt) the peaks control gives way to a wider mode picker; its key (P) and the Visualization menu still work.
+    @objc private func layoutControls() {
+        guard let width = window.contentView?.bounds.width else { return }
+        let wide = width >= 480
+        peaks.isHidden = !wide
+        full.title = wide ? "FULL SCREEN" : "FULL"
+        let fullWidth: CGFloat = wide ? 108 : 48
+        full.frame = NSRect(x: width - fullWidth - 16, y: 22, width: fullWidth, height: 20)
+        modes.frame = NSRect(x: 14, y: 22, width: wide ? 170 : max(80, width - fullWidth - 16 - 14 - 8), height: 20)
+        [modes, full].forEach { $0.needsDisplay = true }
     }
 
     private func sync() {
         modes.selectItem(at: VisPanelMode.allCases.firstIndex(of: hub.settings.panel) ?? 0)
-        colors.selectItem(at: VisColoring.allCases.firstIndex(of: hub.settings.coloring) ?? 0)
         peaks.state = hub.settings.peaks ? .on : .off
-        [modes, colors, peaks].forEach { $0.needsDisplay = true }
+        [modes, peaks].forEach { $0.needsDisplay = true }
     }
     func show() {
         window.makeKeyAndOrderFront(nil)
@@ -213,7 +228,6 @@ final class VisPanelController: NSObject {
     }
     @objc private func closeWindow() { window.orderOut(nil); hub.refresh() }
     @objc private func modeChanged() { hub.settings.panel = VisPanelMode.allCases[modes.indexOfSelectedItem] }
-    @objc private func colorChanged() { hub.settings.coloring = VisColoring.allCases[colors.indexOfSelectedItem] }
     @objc private func peaksChanged() { hub.settings.peaks = peaks.state == .on }
     @objc private func fullScreen() { perform?("vis:fullscreen") }
 }
@@ -296,6 +310,12 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         case "falloff": s.falloff = min(4, max(0, Int(parts[2]) ?? s.falloff))
         case "falloffup": s.falloff = min(4, s.falloff + 1)
         case "falloffdown": s.falloff = max(0, s.falloff - 1)
+        case "peakfall": s.peakFalloff = min(4, max(0, Int(parts[2]) ?? s.peakFalloff))
+        case "bandwidth": s.bandWidth = BandWidth(rawValue: parts[2]) ?? s.bandWidth
+        case "fireheight": s.fireHeight = min(4, max(0, Int(parts[2]) ?? s.fireHeight))
+        case "fireturb": s.fireTurbulence = min(4, max(0, Int(parts[2]) ?? s.fireTurbulence))
+        case "firepalette": s.firePalette = FirePalette(rawValue: parts[2]) ?? s.firePalette
+        case "prefs": perform?("visprefs"); return
         case "scope": s.scope = ScopeStyle(rawValue: parts[2]) ?? s.scope
         case "refresh": s.refresh = VisRefresh(rawValue: parts[2]) ?? s.refresh
         case "autocycle": s.autoCycle.toggle()
@@ -326,8 +346,16 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         submenu("Window Visualization", VisPanelMode.allCases.map { ($0.title, "vis:mode:\($0.rawValue)") })
         submenu("Coloring", VisColoring.allCases.map { ($0.title, "vis:color:\($0.rawValue)") })
         submenu("Analyzer Falloff", ["Slower", "Slow", "Moderate", "Fast", "Faster"].enumerated().map { ($1, "vis:falloff:\($0)") })
+        let levels = ["Lowest", "Low", "Medium", "High", "Highest"]
+        submenu("Peak Falloff", ["Slower", "Slow", "Moderate", "Fast", "Faster"].enumerated().map { ($1, "vis:peakfall:\($0)") })
+        submenu("Band Line Width", BandWidth.allCases.map { ($0.title, "vis:bandwidth:\($0.rawValue)") })
+        submenu("Fire Height", levels.enumerated().map { ($1, "vis:fireheight:\($0)") })
+        submenu("Fire Turbulence", ["Calm", "Gentle", "Medium", "Strong", "Wild"].enumerated().map { ($1, "vis:fireturb:\($0)") })
+        submenu("Fire Colors", FirePalette.allCases.map { ($0.title, "vis:firepalette:\($0.rawValue)") })
         submenu("Oscilloscope Style", ScopeStyle.allCases.map { ($0.title, "vis:scope:\($0.rawValue)") })
         submenu("Refresh Rate", VisRefresh.allCases.map { ($0.title, "vis:refresh:\($0.rawValue)") })
+        menu.addItem(.separator())
+        item("Visualization Settings…", "vis:prefs")
         menu.addItem(.separator())
         item("Show Peaks", "vis:peaks"); item("Auto-Cycle Visualizations", "vis:autocycle"); item("Show Title in Full Screen", "vis:overlay")
         return menu
@@ -343,6 +371,11 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         case "mode": checked = s.panel.rawValue == parts[2]
         case "color": checked = s.coloring.rawValue == parts[2]
         case "falloff": checked = s.falloff == Int(parts[2])
+        case "peakfall": checked = s.peakFalloff == Int(parts[2])
+        case "bandwidth": checked = s.bandWidth.rawValue == parts[2]
+        case "fireheight": checked = s.fireHeight == Int(parts[2])
+        case "fireturb": checked = s.fireTurbulence == Int(parts[2])
+        case "firepalette": checked = s.firePalette.rawValue == parts[2]
         case "scope": checked = s.scope.rawValue == parts[2]
         case "refresh": checked = s.refresh.rawValue == parts[2]
         case "peaks": checked = s.peaks

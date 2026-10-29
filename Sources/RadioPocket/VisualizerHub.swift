@@ -12,8 +12,10 @@ final class VisualizerHub {
         let fullRate: () -> Bool
         let visible: () -> Bool
         let redraw: () -> Void
+        let busy: () -> Bool
     }
     let analyzer = SpectrumAnalyzer()
+    let miniFire = FireField()
     var settings = VisSettings() { didSet {
         guard settings != oldValue else { return }
         settingObservers.forEach { $0(settings) }
@@ -58,8 +60,8 @@ final class VisualizerHub {
         return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible) && !NSApp.isHidden
     }
 
-    func register(owner: AnyObject, fullRate: @escaping () -> Bool = { false }, visible: @escaping () -> Bool, redraw: @escaping () -> Void) {
-        clients.append(Client(owner: owner, fullRate: fullRate, visible: visible, redraw: redraw))
+    func register(owner: AnyObject, fullRate: @escaping () -> Bool = { false }, visible: @escaping () -> Bool, redraw: @escaping () -> Void, busy: @escaping () -> Bool = { false }) {
+        clients.append(Client(owner: owner, fullRate: fullRate, visible: visible, redraw: redraw, busy: busy))
     }
     func observeSettings(_ block: @escaping (VisSettings) -> Void) { settingObservers.append(block) }
 
@@ -67,7 +69,7 @@ final class VisualizerHub {
     func refresh() {
         clients.removeAll { $0.owner == nil }
         let visible = clients.filter { $0.visible() }
-        guard !visible.isEmpty, hasSignal() || !analyzer.isSilent else {
+        guard !visible.isEmpty, hasSignal() || !analyzer.isSilent || animating(visible) else {
             stop()
             visible.forEach { $0.redraw() }
             return
@@ -94,6 +96,9 @@ final class VisualizerHub {
         analyzer.advance(raw: raw, scope: scope, dt: 0.2, falloff: 4)
     }
 
+    /// Flames keep burning down after the bars hit zero.
+    private func animating(_ visible: [Client]) -> Bool { miniFire.isHot || visible.contains { $0.busy() } }
+
     private func stop() { timer?.invalidate(); timer = nil }
 
     private func tick() {
@@ -105,12 +110,13 @@ final class VisualizerHub {
         var rate: Double?
         if hasSignal() { rate = samples.withUnsafeMutableBufferPointer { source?($0.baseAddress!, $0.count) } }
         if let rate {
-            analyzer.advance(raw: analyzer.bands(from: samples, sampleRate: rate), scope: SpectrumAnalyzer.scopeWindow(from: samples), dt: dt, falloff: settings.falloff)
+            analyzer.advance(raw: analyzer.bands(from: samples, sampleRate: rate), scope: SpectrumAnalyzer.scopeWindow(from: samples), dt: dt, falloff: settings.falloff, peakFalloff: settings.peakFalloff)
         } else {
-            analyzer.decay(dt: dt, falloff: settings.falloff)
+            analyzer.decay(dt: dt, falloff: settings.falloff, peakFalloff: settings.peakFalloff)
         }
+        if settings.mini == .fire { miniFire.resize(columns: 76, rows: 16); miniFire.advance(dt: dt, bars: analyzer.frame.bars, settings: settings) }
         if settings.autoCycle, now - lastCycle > 15 { lastCycle = now; settings.panel = settings.panel.next }
         visible.forEach { $0.redraw() }
-        if rate == nil, analyzer.isSilent { stop() }
+        if rate == nil, analyzer.isSilent, !animating(visible) { stop() }
     }
 }

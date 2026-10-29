@@ -12,9 +12,9 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
 
     init(library: Library) {
         self.library = library
-        let window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 300), styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        let window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
         window.title = "Favorite Stations"
-        window.minSize = NSSize(width: 420, height: 220)
+        window.minSize = NSSize(width: 420, height: 220); window.isUserResizable = true
         window.isReleasedWhenClosed = false
         super.init(window: window)
         let chrome = ClassicChrome(frame: NSRect(x: 0, y: 0, width: 540, height: 300)); chrome.title = "FAVORITE STATIONS"
@@ -127,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         engine.setVolume(smokePath == nil ? library.state.volume : 0)
         engine.equalizer.settings = library.state.equalizer ?? EQSettings()
+        engine.leveling = library.state.leveling ?? false
         buildMenu()
         view = PlayerView(engine: engine)
         window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 232), styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
@@ -155,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.volumeChanged = { [weak self] value in
             guard let self else { return }
             self.engine.setVolume(value)
+            if self.sleepBaseVolume != nil { self.sleepBaseVolume = value }   // the fade continues from the new level
             self.volumeSave?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.persistVolume() }
             self.volumeSave = work
@@ -234,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         eqView.skin = view.skin
         if let path = argument("--preferences-preview") {
-            handle("skins")
+            handle(argument("--preferences-page") ?? "skins")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if let content = self.preferences?.window?.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
                     content.cacheDisplay(in: content.bounds, to: rep)
@@ -245,6 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if let path = argument("--directory-preview") {
             let browser = makeDiscovery()
+            if let size = argument("--directory-size")?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
+                browser.window?.setContentSize(NSSize(width: size[0], height: size[1]))
+            }
             browser.loaded = { success in
                 if success, let content = browser.window?.contentView {
                     content.layoutSubtreeIfNeeded()
@@ -427,7 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         app.addItem(.separator())
         app.addItem(withTitle: "Quit RadioPocket", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for (title, items) in [
-            ("Radio", [("Open Stream…", "open", "o"), ("Copy Open-in-Player Link", "copyLink", ""), ("Play / Pause", "toggle", "p"), ("Stop", "stop", "."), ("Rewind 10 Seconds", "back10", "["), ("Forward 10 Seconds", "forward10", "]"), ("Jump to Live", "live", "j"), ("Save Favorite…", "favorite", "d"), ("Station Library", "discovery", "b"), ("Favorite Stations", "favorites", "l"), ("Equalizer", "equalizer", "e")]),
+            ("Radio", [("Open Stream…", "open", "o"), ("Copy Open-in-Player Link", "copyLink", ""), ("Play / Pause", "toggle", "p"), ("Stop", "stop", "."), ("Rewind 10 Seconds", "back10", "["), ("Forward 10 Seconds", "forward10", "]"), ("Jump to Live", "live", "j"), ("Jump to Station…", "jump", "J"), ("Station Info…", "info", "I"), ("Loudness Leveling", "leveling", ""), ("Save Favorite…", "favorite", "d"), ("Station Library", "discovery", "b"), ("Favorite Stations", "favorites", "l"), ("Equalizer", "equalizer", "e")]),
             ("Appearance", [("Choose Skin…", "skins", "k"), ("Import Classic Skin…", "skin", "i"), ("Use RadioPocket Theme", "resetSkin", ""), ("Size: 1×", "scale1", "1"), ("Size: 2×", "scale2", "2"), ("Size: 3×", "scale3", "3"), ("Always on Top", "ontop", "t")])
         ] {
             let root = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -437,6 +442,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
                 item.representedObject = id; item.target = self; submenu.addItem(item)
             }
+        }
+        if let radio = menu.items.first(where: { $0.title == "Radio" })?.submenu {
+            let root = NSMenuItem(title: "Sleep Timer", action: nil, keyEquivalent: ""), sleep = NSMenu(title: "Sleep Timer")
+            for (title, minutes) in [("Off", 0), ("15 Minutes", 15), ("30 Minutes", 30), ("45 Minutes", 45), ("60 Minutes", 60), ("90 Minutes", 90), ("2 Hours", 120)] {
+                let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = "sleep:\(minutes)"; sleep.addItem(item)
+            }
+            root.submenu = sleep
+            radio.insertItem(root, at: (radio.items.firstIndex { ($0.representedObject as? String) == "favorite" } ?? radio.items.count))
         }
         let visualizationRoot = NSMenuItem(title: "Visualization", action: nil, keyEquivalent: "")
         visualizationRoot.submenu = visuals.menu(withKeys: true); menu.addItem(visualizationRoot)
@@ -455,7 +469,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             saveWindowLevel()
         } else if let id = sender.representedObject as? String { handle(id) }
     }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        let id = item.representedObject as? String
+        if id == "leveling" { item.state = engine.leveling ? .on : .off }
+        else if let id, id.hasPrefix("sleep:") { item.state = Int(id.dropFirst(6)) == sleepMinutes ? .on : .off }
+        return true
+    }
     private var about: AboutController?
+    private var jump: JumpToStationController?
+    private var info: StationInfoController?
     private let nowPlaying = NowPlayingController()
     let visuals = VisualizerController()
     private var visSave: DispatchWorkItem?
@@ -505,12 +527,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "equalizer":
             if eqWindow.isVisible { eqWindow.orderOut(nil) }
             else {
-                eqWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: window.frame.minY - 4))
+                eqWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: window.frame.minY))
                 eqWindow.makeKeyAndOrderFront(nil)
             }
-        case "skins", "preferences":
+        case "skins", "preferences", "directories", "visprefs":
             if preferences == nil { preferences = PreferencesController(app: self) }
-            preferences?.present(skins: id == "skins")
+            preferences?.present(skins: id == "skins", directories: id == "directories", visualization: id == "visprefs")
         case "skin":
             let panel = NSOpenPanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "wsz") ?? .data, .zip]
@@ -526,6 +548,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 eqView.skin = nil
                 preferences?.refresh()
             } catch { showError(error) }
+        case "jump":
+            if jump == nil { jump = JumpToStationController(library: library); jump?.play = { [weak self] in self?.play($0) } }
+            jump?.present(over: window)
+        case "info":
+            if info == nil { info = StationInfoController(engine: engine, directory: directoryClient) }
+            info?.present(over: window)
+        case "leveling":
+            engine.leveling.toggle()
+            do { try library.update { $0.leveling = engine.leveling } } catch { showError(error) }
         case "shade": view.shaded.toggle(); resizePlayer()
         case "scale1": scale(1)
         case "scale2": scale(2)
@@ -534,13 +565,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "close": NSApp.terminate(nil)
         case "menu":
             let menu = NSMenu()
-            for (title, id) in [("Open Stream…", "open"), ("Station Library", "discovery"), ("Visualization…", "vis:panel"), ("Full Screen Visualization", "vis:fullscreen"), ("Favorite Stations", "favorites"), ("Choose Skin…", "skins"), ("Import Classic Skin…", "skin"), ("Use RadioPocket Theme", "resetSkin"), ("Size: 1×", "scale1"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
+            for (title, id) in [("Open Stream…", "open"), ("Save Favorite…", "favorite"), ("Station Library", "discovery"), ("Jump to Station…", "jump"), ("Station Info…", "info"), ("Loudness Leveling", "leveling"), ("Visualization…", "vis:panel"), ("Full Screen Visualization", "vis:fullscreen"), ("Favorite Stations", "favorites"), ("Choose Skin…", "skins"), ("Import Classic Skin…", "skin"), ("Use RadioPocket Theme", "resetSkin"), ("Size: 1×", "scale1"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
                 let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = id; menu.addItem(item)
             }
             menu.popUp(positioning: nil, at: NSPoint(x: 6, y: 14), in: view)
         default:
-            if id.hasPrefix("vis:") { visuals.handle(id) }
+            if id.hasPrefix("sleep:"), let minutes = Int(id.dropFirst(6)) { setSleep(minutes: minutes) }
+            else if id.hasPrefix("vis:") { visuals.handle(id) }
             else if id.hasPrefix("bundled:"), let url = bundledSkinURL(String(id.dropFirst(8))) { importSkin(url) }
             else if id.hasPrefix("installed:") { importSkin(URL(fileURLWithPath: String(id.dropFirst(10)))) }
             else if id.hasPrefix("skin:") { importSkin(URL(fileURLWithPath: String(id.dropFirst(5)))) }
@@ -555,11 +587,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let eqWindow, let eqView {
             eqWindow.setContentSize(NSSize(width: 275 * value, height: (eqView.shaded ? 14 : 116) * value))
             eqView.setBoundsSize(NSSize(width: 275, height: eqView.shaded ? 14 : 116))
-            eqWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: window.frame.minY - 4))
+            eqWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: window.frame.minY))
         }
         if save { do { try library.update { $0.scale = value } } catch { showError(error) } }
     }
     private func resizePlayer() {
+        // An equalizer docked under the player follows its bottom edge when the player shades or restores.
+        let docked = eqWindow.isVisible && abs(eqWindow.frame.maxY - window.frame.minY) <= 6
+        defer { if docked { eqWindow.setFrameTopLeftPoint(NSPoint(x: eqWindow.frame.minX, y: window.frame.minY)) } }
         let scale = library.state.scale, top = window.frame.maxY
         window.setContentSize(NSSize(width: 275 * scale, height: (view.shaded ? 14 : 116) * scale))
         window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
@@ -612,7 +647,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if actions.indices.contains(index) { actions[index]() }
     }
 
+    // MARK: Sleep timer
+
+    private var sleepTimer: Timer?
+    private var sleepDeadline: Date?
+    private var sleepBaseVolume: Float?
+    private var sleepMinutes = 0
+    /// Stops playback after `minutes` (0 cancels). The last 20 seconds fade the volume down; it is restored afterwards.
+    private func setSleep(minutes: Int) {
+        cancelSleep()
+        sleepMinutes = minutes
+        guard minutes > 0 else { return }
+        sleepDeadline = Date().addingTimeInterval(Double(minutes) * 60)
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.sleepTick() }
+        RunLoop.main.add(timer, forMode: .common); sleepTimer = timer
+        sleepTick()
+    }
+    private func cancelSleep() {
+        sleepTimer?.invalidate(); sleepTimer = nil; sleepDeadline = nil; sleepMinutes = 0
+        if let base = sleepBaseVolume { sleepBaseVolume = nil; engine.setVolume(base) }
+        engine.sleepRemaining = nil
+        view?.needsDisplay = true
+    }
+    private func sleepTick() {
+        guard let deadline = sleepDeadline else { return }
+        let remaining = Int(ceil(deadline.timeIntervalSinceNow))
+        guard remaining > 0 else { cancelSleep(); engine.stop(); return }
+        engine.sleepRemaining = remaining
+        if remaining <= 20, engine.status == .playing {
+            if sleepBaseVolume == nil { sleepBaseVolume = engine.player.volume }
+            engine.setVolume((sleepBaseVolume ?? 1) * Float(remaining) / 20)
+        }
+        view.needsDisplay = true
+    }
+
     private func play(_ station: Station) {
+        info?.stationChanged()
         do { try library.update { $0.lastStation = station }; recordedStation = nil; engine.play(station) }
         catch { showError(error) }
     }
@@ -621,7 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func persistVolume() {
         guard library != nil, smokePath == nil else { return }
-        do { try library.update { $0.volume = engine.player.volume } } catch { showError(error) }
+        do { try library.update { $0.volume = sleepBaseVolume ?? engine.player.volume } } catch { showError(error) }
     }
     func openDialog(station: Station? = nil, favoriteOnly: Bool = false) {
         let dialog = StreamDialog(station: station, favoriteOnly: favoriteOnly)
@@ -745,7 +815,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         } catch { showError(error) }
     }
-    private func showError(_ error: Error) {
+    /// Tells an open library window that the user changed their directory list.
+    func directoriesChanged() { discovery?.refreshSources() }
+    func showError(_ error: Error) {
         let alert = NSAlert(); alert.alertStyle = .warning
         alert.messageText = "RadioPocket"; alert.informativeText = error.localizedDescription
         alert.runModal()

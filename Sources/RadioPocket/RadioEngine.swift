@@ -12,6 +12,10 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     private(set) var title = "OPEN A STREAM TO BEGIN"
     private(set) var detail = "DIRECT INTERNET RADIO"
     private(set) var elapsed = 0
+    /// Seconds left on the sleep timer, shown on the status line while it runs.
+    var sleepRemaining: Int?
+    /// Evens out loud and quiet stations. Applies to every stream RadioPocket decodes itself.
+    var leveling = false { didSet { stream?.setLeveling(leveling); refreshEQStatus() } }
     var changed: (() -> Void)?
     /// Called once when automatic reconnection gives up (or the stream can never play), so the app can offer alternatives.
     var onGiveUp: ((Station, String) -> Void)?
@@ -101,8 +105,9 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         let volume = Int((player.volume * 100).rounded())
         if !equalizer.available && equalizer.settings.enabled { return "LIVE • EQ UNAVAILABLE FOR THIS STREAM" }
         let behind = Int(delay.rounded())
-        if behind >= 2 { return String(format: "DELAYED -%d:%02d • L: LIVE • %d%%", behind / 60, behind % 60, volume) }
-        return "LIVE STREAM • \(volume)% VOLUME"
+        let sleep = sleepRemaining.map { String(format: " • SLEEP %d:%02d", $0 / 60, $0 % 60) } ?? ""
+        if behind >= 2 { return String(format: "DELAYED -%d:%02d • L: LIVE • %d%%", behind / 60, behind % 60, volume) + sleep }
+        return "LIVE STREAM • \(volume)% VOLUME" + sleep
     }
 
     func play(_ station: Station) {
@@ -138,7 +143,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     }
 
     private func install(_ url: URL, token: UUID) {
-        let direct = RadioStream(volume: player.volume)
+        let direct = RadioStream(volume: player.volume, leveling: leveling)
         stream = direct
         equalizer.bind(direct.dsp)
         direct.playing = { [weak self] in
@@ -159,6 +164,21 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         }
         direct.start(url)
     }
+
+    /// What the connection is doing now, for the display and the station-info window. Nil for AVPlayer fallback streams.
+    struct StreamInfo {
+        var codec: String, sampleRate: Double, channels: Int
+        var kbps: Int?
+        var bufferedSeconds: Double, delay: Double
+        var levelDb: Double
+    }
+    var streamInfo: StreamInfo? {
+        guard let stream, let format = stream.format else { return nil }
+        return StreamInfo(codec: format.codec, sampleRate: format.rate, channels: format.channels, kbps: stream.bitrate(),
+                          bufferedSeconds: stream.rewindable, delay: stream.delay, levelDb: leveling ? stream.levelGain : 0)
+    }
+    /// True when playback runs through AVPlayer, which has no EQ, leveler or buffer to report.
+    var usesFallbackPlayer: Bool { stream == nil && player.currentItem != nil }
 
     /// Newest mono post-EQ samples for the visualizer, or nil when nothing is playing or the stream
     /// is decoded by AVPlayer (HLS), whose audio macOS does not expose to a processing tap.

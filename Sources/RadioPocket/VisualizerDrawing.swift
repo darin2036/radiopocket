@@ -5,35 +5,37 @@ import AppKit
 enum VisDraw {
     static let miniSlot = NSRect(x: 24, y: 43, width: 76, height: 16)
 
-    private static func ramp(_ value: Float, _ colors: [NSColor]) -> NSColor { colors[17 - min(15, max(0, Int((value * 15).rounded())))] }
+    static func ramp(_ value: Float, _ colors: [NSColor]) -> NSColor { colors[17 - min(15, max(0, Int((value * 15).rounded())))] }
 
     // MARK: Mini visualizer (76 × 16, 19 bars of 3 px + 1 px gap)
 
     static func mini(_ hub: VisualizerHub, in slot: NSRect = miniSlot) {
         let c = hub.colors, f = hub.frame, s = hub.settings
         c[0].setFill(); slot.fill()
+        if s.mini == .fire { miniFire(hub, in: slot); return }
         c[1].setFill()
         for y in stride(from: 0, to: 16, by: 2) { for x in stride(from: 0, to: 76, by: 2) { NSRect(x: slot.minX + CGFloat(x), y: slot.minY + CGFloat(y), width: 1, height: 1).fill() } }
         switch s.mini {
-        case .spectrum:
+        case .spectrum, .fire:
+            let coloring = s.coloring
             for bar in 0..<19 {
                 let range = (bar * 4)..<(bar * 4 + 4)
                 let level = range.map { f.bars[$0] }.max() ?? 0
                 let height = Int((level * 16).rounded())
-                let x = slot.minX + CGFloat(bar * 4)
+                let thin = s.bandWidth == .thin, w: CGFloat = thin ? 1 : 3, x = slot.minX + CGFloat(bar * 4) + (thin ? 1 : 0)
                 if height > 0 {
-                    switch s.coloring {
+                    switch coloring {
                     case .normal:
-                        for row in 0..<height { c[17 - row].setFill(); NSRect(x: x, y: slot.maxY - 1 - CGFloat(row), width: 3, height: 1).fill() }
+                        for row in 0..<height { c[17 - row].setFill(); NSRect(x: x, y: slot.maxY - 1 - CGFloat(row), width: w, height: 1).fill() }
                     case .fire:
-                        c[17 - (height - 1)].setFill(); NSRect(x: x, y: slot.maxY - CGFloat(height), width: 3, height: CGFloat(height)).fill()
+                        c[17 - (height - 1)].setFill(); NSRect(x: x, y: slot.maxY - CGFloat(height), width: w, height: CGFloat(height)).fill()
                     case .line:
-                        c[17 - (height - 1)].setFill(); NSRect(x: x + 1, y: slot.maxY - CGFloat(height), width: 1, height: CGFloat(height)).fill()
+                        c[17 - (height - 1)].setFill(); NSRect(x: x + (thin ? 0 : 1), y: slot.maxY - CGFloat(height), width: 1, height: CGFloat(height)).fill()
                     }
                 }
                 if s.peaks {
                     let peak = Int(((range.map { f.peaks[$0] }.max() ?? 0) * 16).rounded())
-                    if peak > 0 { c[23].setFill(); NSRect(x: x, y: slot.maxY - CGFloat(peak), width: 3, height: 1).fill() }
+                    if peak > 0 { c[23].setFill(); NSRect(x: x, y: slot.maxY - CGFloat(peak), width: w, height: 1).fill() }
                 }
             }
         case .scope:
@@ -59,7 +61,7 @@ enum VisDraw {
 
     // MARK: Window / full-screen visualizations
 
-    static func panel(_ mode: VisPanelMode, hub: VisualizerHub, in rect: NSRect, history: [[Float]]) {
+    static func panel(_ mode: VisPanelMode, hub: VisualizerHub, in rect: NSRect, history: [[Float]], state: VisState) {
         let c = hub.colors, f = hub.frame, s = hub.settings
         c[0].setFill(); rect.fill()
         switch mode {
@@ -68,11 +70,21 @@ enum VisDraw {
         case .mirror: mirror(f, s, c, rect)
         case .circle: circle(f, s, c, rect)
         case .spectrogram: spectrogram(history, c, rect)
+        case .ring: ring(f, s, c, rect, state)
+        case .lissajous: lissajous(f, s, c, rect, state)
+        case .waterfall: waterfall(history, c, rect)
+        case .starfield: starfield(f, s, c, rect, state)
+        case .tunnel: tunnel(f, s, c, rect, state)
+        case .plasma: plasma(f, c, rect, state)
+        case .kaleidoscope: kaleidoscope(f, s, c, rect, state)
+        case .fireworks: fireworks(f, s, c, rect, state)
+        case .aurora: aurora(f, s, c, rect, state)
+        case .fire: fire(s, c, rect, state)
         }
     }
 
     private static func bars(_ f: VisFrame, _ s: VisSettings, _ c: [NSColor], _ rect: NSRect) {
-        let n = SpectrumAnalyzer.bands, slot = rect.width / CGFloat(n), barWidth = max(1, slot * 0.74)
+        let n = SpectrumAnalyzer.bands, slot = rect.width / CGFloat(n), barWidth = max(1, slot * (s.bandWidth == .thin ? 0.36 : 0.74))
         let segments = max(10, Int(rect.height / 12)), segmentHeight = rect.height / CGFloat(segments), gap = max(1, segmentHeight * 0.16)
         for i in 0..<n {
             let x = rect.minX + CGFloat(i) * slot + (slot - barWidth) / 2
@@ -175,14 +187,8 @@ enum VisDraw {
                 pixels[offset + 2] = UInt8(color.blueComponent * brightness * 255); pixels[offset + 3] = 255
             }
         }
-        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
-              let image = CGImage(width: columns, height: rows, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: columns * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
-              let context = NSGraphicsContext.current?.cgContext else { return }
-        context.saveGState(); context.interpolationQuality = .none
         let width = rect.width * CGFloat(columns) / CGFloat(SpectrogramLimit.columns)
-        context.draw(image, in: CGRect(x: rect.maxX - width, y: rect.minY, width: width, height: rect.height))
-        context.restoreGState()
+        drawBitmap(pixels, width: columns, height: rows, in: CGRect(x: rect.maxX - width, y: rect.minY, width: width, height: rect.height), smooth: false)
     }
 }
 

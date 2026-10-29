@@ -14,18 +14,74 @@ struct RadioListing: Codable, Equatable, Identifiable {
     var clicks: Int
     var hls: Bool
     var directoryID: String?
+    /// The station's own website (http/https only), when the directory lists one.
+    var homepage = ""
+    /// Which directory the listing came from; display only, never stored.
+    var sourceName: String?
 
     var likelyPlayable: Bool {
-        hls || ["MP3", "AAC", "AAC+", "AAC-LC", "HE-AAC", "HE-AACV2", "OPUS", "OGG", "VORBIS"].contains(codec.uppercased())
+        // Lists that carry no codec (station lists, saved stations) get the benefit of the doubt.
+        (directoryID == nil && codec.isEmpty) || hls || ["MP3", "AAC", "AAC+", "AAC-LC", "HE-AAC", "HE-AACV2", "OPUS", "OGG", "VORBIS"].contains(codec.uppercased())
+    }
+    /// Quality on a 0–5 scale from codec and bitrate, so 64 kbps HE-AAC and 128 kbps MP3 compare fairly. 0 means unknown.
+    var quality: Int {
+        let name = codec.uppercased()
+        if ["FLAC", "ALAC", "WAV", "PCM"].contains(name) { return 5 }
+        guard bitrate > 0 else { return 0 }
+        // Rough MP3-equivalent kbps: newer codecs sound the same at a lower rate.
+        let factor: Double
+        switch name {
+        case "OPUS": factor = 2.0
+        case "AAC+", "HE-AAC", "HE-AACV2", "AACP": factor = 1.9
+        case "AAC", "AAC-LC": factor = 1.4
+        case "OGG", "VORBIS": factor = 1.3
+        default: factor = 1.0
+        }
+        let effective = Double(bitrate) * factor
+        return effective < 56 ? 1 : effective < 96 ? 2 : effective < 150 ? 3 : effective < 224 ? 4 : 5
+    }
+    var qualityStars: String { quality == 0 ? "—" : String(repeating: "★", count: quality) + String(repeating: "☆", count: 5 - quality) }
+    /// Orders listings by a column key; ties fall back to name so the order is stable.
+    static func ordered(_ rows: [RadioListing], by order: String, reverse: Bool) -> [RadioListing] {
+        func number(_ r: RadioListing) -> Int? {
+            switch order {
+            case "bitrate": return r.bitrate
+            case "quality": return r.quality * 100_000 + r.bitrate
+            case "votes": return r.votes
+            case "clickcount": return r.clicks
+            default: return nil
+            }
+        }
+        func text(_ r: RadioListing) -> String {
+            switch order {
+            case "tags": return r.tags
+            case "country": return r.country
+            case "codec": return r.formatLabel
+            default: return r.name
+            }
+        }
+        func name(_ a: RadioListing, _ b: RadioListing) -> Bool { a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending }
+        return rows.sorted { a, b in
+            if let x = number(a), let y = number(b) { return x == y ? name(a, b) : (reverse ? x > y : x < y) }
+            // Listings with no value for a text column always sink to the bottom.
+            let x = text(a), y = text(b)
+            if x.isEmpty != y.isEmpty { return !x.isEmpty }
+            let result = x.localizedCaseInsensitiveCompare(y)
+            return result == .orderedSame ? name(a, b) : (reverse ? result == .orderedDescending : result == .orderedAscending)
+        }
     }
     var formatLabel: String { hls ? (codec.isEmpty ? "HLS" : "\(codec)/HLS") : (codec.isEmpty ? "—" : codec) }
     var station: Station { Station(id: UUID(uuidString: id) ?? UUID(), name: name, address: address) }
     init(station: Station) {
         id = station.id.uuidString; name = station.name; address = station.address
-        tags = ""; country = ""; countryCode = ""; codec = ""; bitrate = 0; votes = 0; clicks = 0; hls = false; directoryID = nil
+        tags = ""; country = ""; countryCode = ""; codec = ""; bitrate = 0; votes = 0; clicks = 0; hls = false; directoryID = nil; sourceName = nil
+    }
+    init(id: String, name: String, address: String, tags: String, country: String, countryCode: String, codec: String, bitrate: Int, votes: Int, clicks: Int, hls: Bool, sourceName: String?) {
+        self.id = id; self.name = name; self.address = address; self.tags = tags; self.country = country; self.countryCode = countryCode
+        self.codec = codec; self.bitrate = bitrate; self.votes = votes; self.clicks = clicks; self.hls = hls; self.directoryID = nil; self.sourceName = sourceName
     }
     private enum Keys: String, CodingKey {
-        case stationuuid, name, url, url_resolved, tags, country, countrycode, codec, bitrate, votes, clickcount, hls
+        case stationuuid, name, url, url_resolved, tags, country, countrycode, codec, bitrate, votes, clickcount, hls, homepage
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -36,7 +92,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
         guard let url = [string(.url_resolved), string(.url)].compactMap({ try? StreamAddress.parse($0) }).first else {
             throw RadioError.message("The directory entry has no HTTP audio URL.")
         }
-        id = uuid; directoryID = uuid; address = url.absoluteString
+        id = uuid; directoryID = uuid; sourceName = nil; address = url.absoluteString
         name = Self.clean(string(.name), limit: 300)
         if name.isEmpty { name = url.host ?? "Unnamed station" }
         tags = Self.clean(string(.tags), limit: 500)
@@ -45,6 +101,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
         codec = Self.clean(string(.codec), limit: 24).uppercased()
         bitrate = max(0, number(.bitrate)); votes = max(0, number(.votes)); clicks = max(0, number(.clickcount))
         hls = number(.hls) == 1
+        homepage = Self.clean(string(.homepage), limit: 300)
     }
     // This is an API value object, not a second on-disk station database.
     func encode(to encoder: Encoder) throws {
@@ -53,7 +110,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
         try c.encode(address, forKey: .url_resolved); try c.encode(tags, forKey: .tags)
         try c.encode(country, forKey: .country); try c.encode(countryCode, forKey: .countrycode)
         try c.encode(codec, forKey: .codec); try c.encode(bitrate, forKey: .bitrate); try c.encode(votes, forKey: .votes)
-        try c.encode(clicks, forKey: .clickcount); try c.encode(hls ? 1 : 0, forKey: .hls)
+        try c.encode(clicks, forKey: .clickcount); try c.encode(hls ? 1 : 0, forKey: .hls); try c.encode(homepage, forKey: .homepage)
     }
     private static func clean(_ value: String, limit: Int) -> String {
         String(String(value.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : String($0) }.joined()).trimmingCharacters(in: .whitespacesAndNewlines).prefix(limit))
@@ -69,11 +126,13 @@ struct DirectoryQuery: Hashable {
     var order = "clickcount"
     var reverse = true
     var supportedOnly = true
+    /// "all", or the identifier of one `DirectorySource`.
+    var sourceID = "all"
     var offset = 0
     static let pageSize = 100
     var items: [URLQueryItem] {
         var result = [URLQueryItem(name: "hidebroken", value: "true"), .init(name: "limit", value: "\(Self.pageSize)"),
-                      .init(name: "offset", value: "\(max(0, offset))"), .init(name: "order", value: order), .init(name: "reverse", value: reverse ? "true" : "false")]
+                      .init(name: "offset", value: "\(max(0, offset))"), .init(name: "order", value: order == "quality" ? "bitrate" : order), .init(name: "reverse", value: reverse ? "true" : "false")]
         for (key, value) in [("name", name), ("tag", genre), ("countrycode", countryCode), ("codec", codec)] {
             let value = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
             if !value.isEmpty { result.append(.init(name: key, value: value)) }
@@ -113,17 +172,22 @@ private struct DirectoryRows: Decodable {
     }
 }
 
-actor RadioDirectory {
+/// One Radio Browser-style server: the public mirrors, or a compatible server the user added.
+actor RadioBrowserDirectory: DirectoryBackend {
     private var mirrors: [URL]
     private var discovered = false
     private let session: URLSession
     private var cache: [DirectoryQuery: (Date, DirectoryPage)] = [:]
     private var recency: [DirectoryQuery] = []
     private let injected: Bool
+    private let label: String
+    /// Only the public Radio Browser counts plays and refreshes saved stations; a third-party server must not receive those.
+    private let primary: Bool
 
-    init(baseURLs: [URL]? = nil) {
+    init(baseURLs: [URL]? = nil, label: String = "Radio Browser", primary: Bool = true) {
         mirrors = baseURLs ?? [URL(string: "https://all.api.radio-browser.info")!]
         injected = baseURLs != nil
+        self.label = label; self.primary = primary
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.timeoutIntervalForRequest = 12
@@ -139,7 +203,8 @@ actor RadioDirectory {
         }
         await discover()
         let data = try await request(path: "/json/stations/search", items: query.items, validate: { _ = try JSONDecoder().decode(DirectoryRows.self, from: $0) })
-        let page = try Self.decodePage(data, query: query)
+        var page = try Self.decodePage(data, query: query)
+        page.stations = page.stations.map { var row = $0; row.sourceName = label; if !primary { row.directoryID = nil }; return row }
         try Task.checkCancellation()
         cache[query] = (Date(), page)
         recency.removeAll { $0 == query }; recency.append(query)
@@ -228,4 +293,70 @@ actor RadioDirectory {
         }
         throw lastError
     }
+}
+
+/// Every enabled directory behind one search. Radio Browser stays the primary source; the hub adds the rest and merges them.
+actor RadioDirectory {
+    private let radioBrowser: RadioBrowserDirectory
+    private var sources = DirectorySource.resolved(nil)
+    private var backends: [String: (key: String, backend: DirectoryBackend)] = [:]
+
+    init(baseURLs: [URL]? = nil) { radioBrowser = RadioBrowserDirectory(baseURLs: baseURLs) }
+
+    /// Applies the user's directory list. Backends are kept between calls so their caches survive.
+    func configure(_ list: [DirectorySource]) {
+        sources = DirectorySource.resolved(list)
+        var next: [String: (key: String, backend: DirectoryBackend)] = [:]
+        for source in sources where source.enabled && !(source.kind == .radioBrowser) {
+            let key = "\(source.kind.rawValue)|\(source.url ?? "")|\(source.name)"
+            if let existing = backends[source.id], existing.key == key { next[source.id] = existing }
+            else if let backend = source.makeBackend() { next[source.id] = (key, backend) }
+        }
+        backends = next
+    }
+
+    func search(_ query: DirectoryQuery, refresh: Bool = false) async throws -> DirectoryPage {
+        let active = sources.filter { $0.enabled && (query.sourceID == "all" || $0.id == query.sourceID) }
+        guard !active.isEmpty else { throw RadioError.message("That directory is turned off. Enable it in Preferences ▸ Directories.") }
+        let radioBrowser = radioBrowser, backends = backends
+        let results = await withTaskGroup(of: (Int, Result<DirectoryPage, Error>).self) { group in
+            for (index, source) in active.enumerated() {
+                let backend: DirectoryBackend? = source.kind == .radioBrowser ? radioBrowser : backends[source.id]?.backend
+                group.addTask {
+                    guard let backend else { return (index, .failure(RadioError.message("\(source.name) isn’t available."))) }
+                    do { return (index, .success(try await backend.search(query, refresh: refresh))) }
+                    catch { return (index, .failure(error)) }
+                }
+            }
+            var collected: [(Int, Result<DirectoryPage, Error>)] = []
+            for await item in group { collected.append(item) }
+            return collected.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+        try Task.checkCancellation()
+        let pages = results.compactMap { try? $0.get() }
+        guard !pages.isEmpty else {
+            if case .failure(let error)? = results.first { throw error }
+            throw RadioError.message("The radio directory is unavailable. Your favorites and direct streams still work.")
+        }
+        if pages.count == 1 {
+            var only = pages[0]
+            if query.order != "clickcount" { only.stations = RadioListing.ordered(only.stations, by: query.order, reverse: query.reverse) }
+            return only
+        }
+        // Interleave so no single directory fills the page, and drop streams several directories list.
+        var merged: [RadioListing] = [], seen = Set<String>()
+        for round in 0..<(pages.map { $0.stations.count }.max() ?? 0) {
+            for page in pages where round < page.stations.count {
+                let row = page.stations[round]
+                if seen.insert(row.address).inserted { merged.append(row) }
+            }
+        }
+        if query.order != "clickcount" { merged = RadioListing.ordered(merged, by: query.order, reverse: query.reverse) }
+        return DirectoryPage(stations: merged, hasMore: pages.contains(where: \.hasMore), rawCount: pages.reduce(0) { $0 + $1.rawCount }, cached: pages.allSatisfy(\.cached))
+    }
+
+    static func decodePage(_ data: Data, query: DirectoryQuery) throws -> DirectoryPage { try RadioBrowserDirectory.decodePage(data, query: query) }
+    func refreshed(uuid: String) async -> RadioListing? { await radioBrowser.refreshed(uuid: uuid) }
+    func alternates(for station: Station, limit: Int = 3) async -> [RadioListing] { await radioBrowser.alternates(for: station, limit: limit) }
+    func countPlay(_ identifier: String) async { await radioBrowser.countPlay(identifier) }
 }

@@ -3,13 +3,19 @@ import Accelerate
 
 // MARK: - Settings
 
-enum MiniVisMode: String, Codable, CaseIterable { case spectrum, scope, off
-    var title: String { ["spectrum": "Spectrum Analyzer", "scope": "Oscilloscope", "off": "Off"][rawValue]! }
-    var next: MiniVisMode { self == .spectrum ? .scope : self == .scope ? .off : .spectrum }
+enum MiniVisMode: String, Codable, CaseIterable { case spectrum, fire, scope, off
+    var title: String { ["spectrum": "Bars", "fire": "Fire", "scope": "Oscilloscope", "off": "Off"][rawValue]! }
+    var next: MiniVisMode { self == .spectrum ? .fire : self == .fire ? .scope : .spectrum }
 }
 enum VisColoring: String, Codable, CaseIterable { case normal, fire, line
     var title: String { rawValue.capitalized }
     var next: VisColoring { self == .normal ? .fire : self == .fire ? .line : .normal }
+}
+enum BandWidth: String, Codable, CaseIterable { case thick, thin
+    var title: String { rawValue.capitalized }
+}
+enum FirePalette: String, Codable, CaseIterable { case flame, blue, toxic, skin
+    var title: String { ["flame": "Flame", "blue": "Blue Flame", "toxic": "Toxic Green", "skin": "Skin Colors"][rawValue]! }
 }
 enum ScopeStyle: String, Codable, CaseIterable { case lines, dots, solid
     var title: String { rawValue.capitalized }
@@ -18,8 +24,28 @@ enum VisRefresh: String, Codable, CaseIterable { case full, half, quarter
     var framesPerSecond: Double { self == .full ? 60 : self == .half ? 30 : 15 }
     var title: String { self == .full ? "Full (60 fps)" : self == .half ? "Half (30 fps)" : "Quarter (15 fps)" }
 }
-enum VisPanelMode: String, Codable, CaseIterable { case bars, scope, mirror, circle, spectrogram
-    var title: String { ["bars": "Spectrum Bars", "scope": "Oscilloscope", "mirror": "Mirror Spectrum", "circle": "Circular Spectrum", "spectrogram": "Spectrogram"][rawValue]! }
+enum VisPanelMode: String, Codable, CaseIterable {
+    case bars, scope, mirror, circle, spectrogram
+    case ring, lissajous, waterfall, starfield, tunnel, plasma, kaleidoscope, fireworks, aurora, fire
+    var title: String {
+        switch self {
+        case .bars: "Spectrum Bars"
+        case .scope: "Oscilloscope"
+        case .mirror: "Mirror Spectrum"
+        case .circle: "Circular Spectrum"
+        case .spectrogram: "Spectrogram"
+        case .ring: "Waveform Ring"
+        case .lissajous: "Vectorscope"
+        case .waterfall: "Waterfall"
+        case .starfield: "Starfield"
+        case .tunnel: "Spectrum Tunnel"
+        case .plasma: "Plasma"
+        case .kaleidoscope: "Kaleidoscope"
+        case .fireworks: "Fireworks"
+        case .aurora: "Aurora"
+        case .fire: "Fire"
+        }
+    }
     var next: VisPanelMode { let all = Self.allCases; return all[(all.firstIndex(of: self)! + 1) % all.count] }
     var previous: VisPanelMode { let all = Self.allCases; return all[(all.firstIndex(of: self)! + all.count - 1) % all.count] }
 }
@@ -31,6 +57,14 @@ struct VisSettings: Codable, Equatable {
     var peaks = true
     /// 0 (slowest) … 4 (fastest), like Winamp’s analyzer falloff choices.
     var falloff = 2
+    /// 0 (slowest) … 4 (fastest) fall speed of the peak markers.
+    var peakFalloff = 2
+    var bandWidth = BandWidth.thick
+    /// Flame reach, 0 (embers) … 4 (towering).
+    var fireHeight = 2
+    /// How much the flames flicker and sway, 0 (calm) … 4 (wild).
+    var fireTurbulence = 2
+    var firePalette = FirePalette.flame
     var scope = ScopeStyle.lines
     var refresh = VisRefresh.half
     var autoCycle = false
@@ -45,6 +79,11 @@ struct VisSettings: Codable, Equatable {
         s.coloring = (try? c.decodeIfPresent(VisColoring.self, forKey: .coloring)) ?? s.coloring
         s.peaks = (try? c.decodeIfPresent(Bool.self, forKey: .peaks)) ?? s.peaks
         s.falloff = min(4, max(0, (try? c.decodeIfPresent(Int.self, forKey: .falloff)) ?? s.falloff))
+        s.peakFalloff = min(4, max(0, (try? c.decodeIfPresent(Int.self, forKey: .peakFalloff)) ?? s.peakFalloff))
+        s.bandWidth = (try? c.decodeIfPresent(BandWidth.self, forKey: .bandWidth)) ?? s.bandWidth
+        s.fireHeight = min(4, max(0, (try? c.decodeIfPresent(Int.self, forKey: .fireHeight)) ?? s.fireHeight))
+        s.fireTurbulence = min(4, max(0, (try? c.decodeIfPresent(Int.self, forKey: .fireTurbulence)) ?? s.fireTurbulence))
+        s.firePalette = (try? c.decodeIfPresent(FirePalette.self, forKey: .firePalette)) ?? s.firePalette
         s.scope = (try? c.decodeIfPresent(ScopeStyle.self, forKey: .scope)) ?? s.scope
         s.refresh = (try? c.decodeIfPresent(VisRefresh.self, forKey: .refresh)) ?? s.refresh
         s.autoCycle = (try? c.decodeIfPresent(Bool.self, forKey: .autoCycle)) ?? s.autoCycle
@@ -140,9 +179,9 @@ final class SpectrumAnalyzer {
     }
 
     /// Smooths one raw analysis into the persistent display frame. `dt` is seconds since the previous call.
-    func advance(raw: [Float], scope: [Float], dt: Double, falloff: Int) {
+    func advance(raw: [Float], scope: [Float], dt: Double, falloff: Int, peakFalloff: Int? = nil) {
         let fall = Float([0.6, 1.1, 1.8, 2.8, 4.5][min(4, max(0, falloff))] * dt)       // full-scale units per second
-        let peakFall = Float([0.35, 0.6, 0.9, 1.4, 2.2][min(4, max(0, falloff))] * dt)
+        let peakFall = Float([0.35, 0.6, 0.9, 1.4, 2.2][min(4, max(0, peakFalloff ?? falloff))] * dt)
         var total: Float = 0
         for i in 0..<Self.bands {
             frame.bars[i] = raw[i] >= frame.bars[i] ? raw[i] : max(raw[i], frame.bars[i] - fall)
@@ -166,8 +205,8 @@ final class SpectrumAnalyzer {
         return Array(samples[start..<start + length])
     }
 
-    func decay(dt: Double, falloff: Int) {
-        advance(raw: [Float](repeating: 0, count: Self.bands), scope: [Float](repeating: 0, count: Self.scopeLength), dt: dt, falloff: falloff)
+    func decay(dt: Double, falloff: Int, peakFalloff: Int? = nil) {
+        advance(raw: [Float](repeating: 0, count: Self.bands), scope: [Float](repeating: 0, count: Self.scopeLength), dt: dt, falloff: falloff, peakFalloff: peakFalloff)
     }
     var isSilent: Bool { frame.bars.allSatisfy { $0 < 0.002 } && frame.peaks.allSatisfy { $0 < 0.002 } }
     func reset() { frame = VisFrame(); hold = [Double](repeating: 0, count: Self.bands) }

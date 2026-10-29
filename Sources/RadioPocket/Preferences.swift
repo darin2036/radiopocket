@@ -9,7 +9,7 @@ private final class PreferencesBackground: NSView {
 /// A lazy, native preferences window; no web runtime or background polling.
 final class PreferencesController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
     private unowned let app: AppDelegate
-    private let categories = ["General Preferences", "    Playback", "    Appearance", "    Skins", "Equalizer", "Media Library"]
+    private let categories = ["General Preferences", "    Playback", "    Appearance", "    Skins", "Equalizer", "Media Library", "    Directories", "Visualization"]
     private let sidebar = NSTableView()
     private let skins = NSTableView()
     private let page = NSView()
@@ -38,8 +38,8 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         window.setFrameAutosaveName("RadioPocket.Preferences")
     }
     required init?(coder: NSCoder) { fatalError() }
-    func present(skins: Bool = false) {
-        if skins { category = 3 }
+    func present(skins: Bool = false, directories: Bool = false, visualization: Bool = false) {
+        if skins { category = 3 } else if directories { category = 6 } else if visualization { category = 7 }
         sidebar.selectRowIndexes(IndexSet(integer: category), byExtendingSelection: false)
         refresh(); window?.makeKeyAndOrderFront(nil)
     }
@@ -76,17 +76,145 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             presets.target = self; presets.action = #selector(presetChanged(_:)); page.addSubview(presets)
             label("10 bands and preamp, with 18 classic presets.\nEqualization applies to MP3 / AAC streams.\nHLS playback does not support the equalizer.", x: 0, y: 204, width: 510, height: 80)
             button("Open equalizer…", "equalizer", x: 0, y: 154)
+        case 6: directoriesPage()
+        case 7: visualizationPage()
         case 5:
             label("Internet radio", x: 0, y: 402, bold: true)
-            label("Browse independent stations through Radio Browser.\nSave favorites or open a station’s direct stream URL.", x: 0, y: 332, width: 510, height: 54)
+            label("Browse stations from eight built-in sources and any directories you add.\nSave favorites or open a station’s direct stream URL.", x: 0, y: 332, width: 510, height: 54)
             button("Station library…", "discovery", x: 0, y: 282)
             button("Favorite stations…", "favorites", x: 200, y: 282)
-            label("\(app.library.state.favorites.count) saved favorites", x: 0, y: 226)
+            button("Manage directories…", "directories", x: 0, y: 238, width: 390)
+            label("\(app.library.state.favorites.count) saved favorites", x: 0, y: 196)
         default:
             label("RadioPocket", x: 0, y: 402, bold: true)
             label("A compact, native internet radio player.\nSettings are saved automatically.\n\n⌘O  Open stream\n⌘B  Station library\n⌘E  Equalizer\n⌘K  Skins\n⌘,   Preferences", x: 0, y: 170, width: 510, height: 210)
             button("Open a stream…", "open", x: 0, y: 112)
         }
+    }
+    /// One row per visualization option, each a popup that writes straight to the shared settings.
+    private func visualizationPage() {
+        let s = app.visuals.hub.settings
+        let speeds = ["Slowest", "Slow", "Moderate", "Fast", "Fastest"], levels = ["Lowest", "Low", "Medium", "High", "Highest"], turbulence = ["Calm", "Gentle", "Medium", "Strong", "Wild"]
+        var y: CGFloat = 420
+        func row(_ title: String, _ id: String, _ items: [String], selected: Int) {
+            label(title, x: 0, y: y, width: 200)
+            let popup = NSPopUpButton(frame: NSRect(x: 210, y: y - 3, width: 220, height: 28), pullsDown: false)
+            popup.addItems(withTitles: items); popup.selectItem(at: selected)
+            popup.identifier = NSUserInterfaceItemIdentifier(id); popup.target = self; popup.action = #selector(visChanged(_:)); popup.setAccessibilityLabel(title)
+            page.addSubview(popup); y -= 28
+        }
+        func check(_ title: String, _ id: String, _ on: Bool) {
+            let box = NSButton(checkboxWithTitle: title, target: self, action: #selector(visToggled(_:)))
+            box.identifier = NSUserInterfaceItemIdentifier(id); box.state = on ? .on : .off; box.frame = NSRect(x: 0, y: y, width: 420, height: 24); page.addSubview(box); y -= 28
+        }
+        row("Player visualizer", "mini", MiniVisMode.allCases.map(\.title), selected: MiniVisMode.allCases.firstIndex(of: s.mini) ?? 0)
+        row("Window visualization", "mode", VisPanelMode.allCases.map(\.title), selected: VisPanelMode.allCases.firstIndex(of: s.panel) ?? 0)
+        row("Analyzer coloring", "color", VisColoring.allCases.map(\.title), selected: VisColoring.allCases.firstIndex(of: s.coloring) ?? 0)
+        row("Band line width", "bandwidth", BandWidth.allCases.map(\.title), selected: BandWidth.allCases.firstIndex(of: s.bandWidth) ?? 0)
+        row("Analyzer falloff", "falloff", speeds, selected: s.falloff)
+        row("Peak falloff", "peakfall", speeds, selected: s.peakFalloff)
+        row("Refresh rate", "refresh", VisRefresh.allCases.map(\.title), selected: VisRefresh.allCases.firstIndex(of: s.refresh) ?? 0)
+        row("Oscilloscope style", "scope", ScopeStyle.allCases.map(\.title), selected: ScopeStyle.allCases.firstIndex(of: s.scope) ?? 0)
+        label("Fire", x: 0, y: y, bold: true); y -= 30
+        row("Flame height", "fireheight", levels, selected: s.fireHeight)
+        row("Turbulence", "fireturb", turbulence, selected: s.fireTurbulence)
+        row("Flame colors", "firepalette", FirePalette.allCases.map(\.title), selected: FirePalette.allCases.firstIndex(of: s.firePalette) ?? 0)
+        check("Show peak markers", "peaks", s.peaks)
+        check("Cycle visualizations every 15 seconds", "autocycle", s.autoCycle)
+    }
+    @objc private func visChanged(_ sender: NSPopUpButton) {
+        guard let key = sender.identifier?.rawValue else { return }
+        let i = sender.indexOfSelectedItem
+        let value: String
+        switch key {
+        case "mini": value = MiniVisMode.allCases[i].rawValue
+        case "mode": value = VisPanelMode.allCases[i].rawValue
+        case "color": value = VisColoring.allCases[i].rawValue
+        case "bandwidth": value = BandWidth.allCases[i].rawValue
+        case "refresh": value = VisRefresh.allCases[i].rawValue
+        case "scope": value = ScopeStyle.allCases[i].rawValue
+        case "firepalette": value = FirePalette.allCases[i].rawValue
+        default: value = String(i)
+        }
+        app.visuals.handle("vis:\(key):\(value)")
+    }
+    @objc private func visToggled(_ sender: NSButton) { if let key = sender.identifier?.rawValue { app.visuals.handle("vis:\(key)") } }
+    private var directoryList: [DirectorySource] { DirectorySource.resolved(app.library.state.directories) }
+    private func directoriesPage() {
+        label("Choose where the station library looks. Search results from every enabled directory are combined, and the library window can also search one directory at a time.", x: 0, y: 398, width: 510, height: 44)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 54, width: 524, height: 336))
+        scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 504, height: max(334, CGFloat(directoryList.count * 48 + 16))))
+        scroll.documentView = content; page.addSubview(scroll)
+        content.scroll(NSPoint(x: 0, y: content.bounds.height))
+        var y = content.bounds.height - 34
+        for (index, source) in directoryList.enumerated() {
+            let box = NSButton(checkboxWithTitle: source.name, target: self, action: #selector(directoryToggled(_:)))
+            box.tag = index; box.state = source.enabled ? .on : .off; box.frame = NSRect(x: 0, y: y, width: source.builtIn ? 480 : 400, height: 20); content.addSubview(box)
+            if !source.builtIn {
+                let remove = NSButton(title: "Remove", target: self, action: #selector(directoryRemoved(_:)))
+                remove.tag = index; remove.bezelStyle = .rounded; remove.controlSize = .small; remove.frame = NSRect(x: 430, y: y - 2, width: 70, height: 22); content.addSubview(remove)
+            }
+            let detail = NSTextField(labelWithString: source.detail)
+            detail.font = .systemFont(ofSize: 11); detail.textColor = .secondaryLabelColor; detail.lineBreakMode = .byTruncatingMiddle
+            detail.frame = NSRect(x: 20, y: y - 16, width: 478, height: 14); content.addSubview(detail)
+            y -= 48
+        }
+        let customCount = directoryList.filter { !$0.builtIn }.count
+        let add = NSButton(title: "Add Directory…", target: self, action: #selector(addDirectory))
+        add.bezelStyle = .rounded; add.frame = NSRect(x: 0, y: 8, width: 160, height: 30); add.isEnabled = customCount < DirectorySource.maximumCustom; page.addSubview(add)
+        label("Add a Radio Browser–compatible server, or a link to an M3U / PLS list of stations.", x: 170, y: 8, width: 340, height: 32)
+    }
+    private func saveDirectories(_ list: [DirectorySource]) {
+        do { try app.library.update { $0.directories = list } } catch { app.showError(error); return }
+        let position = page.subviews.compactMap { $0 as? NSScrollView }.first?.contentView.bounds.origin
+        app.directoriesChanged(); refresh()
+        if let position, let scroll = page.subviews.compactMap({ $0 as? NSScrollView }).first {
+            scroll.contentView.scroll(to: position); scroll.reflectScrolledClipView(scroll.contentView)
+        }
+    }
+    @objc private func directoryToggled(_ sender: NSButton) {
+        var list = directoryList
+        guard list.indices.contains(sender.tag) else { return }
+        list[sender.tag].enabled = sender.state == .on
+        if !list.contains(where: \.enabled) { list[sender.tag].enabled = true } // The library needs at least one source.
+        saveDirectories(list)
+    }
+    @objc private func directoryRemoved(_ sender: NSButton) {
+        var list = directoryList
+        guard list.indices.contains(sender.tag), !list[sender.tag].builtIn else { return }
+        list.remove(at: sender.tag)
+        saveDirectories(list)
+    }
+    @objc private func addDirectory() {
+        let alert = NSAlert()
+        alert.messageText = "Add a station directory"
+        alert.informativeText = "Only add directories you trust. RadioPocket reads station names and stream links from them."
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 92))
+        let name = NSTextField(frame: NSRect(x: 0, y: 66, width: 360, height: 24)); name.placeholderString = "Name (optional)"
+        let url = NSTextField(frame: NSRect(x: 0, y: 34, width: 360, height: 24)); url.placeholderString = "https://…"
+        let kind = NSPopUpButton(frame: NSRect(x: 0, y: 2, width: 360, height: 26), pullsDown: false)
+        kind.addItems(withTitles: ["M3U / PLS station list", "Radio Browser–compatible server"])
+        [name, url, kind].forEach(form.addSubview)
+        alert.accessoryView = form
+        alert.addButton(withTitle: "Add"); alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = url
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            let source = try DirectorySource.custom(name: name.stringValue, url: url.stringValue, kind: kind.indexOfSelectedItem == 0 ? .stationList : .radioBrowserAPI)
+            guard let backend = source.makeBackend() else { return }
+            window?.title = "RadioPocket Preferences — Checking directory…"
+            Task { @MainActor [weak self] in
+                defer { self?.window?.title = "RadioPocket Preferences" }
+                do {
+                    var probe = DirectoryQuery(); probe.supportedOnly = false
+                    let page = try await backend.search(probe, refresh: true)
+                    guard let self else { return }
+                    if page.rawCount == 0 && page.stations.isEmpty { throw RadioError.message("That directory returned no stations.") }
+                    self.saveDirectories(self.directoryList + [source])
+                } catch { self?.app.showError(error) }
+            }
+        } catch { app.showError(error) }
     }
     private func skinPage() {
         entries = app.bundledSkins.map { ($0.0, "bundled:" + $0.1, Optional($0.1)) }

@@ -21,14 +21,38 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     private var announced = false
     private var baselineDelay = 0.0
     private(set) var isPaused = false
+    private var received = 0
+    private var formatInfo: (codec: String, rate: Double, channels: Int)?
+    private var rateMark: (date: Date, bytes: Int, kbps: Int)?
 
-    init(volume: Float) {
+    init(volume: Float, leveling: Bool = false) {
         super.init()
         rp_eq_volume(dsp, volume)
+        rp_level_set(dsp, leveling ? 1 : 0)
     }
     deinit { rp_eq_destroy(dsp) }
 
     func setVolume(_ value: Float) { rp_eq_volume(dsp, value) }
+    func setLeveling(_ on: Bool) { rp_level_set(dsp, on ? 1 : 0) }
+    /// Gain in dB the loudness leveler is applying right now (0 when off).
+    var levelGain: Double { rp_level_db(dsp) }
+
+    /// Codec, sample rate and channel count of the decoded stream, once known.
+    var format: (codec: String, rate: Double, channels: Int)? { lock.lock(); defer { lock.unlock() }; return formatInfo }
+    /// Compressed bytes received from the station so far.
+    var bytesReceived: Int { lock.lock(); defer { lock.unlock() }; return received }
+    /// Average download rate in kb/s, measured over at least two seconds. Nil until that much has arrived.
+    func bitrate() -> Int? {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        guard let mark = rateMark else { rateMark = (now, received, 0); return nil }
+        let elapsed = now.timeIntervalSince(mark.date)
+        guard elapsed >= 2 else { return mark.kbps > 0 ? mark.kbps : nil }
+        let kbps = Int((Double(received - mark.bytes) * 8 / 1000 / elapsed).rounded())
+        rateMark = (now, received, kbps)
+        return kbps > 0 ? kbps : nil
+    }
+    private func count(_ data: Data) { lock.lock(); received += data.count; lock.unlock() }
 
     // MARK: Control
 
@@ -54,6 +78,7 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
         let hls = HLSSource(url: url)
         hls.onAudio = { [weak self] data in
             guard let self else { return }
+            self.count(data)
             if self.demuxer == nil { self.demuxer = FileStreamDemuxer(sink: self) }
             self.demuxer?.feed(data)
         }
@@ -65,6 +90,7 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
 
     /// Picks the demuxer from the first bytes (a Content-Type can lie; the container’s magic cannot).
     private func receive(_ data: Data, from url: URL) {
+        count(data)
         if demuxer == nil {
             if data.starts(with: Data("OggS".utf8)) { demuxer = OggDemuxer(sink: self) }
             else if data.starts(with: Data("#EXTM3U".utf8)) {
@@ -119,6 +145,15 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     func sinkFormat(_ format: AudioStreamBasicDescription, cookie: Data?) {
         lock.lock(); defer { lock.unlock() }
         guard output == nil, !stopped else { return }
+        let codec: String
+        switch format.mFormatID {
+        case kAudioFormatMPEGLayer3: codec = "MP3"
+        case kAudioFormatMPEG4AAC, kAudioFormatMPEG4AAC_HE, kAudioFormatMPEG4AAC_HE_V2: codec = "AAC"
+        case kAudioFormatOpus: codec = "OPUS"
+        case kAudioFormatLinearPCM: codec = "VORBIS"      // the only PCM source is the bundled Vorbis decoder
+        default: codec = "AUDIO"
+        }
+        formatInfo = (codec, format.mSampleRate, Int(format.mChannelsPerFrame))
         let out = AudioOutput(dsp: dsp, ring: ring)
         out.playing = { [weak self] in
             guard let self else { return }

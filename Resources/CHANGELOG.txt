@@ -1,4 +1,27 @@
 RadioPocket 0.8
+* Changed: The Station Library is one continuous list instead of pages — more stations load automatically as you scroll, and Previous/Next are gone
+* Added: A real Fire visualization — a flame simulation fed by the spectrum — in the visualization window, full screen, and as the player's Fire mini mode
+* Added: Visualization Settings (Visualization menu or Preferences): peak falloff, band line width, flame height, turbulence and colors (Flame, Blue Flame, Toxic Green, Skin Colors), plus the existing options in one place
+* Added: Radio Paradise direct AAC mixes, Mike Pierce’s Curated Internet Radio Streams, and optional Junguler Radio Playlists bring the built-in source count to eight
+* Improved: Playlist genre comments and named collection sections are searchable; curated archive loading excludes DEMOTED files and uses one bounded request
+* Changed: Clicking the player's visualizer cycles Bars / Fire / Oscilloscope; double-click opens the visualization window. The window's coloring picker is gone (K and the Visualization menu still cycle coloring)
+* Changed: The player now has Winamp's EQ and PL buttons (PL opens the Station Library); + FAV, LIB and SK moved to the ≡ menu and keep their shortcuts (D, B, K)
+* Improved: The visualization window can be resized down to the player's width
+* Added: Jump to Station (J, or Shift-Cmd-J): type part of a name, arrows to choose, Return to tune in; searches favorites and recent stations
+* Added: Station Info (I, or Shift-Cmd-I): live format, sample rate, measured bitrate, rewind buffer, leveler gain, and an on-request Radio Browser lookup for country, genre and homepage
+* Added: The player shows the stream's real kbps and kHz and the mono/stereo lamp (skins that include MONOSTER.BMP)
+* Added: Sleep Timer (Radio menu): 15 minutes to 2 hours, with a 20-second volume fade; the countdown shows on the display
+* Added: Loudness Leveling (Radio menu): evens out loud and quiet stations with a slow gain follower and a soft limiter; off by default
+* Added: Windows snap to screen edges and to each other, and the equalizer docked under the player moves with it; hold Option to drag freely
+* Improved: Double-click the player or equalizer title bar to window-shade it; a docked equalizer follows the shaded player
+* Added: Nine more visualizations for the window and full screen: Waveform Ring, Vectorscope, Waterfall, Starfield, Spectrum Tunnel, Plasma, Kaleidoscope, Fireworks and Aurora; the beat-driven ones react to the bass, and all use the skin's visualizer colors. Keys 1–9 and 0 jump to the first ten
+* Added: Five built-in directory sources: Radio Browser, SomaFM, laut.fm, Icecast / Xiph and IPRD; full-catalog feeds are opt-in to keep ordinary searches small
+* Improved: Directory settings scroll to fit built-in and custom sources, preserving saved enable/disable choices
+* Fixed: M3U names parse correctly when quoted metadata contains commas
+* Added: More station directories: SomaFM is built in, and Preferences > Directories turns directories on or off and adds your own (a Radio Browser-compatible server, or a link to an M3U / PLS station list)
+* Added: A directory picker in the library window searches every enabled directory together, or one at a time
+* Fixed: The library window can be closed and minimized from its title bar; its resize edges no longer cover the buttons
+* Fixed: Skinned players no longer paint black boxes over the skin, and the play indicator and + FAV / LIB buttons follow Winamp's layout
 * Added: Ogg Opus radio streams play, using the Opus decoder built into macOS (no bundled codec); stream titles come from the Opus tags
 * Added: HLS streams play through RadioPocket's own HLS client: master playlists, live playlists, MPEG-TS and packed AAC/MP3 segments, AES-128 encryption and ID3 titles
 * Improved: HLS and Opus now have the equalizer and the visualizer, because every stream goes through the same pipeline

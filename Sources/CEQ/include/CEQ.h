@@ -11,6 +11,9 @@ void rp_eq_process(RPEQ *eq, float *data, uint32_t frames, uint32_t channels, ui
 double rp_eq_rate(RPEQ *eq);
 /// Copies the newest `count` mono samples (oldest first, zero-padded when fewer exist). Count must be <= 4096.
 uint32_t rp_vis_read(RPEQ *eq, float *out, uint32_t count);
+/// Loudness leveler: steers the output toward a fixed average level. `rp_level_db` is the gain it currently applies.
+void rp_level_set(RPEQ *eq, int enabled);
+double rp_level_db(RPEQ *eq);
 uint64_t rp_eq_frames(RPEQ *eq);
 double rp_eq_ratio(RPEQ *eq);
 #endif

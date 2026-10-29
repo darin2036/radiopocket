@@ -80,6 +80,8 @@ final class Library {
         var equalizer: EQSettings?
         var recentStations: [Station]?
         var visualizer: VisSettings?
+        var directories: [DirectorySource]?
+        var leveling: Bool?
     }
     let directory: URL
     private(set) var state: State

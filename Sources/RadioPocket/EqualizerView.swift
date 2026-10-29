@@ -172,5 +172,8 @@ final class EqualizerView: NSView {
         let style = NSMutableParagraphStyle(); style.lineBreakMode = .byTruncatingTail
         (string as NSString).draw(in: NSRect(x: x, y: y, width: width, height: 12), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: size, weight: .medium), .foregroundColor: color, .paragraphStyle: style])
     }
-    override func mouseDown(with event: NSEvent) { if convert(event.locationInWindow, from: nil).y < 14 { window?.performDrag(with: event) } }
+    override func mouseDown(with event: NSEvent) {
+        guard convert(event.locationInWindow, from: nil).y < 14 else { return }
+        if event.clickCount == 2 { action?("shade") } else { (window as? PlayerWindow)?.trackDrag(event) }
+    }
 }
