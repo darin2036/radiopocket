@@ -60,6 +60,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     var play: ((Station) -> Void)?
     var openStream: (() -> Void)?
     var loaded: ((Bool) -> Void)?
+    var report: ((Error) -> Void)?
     private let table = StationTable()
     private let sidebar = NSOutlineView()
     private let search = NSTextField()
@@ -70,8 +71,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let order = ClassicPopup()
     private let sourceMenu = ClassicPopup()
     private let heading = NSTextField(labelWithString: "POPULAR STATIONS")
-    private let status = NSTextField(labelWithString: "")
-    private let nowPlaying = NSTextField(labelWithString: "READY")
     private let selectedTitle = NSTextField(labelWithString: "")
     private let selectedInfo = NSTextField(labelWithString: "")
     private let message = NSTextField(wrappingLabelWithString: "")
@@ -178,11 +177,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         guard window?.isVisible == true else { if scope.local { hasLoaded = false }; return }
         if scope.local { loadLocal(preservingSelection: true) } else { reloadKeepingSelection(); updateSelection() }
     }
-    func updatePlayback(_ engine: RadioEngine) {
-        guard window?.isVisible == true else { return }
-        nowPlaying.stringValue = engine.station.map { "\(engine.status.rawValue) • \($0.name)" } ?? engine.status.rawValue
-        nowPlaying.toolTip = engine.title + "\n" + engine.detail
-    }
 
     private func label(_ value: String, color: NSColor = BrowserTheme.dim) -> NSTextField {
         let field = NSTextField(labelWithString: value); field.font = BrowserTheme.small; field.textColor = color; field.lineBreakMode = .byTruncatingTail
@@ -240,14 +234,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         add(sideScroll, to: root); sideScrollView = sideScroll
         let main = NSView(); add(main, to: root)
         sideWidth = sideScroll.widthAnchor.constraint(equalToConstant: 145); sideGap = main.leadingAnchor.constraint(equalTo: sideScroll.trailingAnchor, constant: 9)
-        add(nowPlaying, to: root); nowPlaying.font = BrowserTheme.small; nowPlaying.textColor = BrowserTheme.green; nowPlaying.lineBreakMode = .byTruncatingTail
         NSLayoutConstraint.activate([
             sideScroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), sideScroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 25),
-            sideWidth!, sideScroll.bottomAnchor.constraint(equalTo: nowPlaying.topAnchor, constant: -9),
+            sideWidth!, sideScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
             sideGap!, main.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            main.topAnchor.constraint(equalTo: sideScroll.topAnchor), main.bottomAnchor.constraint(equalTo: sideScroll.bottomAnchor),
-            nowPlaying.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            nowPlaying.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20), nowPlaying.heightAnchor.constraint(equalToConstant: 15)
+            main.topAnchor.constraint(equalTo: sideScroll.topAnchor), main.bottomAnchor.constraint(equalTo: sideScroll.bottomAnchor)
         ])
         heading.font = .monospacedSystemFont(ofSize: 11, weight: .bold); heading.textColor = BrowserTheme.green
         popup(sourceMenu, label: "Radio directory", values: [], width: 118)
@@ -298,15 +289,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         tune = button("▶ Tune In", #selector(playSelected), width: 88)
         save = button("+ Favorite", #selector(saveSelected), width: 92)
         let actionRow = row([tune, save, button("Open URL…", #selector(openURL), width: 85)]); add(actionRow, to: main)
-        // The directory status shares the bottom line with the now-playing text instead of taking a row of its own.
-        status.font = BrowserTheme.small; status.textColor = BrowserTheme.dim; status.lineBreakMode = .byTruncatingTail; add(status, to: root)
         // Long names and URLs must truncate, never widen the window.
-        for label in [selectedTitle, selectedInfo, status, nowPlaying, heading] {
+        for label in [selectedTitle, selectedInfo, heading] {
             label.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
             label.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         }
-        status.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(500), for: .horizontal)
-        nowPlaying.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(400), for: .horizontal)
         filterHeight = filterRow.heightAnchor.constraint(equalToConstant: 22); filterGap = filterRow.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 7)
         tableGap = tableScroll.topAnchor.constraint(equalTo: filterRow.bottomAnchor, constant: 6)
         NSLayoutConstraint.activate([
@@ -320,8 +307,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             selectedTitle.leadingAnchor.constraint(equalTo: actionRow.trailingAnchor, constant: 12), selectedTitle.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedTitle.heightAnchor.constraint(equalToConstant: 16),
             selectedTitle.bottomAnchor.constraint(equalTo: actionRow.centerYAnchor, constant: 1),
             selectedInfo.leadingAnchor.constraint(equalTo: selectedTitle.leadingAnchor), selectedInfo.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedInfo.topAnchor.constraint(equalTo: selectedTitle.bottomAnchor), selectedInfo.heightAnchor.constraint(equalToConstant: 15),
-            status.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -22), status.centerYAnchor.constraint(equalTo: nowPlaying.centerYAnchor), status.heightAnchor.constraint(equalToConstant: 15),
-            status.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, multiplier: 0.55), nowPlaying.trailingAnchor.constraint(lessThanOrEqualTo: status.leadingAnchor, constant: -12),
             message.centerXAnchor.constraint(equalTo: tableScroll.centerXAnchor), message.centerYAnchor.constraint(equalTo: tableScroll.centerYAnchor), message.widthAnchor.constraint(lessThanOrEqualTo: tableScroll.widthAnchor, constant: -50),
             spinner.centerXAnchor.constraint(equalTo: tableScroll.centerXAnchor), spinner.bottomAnchor.constraint(equalTo: message.topAnchor, constant: -10)
         ])
@@ -354,9 +339,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         heading.stringValue = scope.title
         rows = []; hasMore = false; loadingMore = false; table.reloadData(); table.deselectAll(nil)
         message.stringValue = "Loading stations…"; message.isHidden = false
-        status.toolTip = nil
         let sources = library.state.directories ?? []
-        setBusy(true); status.stringValue = ""; hasLoaded = false
+        setBusy(true); hasLoaded = false
         task = Task { @MainActor [weak self, directory] in
             do {
                 await directory.configure(sources)
@@ -373,7 +357,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 guard let self, self.generation == token, !Task.isCancelled else { return }
                 self.hasMore = false; self.setBusy(false)
                 self.message.stringValue = "Couldn’t reach the station directory"
-                self.message.isHidden = false; self.status.stringValue = error.localizedDescription; self.status.toolTip = error.localizedDescription
+                self.message.isHidden = false
                 self.loaded?(false)
             }
         }
@@ -404,7 +388,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 guard let self, self.generation == token, !Task.isCancelled else { return }
                 self.loadingMore = false; self.hasMore = false
                 if self.rows.isEmpty { self.message.stringValue = "Couldn’t reach the station directory"; self.message.isHidden = false }
-                self.status.stringValue = error.localizedDescription; self.status.toolTip = error.localizedDescription
             }
         }
     }
@@ -420,7 +403,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         else { table.deselectAll(nil) }
         message.stringValue = !rows.isEmpty ? "" : scope == .favorites ? "No favorites" : "No recent stations"
         message.isHidden = !rows.isEmpty
-        status.stringValue = ""; status.toolTip = nil
         updateSelection()
     }
     private func reloadKeepingSelection() {
@@ -466,8 +448,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     @objc private func saveSelected() {
         guard let selected else { return }
-        do { try library.save(selected.station); reloadKeepingSelection(); updateSelection(); status.stringValue = "Saved \(selected.name) to Favorites" }
-        catch { status.stringValue = "Couldn’t save favorite: \(error.localizedDescription)" }
+        do { try library.save(selected.station); reloadKeepingSelection(); updateSelection() }
+        catch { report?(error) }
     }
     @objc private func copySelected() { guard let selected else { return }; NSPasteboard.general.clearContents(); NSPasteboard.general.setString(selected.address, forType: .string) }
     @objc private func openURL() { openStream?() }

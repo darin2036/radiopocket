@@ -164,7 +164,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.view.needsDisplay = true
             self.visuals.hub.refresh()
             if self.smokePath == nil { self.nowPlaying.update(station: self.engine.station, title: self.engine.title, status: self.engine.status) }
-            self.discovery?.updatePlayback(self.engine)
             if self.engine.status == .playing, let station = self.engine.station {
                 self.refreshTried.remove(station.id)
                 // A moved station that plays: keep the working address in the favorite it came from.
@@ -772,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let browser = DiscoveryController(library: library, directory: client)
         browser.play = { [weak self] in self?.play($0) }
         browser.openStream = { [weak self] in self?.openDialog() }
+        browser.report = { [weak self] in self?.showError($0) }
         discovery = browser
         return browser
     }
