@@ -27,6 +27,8 @@ final class VisCanvasView: NSView {
     let hub: VisualizerHub
     let fullscreen: Bool
     var perform: ((String) -> Void)?
+    /// Builds the right-click menu: the same visualization options as the Visualization menu.
+    var menuProvider: (() -> NSMenu)?
     var nowPlaying: () -> (station: String, title: String, signal: VisSignal) = { ("", "", .idle) }
     private var history: [[Float]] = []
     private let state = VisState()
@@ -118,6 +120,7 @@ final class VisCanvasView: NSView {
         if event.clickCount == 2 { perform?("vis:fullscreen") }
     }
     override func mouseMoved(with event: NSEvent) { bump() }
+    override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
@@ -170,9 +173,6 @@ private final class FullscreenWindow: NSWindow {
 final class VisPanelController: NSObject {
     let window: PlayerWindow
     let canvas: VisCanvasView
-    private let modes = ClassicPopup(frame: .zero, pullsDown: false)
-    private let peaks = ClassicCheckBox(title: "Peaks", target: nil, action: nil)
-    private let full: ClassicButton
     private let hub: VisualizerHub
     var perform: ((String) -> Void)? { didSet { canvas.perform = perform } }
 
@@ -181,7 +181,6 @@ final class VisPanelController: NSObject {
         canvas = VisCanvasView(hub: hub, fullscreen: false)
         let size = NSSize(width: 720, height: 460)
         window = PlayerWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
-        full = ClassicButton(title: "FULL SCREEN", target: nil, action: nil)
         super.init()
         window.isReleasedWhenClosed = false; window.hasShadow = true; window.appearance = NSAppearance(named: .darkAqua); window.isUserResizable = true
         window.title = "RadioPocket Visualization"; window.minSize = NSSize(width: 275, height: 200)
@@ -191,48 +190,17 @@ final class VisPanelController: NSObject {
         close.frame = NSRect(x: size.width - 12, y: 3, width: 9, height: 9); close.isBordered = false; close.autoresizingMask = [.minXMargin]
         close.setAccessibilityLabel("Close visualization"); root.addSubview(close)
 
-        modes.frame = NSRect(x: 14, y: 22, width: 170, height: 20); modes.isBordered = false
-        modes.addItems(withTitles: VisPanelMode.allCases.map(\.title)); modes.target = self; modes.action = #selector(modeChanged); modes.setAccessibilityLabel("Visualization")
-        peaks.frame = NSRect(x: 192, y: 22, width: 70, height: 20); peaks.setButtonType(.switch); peaks.isBordered = false; peaks.font = ClassicUI.font
-        peaks.target = self; peaks.action = #selector(peaksChanged)
-        full.target = self; full.action = #selector(fullScreen); full.isBordered = false
-        full.setAccessibilityLabel("Full screen visualization")
-        [modes, peaks, full].forEach(root.addSubview)
-
-        canvas.frame = NSRect(x: 12, y: 48, width: size.width - 24, height: size.height - 48 - 16)
+        canvas.frame = NSRect(x: 12, y: 22, width: size.width - 24, height: size.height - 22 - 12)
         canvas.autoresizingMask = [.width, .height]
         root.addSubview(canvas)
-        hub.observeSettings { [weak self] _ in self?.sync() }
-        NotificationCenter.default.addObserver(self, selector: #selector(layoutControls), name: NSWindow.didResizeNotification, object: window)
-        layoutControls(); sync()
     }
 
-    /// Below 480 pt (down to the player's 275 pt) the peaks control gives way to a wider mode picker; its key (P) and the Visualization menu still work.
-    @objc private func layoutControls() {
-        guard let width = window.contentView?.bounds.width else { return }
-        let wide = width >= 480
-        peaks.isHidden = !wide
-        full.title = wide ? "FULL SCREEN" : "FULL"
-        let fullWidth: CGFloat = wide ? 108 : 48
-        full.frame = NSRect(x: width - fullWidth - 16, y: 22, width: fullWidth, height: 20)
-        modes.frame = NSRect(x: 14, y: 22, width: wide ? 170 : max(80, width - fullWidth - 16 - 14 - 8), height: 20)
-        [modes, full].forEach { $0.needsDisplay = true }
-    }
-
-    private func sync() {
-        modes.selectItem(at: VisPanelMode.allCases.firstIndex(of: hub.settings.panel) ?? 0)
-        peaks.state = hub.settings.peaks ? .on : .off
-        [modes, peaks].forEach { $0.needsDisplay = true }
-    }
     func show() {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(canvas)
         hub.refresh()
     }
     @objc private func closeWindow() { window.orderOut(nil); hub.refresh() }
-    @objc private func modeChanged() { hub.settings.panel = VisPanelMode.allCases[modes.indexOfSelectedItem] }
-    @objc private func peaksChanged() { hub.settings.peaks = peaks.state == .on }
-    @objc private func fullScreen() { perform?("vis:fullscreen") }
 }
 
 /// Glue between the app and everything visual: owns the hub, panel and full-screen window, builds menus, routes hotkeys.
@@ -245,6 +213,7 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
     private lazy var panel: VisPanelController = {
         let panel = VisPanelController(hub: hub)
         panel.canvas.nowPlaying = { [unowned self] in self.nowPlaying() }
+        panel.canvas.menuProvider = { [unowned self] in self.menu() }
         panel.perform = { [unowned self] in self.handle($0) }
         return panel
     }()
@@ -271,6 +240,7 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         returnWindow = NSApp.keyWindow
         let canvas = VisCanvasView(hub: hub, fullscreen: true)
         canvas.nowPlaying = { [unowned self] in self.nowPlaying() }
+        canvas.menuProvider = { [unowned self] in self.menu() }
         canvas.perform = { [unowned self] in self.handle($0) }
         let window = FullscreenWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.backgroundColor = .black; window.hasShadow = false; window.acceptsMouseMovedEvents = true

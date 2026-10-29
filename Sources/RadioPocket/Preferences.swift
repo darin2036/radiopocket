@@ -52,54 +52,46 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         switch category {
         case 3: skinPage()
         case 1:
-            label("Output volume", x: 0, y: 402)
+            label("Output volume", x: 0, y: 422)
             let slider = NSSlider(value: Double(app.engine.player.volume), minValue: 0, maxValue: 1, target: self, action: #selector(volumeChanged(_:)))
-            slider.frame = NSRect(x: 0, y: 364, width: 420, height: 24); slider.setAccessibilityLabel("Output volume"); page.addSubview(slider)
-            label("MP3 / AAC streams use the native audio engine.\nHLS playback uses macOS media playback.\nStations start only when you choose to play them.", x: 0, y: 254, width: 510, height: 82)
-            button("Open a stream…", "open", x: 0, y: 206)
+            slider.frame = NSRect(x: 0, y: 394, width: 420, height: 24); slider.setAccessibilityLabel("Output volume"); page.addSubview(slider)
+            button("Open a stream…", "open", x: 0, y: 350)
         case 2:
-            label("Player and equalizer size", x: 0, y: 402)
-            let size = NSPopUpButton(frame: NSRect(x: 0, y: 362, width: 220, height: 28), pullsDown: false)
+            label("Player and equalizer size", x: 0, y: 422)
+            let size = NSPopUpButton(frame: NSRect(x: 0, y: 390, width: 220, height: 28), pullsDown: false)
             size.addItems(withTitles: ["1× — Original", "2× — Default", "3× — Large"])
             size.selectItem(at: max(0, min(2, Int(app.library.state.scale) - 1)))
             size.target = self; size.action = #selector(sizeChanged(_:)); page.addSubview(size)
             let top = NSButton(checkboxWithTitle: "Keep player and equalizer on top", target: self, action: #selector(topChanged(_:)))
-            top.frame = NSRect(x: 0, y: 312, width: 480, height: 24); top.state = app.window.level == .floating ? .on : .off; page.addSubview(top)
-            button("Choose a skin…", "skins", x: 0, y: 252)
+            top.frame = NSRect(x: 0, y: 356, width: 480, height: 24); top.state = app.window.level == .floating ? .on : .off; page.addSubview(top)
+            button("Choose a skin…", "skins", x: 0, y: 316)
         case 4:
             let enabled = NSButton(checkboxWithTitle: "Enable equalizer", target: self, action: #selector(eqChanged(_:)))
-            enabled.frame = NSRect(x: 0, y: 398, width: 400, height: 24); enabled.state = app.engine.equalizer.settings.enabled ? .on : .off; page.addSubview(enabled)
-            label("Preset", x: 0, y: 350)
-            let presets = NSPopUpButton(frame: NSRect(x: 0, y: 310, width: 300, height: 28), pullsDown: false)
+            enabled.frame = NSRect(x: 0, y: 422, width: 400, height: 24); enabled.state = app.engine.equalizer.settings.enabled ? .on : .off; page.addSubview(enabled)
+            label("Preset", x: 0, y: 392)
+            let presets = NSPopUpButton(frame: NSRect(x: 0, y: 362, width: 300, height: 28), pullsDown: false)
             presets.addItems(withTitles: (EQPreset.classic + app.engine.equalizer.settings.custom).map(\.name))
             presets.selectItem(withTitle: app.engine.equalizer.settings.preset)
             presets.target = self; presets.action = #selector(presetChanged(_:)); page.addSubview(presets)
-            label("10 bands and preamp, with 18 classic presets.\nEqualization applies to MP3 / AAC streams.\nHLS playback does not support the equalizer.", x: 0, y: 204, width: 510, height: 80)
-            button("Open equalizer…", "equalizer", x: 0, y: 154)
+            button("Open equalizer…", "equalizer", x: 0, y: 320)
         case 6: directoriesPage()
         case 7: visualizationPage()
         case 5:
-            label("Internet radio", x: 0, y: 402, bold: true)
-            label("Browse stations from eight built-in sources and any directories you add.\nSave favorites or open a station’s direct stream URL.", x: 0, y: 332, width: 510, height: 54)
-            button("Station library…", "discovery", x: 0, y: 282)
-            button("Favorite stations…", "favorites", x: 200, y: 282)
-            button("Manage directories…", "directories", x: 0, y: 238, width: 390)
-            label("\(app.library.state.favorites.count) saved favorites", x: 0, y: 196)
+            button("Station library…", "discovery", x: 0, y: 418)
+            button("Favorite stations…", "favorites", x: 200, y: 418)
+            button("Manage directories…", "directories", x: 0, y: 378)
             let fresh = NSButton(checkboxWithTitle: "Keep station lists saved and up to date", target: self, action: #selector(freshChanged(_:)))
-            fresh.frame = NSRect(x: 0, y: 150, width: 480, height: 24); fresh.state = app.library.state.backgroundStations == false ? .off : .on; page.addSubview(fresh)
-            label("Saves the most-used lists on this Mac so the library opens instantly, even offline, and refreshes a few pages about every hour. It pauses on Low Power Mode, hotspots, Low Data Mode and while the Mac runs hot.", x: 0, y: 84, width: 510, height: 58)
-            button("Clear saved lists", "clearstations", x: 0, y: 44)
+            fresh.frame = NSRect(x: 0, y: 342, width: 480, height: 24); fresh.state = app.library.state.backgroundStations == false ? .off : .on; page.addSubview(fresh)
+            button("Clear saved lists", "clearstations", x: 0, y: 304)
         default:
-            label("RadioPocket", x: 0, y: 402, bold: true)
-            label("A compact, native internet radio player.\nSettings are saved automatically.\n\n⌘O  Open stream\n⌘B  Station library\n⌘E  Equalizer\n⌘K  Skins\n⌘,   Preferences", x: 0, y: 170, width: 510, height: 210)
-            button("Open a stream…", "open", x: 0, y: 112)
+            button("Open a stream…", "open", x: 0, y: 418)
         }
     }
     /// One row per visualization option, each a popup that writes straight to the shared settings.
     private func visualizationPage() {
         let s = app.visuals.hub.settings
         let speeds = ["Slowest", "Slow", "Moderate", "Fast", "Fastest"], levels = ["Lowest", "Low", "Medium", "High", "Highest"], turbulence = ["Calm", "Gentle", "Medium", "Strong", "Wild"]
-        var y: CGFloat = 420
+        var y: CGFloat = 424
         func row(_ title: String, _ id: String, _ items: [String], selected: Int) {
             label(title, x: 0, y: y, width: 200)
             let popup = NSPopUpButton(frame: NSRect(x: 210, y: y - 3, width: 220, height: 28), pullsDown: false)
@@ -147,13 +139,12 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func visToggled(_ sender: NSButton) { if let key = sender.identifier?.rawValue { app.visuals.handle("vis:\(key)") } }
     private var directoryList: [DirectorySource] { DirectorySource.resolved(app.library.state.directories) }
     private func directoriesPage() {
-        label("Choose where the station library looks. Search results from every enabled directory are combined, and the library window can also search one directory at a time.", x: 0, y: 398, width: 510, height: 44)
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 54, width: 524, height: 336))
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 46, width: 524, height: 396))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 504, height: max(334, CGFloat(directoryList.count * 48 + 16))))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 504, height: max(394, CGFloat(directoryList.count * 42 + 10))))
         scroll.documentView = content; page.addSubview(scroll)
         content.scroll(NSPoint(x: 0, y: content.bounds.height))
-        var y = content.bounds.height - 34
+        var y = content.bounds.height - 30
         for (index, source) in directoryList.enumerated() {
             let box = NSButton(checkboxWithTitle: source.name, target: self, action: #selector(directoryToggled(_:)))
             box.tag = index; box.state = source.enabled ? .on : .off; box.frame = NSRect(x: 0, y: y, width: source.builtIn ? 480 : 400, height: 20); content.addSubview(box)
@@ -164,12 +155,11 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             let detail = NSTextField(labelWithString: source.detail)
             detail.font = .systemFont(ofSize: 11); detail.textColor = .secondaryLabelColor; detail.lineBreakMode = .byTruncatingMiddle
             detail.frame = NSRect(x: 20, y: y - 16, width: 478, height: 14); content.addSubview(detail)
-            y -= 48
+            y -= 42
         }
         let customCount = directoryList.filter { !$0.builtIn }.count
         let add = NSButton(title: "Add Directory…", target: self, action: #selector(addDirectory))
         add.bezelStyle = .rounded; add.frame = NSRect(x: 0, y: 8, width: 160, height: 30); add.isEnabled = customCount < DirectorySource.maximumCustom; page.addSubview(add)
-        label("Add a Radio Browser–compatible server, or a link to an M3U / PLS list of stations.", x: 170, y: 8, width: 340, height: 32)
     }
     private func saveDirectories(_ list: [DirectorySource]) {
         do { try app.library.update { $0.directories = list } } catch { app.showError(error); return }
@@ -230,12 +220,11 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         for url in urls.filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             entries.append((url.deletingPathExtension().lastPathComponent, "installed:" + url.path, url.deletingPathExtension().lastPathComponent))
         }
-        label("Installed", x: 0, y: 414)
+        label("Installed", x: 0, y: 424)
         page.addSubview(list(skins, frame: NSRect(x: 0, y: 190, width: 342, height: 218)))
         skins.reloadData()
         if let selected = entries.firstIndex(where: { $0.name == app.view.skin?.name }) { skins.selectRowIndexes(IndexSet(integer: selected), byExtendingSelection: false) }
         button("Import skin…", "skin", x: 354, y: 378, width: 170)
-        label("Classic .wsz / .zip\nskins supported.\n\nSelect a skin to\napply it instantly.", x: 358, y: 250, width: 160, height: 110)
         label("Current skin", x: 0, y: 152)
         let name = entries.first(where: { $0.name == app.view.skin?.name })?.title ?? app.view.skin?.name ?? "RadioPocket Original"
         label(name, x: 0, y: 126, width: 520, bold: true)
@@ -246,7 +235,6 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             let preview = NSImageView(frame: NSRect(x: 0, y: 4, width: 275, height: 116))
             preview.image = image; preview.imageScaling = .scaleProportionallyUpOrDown; page.addSubview(preview)
         }
-        label("11 bundled classic skins\nplus the native theme.\nImported skins stay installed.", x: 296, y: 34, width: 224, height: 76)
     }
     private func list(_ table: NSTableView, frame: NSRect) -> NSScrollView {
         if table.tableColumns.isEmpty {

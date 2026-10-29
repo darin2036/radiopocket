@@ -8,7 +8,6 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
     var edit: ((Station?) -> Void)?
     var report: ((Error) -> Void)?
     private var selectionButtons: [NSButton] = []
-    private let empty = NSTextField(labelWithString: "Your favorite stations will appear here. Add a stream URL to begin.")
 
     init(library: Library) {
         self.library = library
@@ -50,22 +49,13 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
             buttons.addArrangedSubview(button)
         }
         content.addSubview(buttons)
-        empty.font = ClassicUI.font
-        empty.textColor = ClassicUI.dim
-        empty.lineBreakMode = .byWordWrapping
-        empty.maximumNumberOfLines = 2
-        empty.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(empty)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             scroll.topAnchor.constraint(equalTo: content.topAnchor, constant: 26),
             scroll.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -12),
             buttons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
-            buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
-            empty.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 24),
-            empty.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -24)
+            buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20)
         ])
         refresh()
     }
@@ -73,7 +63,7 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
     func refresh() {
         let id = selected?.id; table.reloadData()
         if let id, let index = library.state.favorites.firstIndex(where: { $0.id == id }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
-        empty.isHidden = !library.state.favorites.isEmpty; updateButtons()
+        updateButtons()
     }
     @objc private func closePanel() { window?.orderOut(nil) }
     private func updateButtons() { selectionButtons.forEach { $0.isEnabled = selected != nil } }
@@ -543,7 +533,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let panel = NSOpenPanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "wsz") ?? .data, .zip]
             panel.allowsMultipleSelection = false
-            panel.message = "Choose a classic Winamp .wsz skin. Main player bitmaps are supported."
             if panel.runModal() == .OK, let url = panel.url { importSkin(url) }
         case "resetSkin":
             do {

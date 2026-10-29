@@ -78,7 +78,7 @@ final class StationInfoController: NSWindowController {
         }
         set("Country", listing.map { $0.country.isEmpty ? "—" : $0.country } ?? "—")
         set("Genre", listing.map { $0.tags.isEmpty ? "—" : $0.tags.replacingOccurrences(of: ",", with: ", ") } ?? "—")
-        set("Directory", listing.map { "\($0.name) · \($0.codec.isEmpty ? "?" : $0.codec) \($0.bitrate > 0 ? "\($0.bitrate) kb/s" : "") · \($0.votes) votes" } ?? lookupMessage ?? "Not looked up. Details come from Radio Browser only when you ask.")
+        set("Directory", listing.map { "\($0.name) · \($0.codec.isEmpty ? "?" : $0.codec) \($0.bitrate > 0 ? "\($0.bitrate) kb/s" : "") · \($0.votes) votes" } ?? lookupMessage ?? "—")
         lookup.isEnabled = station != nil && lookupTask == nil
         homepage.isEnabled = homepageURL != nil
         lookup.needsDisplay = true; homepage.needsDisplay = true

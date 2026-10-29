@@ -70,10 +70,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let order = ClassicPopup()
     private let sourceMenu = ClassicPopup()
     private let heading = NSTextField(labelWithString: "POPULAR STATIONS")
-    private let status = NSTextField(labelWithString: "Open radio from independent broadcasters around the world.")
-    private let nowPlaying = NSTextField(labelWithString: "READY • Choose a station and press Tune In")
-    private let selectedTitle = NSTextField(labelWithString: "Select a station")
-    private let selectedInfo = NSTextField(labelWithString: "Double-click a station to play its stream.")
+    private let status = NSTextField(labelWithString: "")
+    private let nowPlaying = NSTextField(labelWithString: "READY")
+    private let selectedTitle = NSTextField(labelWithString: "")
+    private let selectedInfo = NSTextField(labelWithString: "")
     private let message = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
     private var tune: NSButton!
@@ -83,9 +83,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private var rows: [RadioListing] = []
     private var hasMore = false
     private var loadingMore = false
-    private var hiddenCount = 0
-    private var sourceTitle = "directories"
-    private var cacheNote = ""
     private var busy = false
     private var hasLoaded = false
     private var generation = UUID()
@@ -183,7 +180,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     func updatePlayback(_ engine: RadioEngine) {
         guard window?.isVisible == true else { return }
-        nowPlaying.stringValue = "\(engine.status.rawValue) • \(engine.station?.name ?? "Choose a station and press Tune In")"
+        nowPlaying.stringValue = engine.station.map { "\(engine.status.rawValue) • \($0.name)" } ?? engine.status.rawValue
         nowPlaying.toolTip = engine.title + "\n" + engine.detail
     }
 
@@ -254,7 +251,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         ])
         heading.font = .monospacedSystemFont(ofSize: 11, weight: .bold); heading.textColor = BrowserTheme.green
         popup(sourceMenu, label: "Radio directory", values: [], width: 118)
-        sourceMenu.toolTip = "Which radio directories to search. Add more in Preferences ▸ Directories."
         refreshSources()
         let refresh = button("Refresh", #selector(refresh), width: 56)
         let titleRow = row([heading, NSView(), sourceMenu, refresh]); add(titleRow, to: main)
@@ -268,7 +264,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         let searchRow = row([search, button("Search", #selector(searchNow), width: 54), order]); add(searchRow, to: main)
         genre.addItems(withObjectValues: ["All genres"] + genres.map { $0.lowercased() }); genre.stringValue = "All genres"
         genre.font = BrowserTheme.small; genre.textColor = BrowserTheme.text; genre.focusRingType = .none; genre.heightAnchor.constraint(equalToConstant: 22).isActive = true; genre.controlSize = .small; genre.target = self; genre.action = #selector(filtersChanged)
-        genre.delegate = self; genre.setAccessibilityLabel("Genre filter"); genre.toolTip = "Choose a genre, or enter an exact Radio Browser genre tag"
+        genre.delegate = self; genre.setAccessibilityLabel("Genre filter")
         genre.widthAnchor.constraint(equalToConstant: 96).isActive = true
         popup(country, label: "Country filter", values: ["Any country"], width: 112)
         let codes = Locale.Region.isoRegions.map(\.identifier).filter { $0.count == 2 }.map { ($0, Locale.current.localizedString(forRegionCode: $0) ?? $0) }.sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
@@ -356,12 +352,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         let token = generation
         let request = query
         heading.stringValue = scope.title
-        rows = []; hiddenCount = 0; hasMore = false; loadingMore = false; table.reloadData(); table.deselectAll(nil)
+        rows = []; hasMore = false; loadingMore = false; table.reloadData(); table.deselectAll(nil)
         message.stringValue = "Loading stations…"; message.isHidden = false
         status.toolTip = nil
-        sourceTitle = sourceMenu.titleOfSelectedItem ?? "directories"
         let sources = library.state.directories ?? []
-        setBusy(true); status.stringValue = "Contacting \(sourceTitle)…"; hasLoaded = false
+        setBusy(true); status.stringValue = ""; hasLoaded = false
         task = Task { @MainActor [weak self, directory] in
             do {
                 await directory.configure(sources)
@@ -369,31 +364,19 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
                 self.rows = page.stations; self.hasMore = page.hasMore; self.hasLoaded = true
-                self.hiddenCount = max(0, page.rawCount - page.stations.count); self.cacheNote = Self.note(for: page)
                 self.setBusy(false); self.table.reloadData()
-                self.message.stringValue = !page.stations.isEmpty ? "" : (page.hasMore ? "Looking for supported streams…" : "No stations found. Try a broader search or change the filters.")
+                self.message.stringValue = !page.stations.isEmpty ? "" : (page.hasMore ? "Looking for supported streams…" : "No stations found")
                 self.message.isHidden = !page.stations.isEmpty
-                self.showCount()
-                self.status.toolTip = "Working status comes from each directory’s last check, not a guarantee of current availability. Popularity uses directory clicks or listener counts, not live audience."
                 self.updateSelection(); self.loaded?(true)
                 self.loadMoreIfNeeded()
             } catch {
                 guard let self, self.generation == token, !Task.isCancelled else { return }
                 self.hasMore = false; self.setBusy(false)
-                self.message.stringValue = "Couldn’t reach the station directory.\nTry Refresh, or use Favorites and Open URL."
+                self.message.stringValue = "Couldn’t reach the station directory"
                 self.message.isHidden = false; self.status.stringValue = error.localizedDescription; self.status.toolTip = error.localizedDescription
                 self.loaded?(false)
             }
         }
-    }
-    /// Says when a saved list was last fetched, so a stale-looking list explains itself; Refresh fetches live.
-    private static func note(for page: DirectoryPage) -> String {
-        guard page.cached else { return "" }
-        guard let date = page.updated, Date().timeIntervalSince(date) > 90 else { return " • Cached" }
-        return " • Saved " + RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
-    }
-    private func showCount() {
-        status.stringValue = "\(rows.count) stations\(hiddenCount > 0 ? " • \(hiddenCount) other entries hidden" : "")\(cacheNote) • \(sourceTitle)\(hasMore ? " • Scroll for more" : "")"
     }
     /// Fetches the next page once the list is scrolled within a screenful of its end, appending it so the list reads as one.
     private func loadMoreIfNeeded() {
@@ -403,7 +386,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         loadingMore = true
         var request = query; request.offset += DirectoryQuery.pageSize
         let token = generation
-        status.stringValue = "\(rows.count) stations • Loading more…"
         task = Task { @MainActor [weak self, directory] in
             do {
                 let page = try await directory.search(request, refresh: false)
@@ -414,17 +396,15 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 let fresh = page.stations.filter { !known.contains($0.id) }
                 let start = self.rows.count
                 self.rows += fresh; self.hasMore = page.hasMore
-                self.hiddenCount += max(0, page.rawCount - page.stations.count)
                 if !fresh.isEmpty { self.table.insertRows(at: IndexSet(integersIn: start..<self.rows.count), withAnimation: []) }
                 self.message.isHidden = !self.rows.isEmpty
-                if self.rows.isEmpty, !page.hasMore { self.message.stringValue = "No stations found. Try a broader search or change the filters." }
-                self.showCount()
+                if self.rows.isEmpty, !page.hasMore { self.message.stringValue = "No stations found" }
                 self.loadMoreIfNeeded()
             } catch {
                 guard let self, self.generation == token, !Task.isCancelled else { return }
                 self.loadingMore = false; self.hasMore = false
-                if self.rows.isEmpty { self.message.stringValue = "Couldn’t reach the station directory.\nTry Refresh, or use Favorites and Open URL."; self.message.isHidden = false }
-                self.status.stringValue = "\(self.rows.count) stations • \(error.localizedDescription)"; self.status.toolTip = error.localizedDescription
+                if self.rows.isEmpty { self.message.stringValue = "Couldn’t reach the station directory"; self.message.isHidden = false }
+                self.status.stringValue = error.localizedDescription; self.status.toolTip = error.localizedDescription
             }
         }
     }
@@ -438,10 +418,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         table.reloadData()
         if let selectedID, let index = rows.firstIndex(where: { $0.id == selectedID }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
         else { table.deselectAll(nil) }
-        message.stringValue = !rows.isEmpty ? "" : scope == .favorites ? "No favorites match. Find a station and choose + Favorite, or use Open URL." : "No recently played stations match. Tune in to a station to add it here."
+        message.stringValue = !rows.isEmpty ? "" : scope == .favorites ? "No favorites" : "No recent stations"
         message.isHidden = !rows.isEmpty
-        status.stringValue = "\(rows.count) stations • Stored on this Mac"
-        status.toolTip = "Local favorites and recent playback remain available without the station directory."
+        status.stringValue = ""; status.toolTip = nil
         updateSelection()
     }
     private func reloadKeepingSelection() {
@@ -458,14 +437,14 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private func updateSelection() {
         let entry = selected
         tune?.isEnabled = entry != nil; save?.isEnabled = entry != nil
-        selectedTitle.stringValue = entry?.name ?? "Select a station"
+        selectedTitle.stringValue = entry?.name ?? ""
         if let entry {
             let info = [entry.country, entry.tags, entry.codec.isEmpty ? "" : entry.formatLabel, entry.bitrate > 0 ? "\(entry.bitrate) kbps" : "", entry.sourceName ?? ""].filter { !$0.isEmpty }.joined(separator: " • ")
             selectedInfo.stringValue = info.isEmpty ? entry.address : info
             selectedInfo.toolTip = entry.address + (entry.directoryID != nil && !entry.likelyPlayable ? "\nThis format may not play on this Mac." : "")
             let saved = library.state.favorites.contains { $0.address == entry.address }
             save?.title = saved ? "✓ Favorite" : "+ Favorite"; save?.isEnabled = !saved
-        } else { selectedInfo.stringValue = "Double-click a station to play its stream."; selectedInfo.toolTip = nil; save?.title = "+ Favorite" }
+        } else { selectedInfo.stringValue = ""; selectedInfo.toolTip = nil; save?.title = "+ Favorite" }
     }
     private func clearSortIndicators() { suppressSort = true; table.sortDescriptors = []; suppressSort = false }
     @objc private func searchNow() { clearSortIndicators(); captureQuery(); load() }

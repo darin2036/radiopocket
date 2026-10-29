@@ -61,11 +61,11 @@ final class FireField {
     }
 
     /// RGBX pixels, top row first.
-    func pixels(palette: FirePalette, colors: [NSColor]) -> [UInt8] {
+    func pixels(palette: FirePalette, colors: [NSColor], flipped: Bool = false) -> [UInt8] {
         let lut = Self.lut(palette, colors)
         var out = [UInt8](repeating: 255, count: columns * rows * 4)
         for y in 0..<rows {
-            let rowStart = (rows - 1 - y) * columns * 4
+            let rowStart = (flipped ? y : rows - 1 - y) * columns * 4
             for x in 0..<columns {
                 let v = min(255, Int(heat[y * columns + x] * 255)), o = rowStart + x * 4
                 out[o] = lut[v * 3]; out[o + 1] = lut[v * 3 + 1]; out[o + 2] = lut[v * 3 + 2]
@@ -116,6 +116,6 @@ extension VisDraw {
     static func miniFire(_ hub: VisualizerHub, in slot: NSRect) {
         let field = hub.miniFire
         guard field.columns > 0 else { return }
-        drawBitmap(field.pixels(palette: hub.settings.firePalette, colors: hub.colors), width: field.columns, height: field.rows, in: slot, smooth: false)
+        drawBitmap(field.pixels(palette: hub.settings.firePalette, colors: hub.colors, flipped: true), width: field.columns, height: field.rows, in: slot, smooth: false)
     }
 }
