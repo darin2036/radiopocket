@@ -268,11 +268,11 @@ actor StationListDirectory: DirectoryBackend {
         var seen = Set<String>()
         return entries.prefix(maximumEntries).compactMap { entry in
             guard let address = URL(string: entry.address, relativeTo: base)?.absoluteURL, let valid = try? StreamAddress.parse(address.absoluteString),
-                  seen.insert(valid.absoluteString).inserted else { return nil }
+                  RadioListing.isViable(name: entry.title, address: valid), seen.insert(valid.absoluteString).inserted else { return nil }
             let ext = valid.pathExtension.lowercased()
             let codec = ["mp3": "MP3", "aac": "AAC", "ogg": "OGG", "opus": "OPUS", "m3u8": "HLS"][ext] ?? ""
             let name = String(entry.title.trimmingCharacters(in: .whitespaces).prefix(300))
-            return RadioListing(id: UUID.stable("list:\(sourceID):\(valid.absoluteString)").uuidString, name: name.isEmpty ? (valid.host ?? "Unnamed station") : name,
+            return RadioListing(id: UUID.stable("list:\(sourceID):\(valid.absoluteString)").uuidString, name: name,
                                 address: valid.absoluteString, tags: String(entry.group.prefix(500)), country: "", countryCode: "", codec: codec,
                                 bitrate: 0, votes: 0, clicks: 0, hls: ext == "m3u8", sourceName: label)
         }
@@ -323,12 +323,12 @@ private final class IcecastReader: NSObject, XMLParserDelegate {
         defer { element = "" }
         guard name == "entry" else { return }; inEntry = false
         if Task.isCancelled { parser.abortParsing(); return }
-        guard let url = try? StreamAddress.parse(fields["listen_url"] ?? ""), seen.insert(url.absoluteString).inserted else { return }
+        let title = (fields["server_name"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = try? StreamAddress.parse(fields["listen_url"] ?? ""), RadioListing.isViable(name: title, address: url), seen.insert(url.absoluteString).inserted else { return }
         let mime = (fields["server_type"] ?? "").lowercased()
         // Ogg can contain several codecs; leave it as a container rather than guessing Vorbis.
         let codec = ["audio/mpeg": "MP3", "audio/mp3": "MP3", "audio/aac": "AAC", "audio/aacp": "AAC+", "application/ogg": "OGG", "audio/ogg": "OGG", "audio/opus": "OPUS" ][mime] ?? mime.uppercased()
-        let title = (fields["server_name"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        rows.append(RadioListing(id: UUID.stable("icecast:" + url.absoluteString).uuidString, name: String((title.isEmpty ? (url.host ?? "Unnamed station") : title).prefix(300)), address: url.absoluteString,
+        rows.append(RadioListing(id: UUID.stable("icecast:" + url.absoluteString).uuidString, name: String(title.prefix(300)), address: url.absoluteString,
                                  tags: String((fields["genre"] ?? "").prefix(500)), country: "", countryCode: "", codec: codec,
                                  bitrate: max(0, Int(fields["bitrate"] ?? "") ?? 0), votes: 0, clicks: 0, hls: false, sourceName: "Icecast / Xiph"))
     }

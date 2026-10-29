@@ -19,6 +19,16 @@ struct RadioListing: Codable, Equatable, Identifiable {
     /// Which directory the listing came from; display only, never stored.
     var sourceName: String?
 
+    /// A station worth importing: it has a real name (not blank, a bare web address or just symbols) and its address isn't a page or image.
+    static func isViable(name: String, address: URL) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.contains(where: \.isLetter) || name.contains(where: \.isNumber) else { return false }
+        let lower = name.lowercased()
+        if lower.contains("://") || lower.hasPrefix("www.") || (!lower.contains(" ") && lower == address.host?.lowercased()) { return false }
+        let notAudio: Set<String> = ["jpg", "jpeg", "png", "gif", "svg", "ico", "html", "htm", "css", "js", "json", "xml", "txt", "pdf", "zip"]
+        return !notAudio.contains(address.pathExtension.lowercased())
+    }
+
     var likelyPlayable: Bool {
         // Lists that carry no codec (station lists, saved stations) get the benefit of the doubt.
         (directoryID == nil && codec.isEmpty) || hls || ["MP3", "AAC", "AAC+", "AAC-LC", "HE-AAC", "HE-AACV2", "OPUS", "OGG", "VORBIS"].contains(codec.uppercased())
@@ -94,7 +104,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
         }
         id = uuid; directoryID = uuid; sourceName = nil; address = url.absoluteString
         name = Self.clean(string(.name), limit: 300)
-        if name.isEmpty { name = url.host ?? "Unnamed station" }
+        guard Self.isViable(name: name, address: url) else { throw RadioError.message("The directory entry isn't a usable station.") }
         tags = Self.clean(string(.tags), limit: 500)
         countryCode = string(.countrycode).uppercased()
         country = Locale.current.localizedString(forRegionCode: countryCode) ?? Self.clean(string(.country), limit: 100)

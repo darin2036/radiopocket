@@ -9,7 +9,7 @@ struct StationCache: Sendable {
     struct Entry { var page: DirectoryPage; var savedAt: Date }
 
     let directory: URL
-    static let version = 1
+    static let version = 2
     static let maximumFiles = 300
     static let maximumBytes = 16 * 1_048_576
     static let maximumAge: TimeInterval = 30 * 86_400

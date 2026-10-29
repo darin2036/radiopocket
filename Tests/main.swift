@@ -212,6 +212,8 @@ do {
     let listed = StationListDirectory.parse(m3u, base: URL(string: "https://lists.example/radio.m3u")!, label: "Mine", sourceID: "custom-1")
     try check(listed.count == 2 && listed[0].name == "Late Night Jazz" && listed[0].tags == "Jazz" && listed[0].codec == "MP3", "M3U station lists keep names and groups, and skip duplicates and non-HTTP entries")
     try check(listed[1].address == "https://lists.example/streams/two" && listed[1].likelyPlayable, "Relative M3U entries resolve against the list URL and unknown codecs stay playable")
+    let junk = "#EXTM3U\nhttps://ice4.somafm.com/groovesalad-128-mp3\n#EXTINF:-1,ice4.somafm.com\nhttps://ice4.somafm.com/x\n#EXTINF:-1,https://a.example/s\nhttps://a.example/s\n#EXTINF:-1,---\nhttps://b.example/s\n#EXTINF:-1,Cover\nhttps://c.example/art.jpg\n#EXTINF:-1,Real Station\nhttps://d.example/live\n"
+    try check(StationListDirectory.parse(junk, base: URL(string: "https://lists.example/j.m3u")!, label: "J", sourceID: "j").map(\.name) == ["Real Station"], "Untitled, host-named, symbol-only and non-audio entries are not imported")
     let pls = "[playlist]\nFile1=https://a.example/one\nTitle1=One\nFile2=https://a.example/two\nTitle2=Two\n"
     func listing(_ name: String, _ codec: String, _ bitrate: Int, votes: Int = 0) -> RadioListing {
         RadioListing(id: name, name: name, address: "http://x/\(name)", tags: "", country: "", countryCode: "", codec: codec, bitrate: bitrate, votes: votes, clicks: 0, hls: false, sourceName: nil)

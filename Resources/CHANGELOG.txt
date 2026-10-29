@@ -1,4 +1,5 @@
 RadioPocket 0.8
+* Fixed: Station lists no longer include unnamed entries (a bare host name instead of a station name), web addresses used as names, or links that point at pages and images
 * Improved: Downloaded station lists no longer linger in memory: they are freed 2½ minutes after your last search, after the app has been in the background for 90 seconds, and whenever macOS asks apps to give memory back; the freed pages are returned to the system
 * Fixed: Rare crash while the player was starting up; loading a skin no longer lets the half-built window repaint
 * Added: Saved station lists — the library opens instantly from a small on-disk cache (even offline) and quietly refreshes stale pages in the background, one request at a time, pausing on Low Power Mode, hotspots, Low Data Mode or a hot Mac; Preferences ▸ Media Library can turn it off or clear it
