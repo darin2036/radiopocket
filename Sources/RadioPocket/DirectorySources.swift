@@ -84,6 +84,14 @@ struct DirectorySource: Codable, Equatable, Identifiable {
 
 protocol DirectoryBackend: Sendable {
     func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage
+    /// Lets go of a downloaded catalog once nobody is using it; the next search simply fetches it again.
+    func trim() async
+}
+extension DirectoryBackend { func trim() async {} }
+
+extension Optional where Wrapped == (Date, [RadioListing]) {
+    /// True for a whole-catalog copy that has sat unused long enough to be worth freeing.
+    var idle: Bool { map { Date().timeIntervalSince($0.0) > 120 } ?? false }
 }
 
 extension UUID {
@@ -147,6 +155,7 @@ enum DirectoryFetch {
 /// SomaFM's public channel list.
 actor SomaFMDirectory: DirectoryBackend {
     private var cache: (Date, [RadioListing])?
+    func trim() { if cache.idle { cache = nil } }
     private struct Channels: Decodable {
         struct Channel: Decodable {
             struct Playlist: Decodable { var url: String; var format: String; var quality: String }
@@ -186,6 +195,7 @@ actor SomaFMDirectory: DirectoryBackend {
 actor StationListDirectory: DirectoryBackend {
     private let url: URL, label: String, sourceID: String
     private var cache: (Date, [RadioListing])?
+    func trim() { if cache.idle { cache = nil } }
     private let limit: Int, maximumEntries: Int
     init(url: URL, label: String, sourceID: String, limit: Int = 2_097_152, maximumEntries: Int = 5000) {
         self.url = url; self.label = label; self.sourceID = sourceID; self.limit = limit; self.maximumEntries = maximumEntries
@@ -258,6 +268,7 @@ actor StationListDirectory: DirectoryBackend {
 /// Public Xiph yellow-pages feed. Only valid HTTP audio entries are retained.
 actor IcecastDirectory: DirectoryBackend {
     private var cache: (Date, [RadioListing])?
+    func trim() { if cache.idle { cache = nil } }
     func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
         try Task.checkCancellation()
         let cached = !refresh && cache.map { Date().timeIntervalSince($0.0) < 600 } == true
@@ -380,6 +391,7 @@ actor RadioParadiseDirectory: DirectoryBackend {
 /// Fetch the small public repository once, rather than requesting every station playlist separately.
 actor CuratedStreamsDirectory: DirectoryBackend {
     private var cache: (Date, [RadioListing])?
+    func trim() { if cache.idle { cache = nil } }
     func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
         try Task.checkCancellation()
         let cached = !refresh && cache.map { Date().timeIntervalSince($0.0) < 600 } == true

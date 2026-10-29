@@ -85,6 +85,10 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             button("Favorite stations…", "favorites", x: 200, y: 282)
             button("Manage directories…", "directories", x: 0, y: 238, width: 390)
             label("\(app.library.state.favorites.count) saved favorites", x: 0, y: 196)
+            let fresh = NSButton(checkboxWithTitle: "Keep station lists saved and up to date", target: self, action: #selector(freshChanged(_:)))
+            fresh.frame = NSRect(x: 0, y: 150, width: 480, height: 24); fresh.state = app.library.state.backgroundStations == false ? .off : .on; page.addSubview(fresh)
+            label("Saves the most-used lists on this Mac so the library opens instantly, even offline, and refreshes a few pages about every hour. It pauses on Low Power Mode, hotspots, Low Data Mode and while the Mac runs hot.", x: 0, y: 84, width: 510, height: 58)
+            button("Clear saved lists", "clearstations", x: 0, y: 44)
         default:
             label("RadioPocket", x: 0, y: 402, bold: true)
             label("A compact, native internet radio player.\nSettings are saved automatically.\n\n⌘O  Open stream\n⌘B  Station library\n⌘E  Equalizer\n⌘K  Skins\n⌘,   Preferences", x: 0, y: 170, width: 510, height: 210)
@@ -115,12 +119,12 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         row("Peak falloff", "peakfall", speeds, selected: s.peakFalloff)
         row("Refresh rate", "refresh", VisRefresh.allCases.map(\.title), selected: VisRefresh.allCases.firstIndex(of: s.refresh) ?? 0)
         row("Oscilloscope style", "scope", ScopeStyle.allCases.map(\.title), selected: ScopeStyle.allCases.firstIndex(of: s.scope) ?? 0)
+        check("Automatically cycle visualizations", "autocycle", s.autoCycle)
+        row("Change visualization every", "cycletime", VisCycleInterval.seconds.map(VisCycleInterval.title), selected: VisCycleInterval.seconds.firstIndex(of: s.cycleSeconds) ?? 0)
         label("Fire", x: 0, y: y, bold: true); y -= 30
         row("Flame height", "fireheight", levels, selected: s.fireHeight)
         row("Turbulence", "fireturb", turbulence, selected: s.fireTurbulence)
         row("Flame colors", "firepalette", FirePalette.allCases.map(\.title), selected: FirePalette.allCases.firstIndex(of: s.firePalette) ?? 0)
-        check("Automatically cycle visualizations", "autocycle", s.autoCycle)
-        row("Change visualization every", "cycletime", VisCycleInterval.seconds.map(VisCycleInterval.title), selected: VisCycleInterval.seconds.firstIndex(of: s.cycleSeconds) ?? 0)
         check("Show peak markers", "peaks", s.peaks)
     }
     @objc private func visChanged(_ sender: NSPopUpButton) {
@@ -135,11 +139,11 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         case "refresh": value = VisRefresh.allCases[i].rawValue
         case "scope": value = ScopeStyle.allCases[i].rawValue
         case "firepalette": value = FirePalette.allCases[i].rawValue
+        case "cycletime": value = String(VisCycleInterval.seconds[i])
         default: value = String(i)
         }
         app.visuals.handle("vis:\(key):\(value)")
     }
-        case "cycletime": value = String(VisCycleInterval.seconds[i])
     @objc private func visToggled(_ sender: NSButton) { if let key = sender.identifier?.rawValue { app.visuals.handle("vis:\(key)") } }
     private var directoryList: [DirectorySource] { DirectorySource.resolved(app.library.state.directories) }
     private func directoriesPage() {
@@ -279,6 +283,10 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func volumeChanged(_ sender: NSSlider) { app.view.volumeChanged?(sender.floatValue) }
     @objc private func sizeChanged(_ sender: NSPopUpButton) { app.handle("scale\(sender.indexOfSelectedItem + 1)") }
     @objc private func topChanged(_ sender: NSButton) { app.window.level = sender.state == .on ? .floating : .normal; app.eqWindow.level = app.window.level; app.saveWindowLevel() }
+    @objc private func freshChanged(_ sender: NSButton) {
+        do { try app.library.update { $0.backgroundStations = sender.state == .on }; app.updateBackgroundStations() }
+        catch { app.showError(error) }
+    }
     @objc private func eqChanged(_ sender: NSButton) { app.engine.equalizer.settings.enabled = sender.state == .on }
     @objc private func presetChanged(_ sender: NSPopUpButton) {
         let presets = EQPreset.classic + app.engine.equalizer.settings.custom

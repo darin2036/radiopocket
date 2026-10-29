@@ -82,6 +82,8 @@ final class Library {
         var visualizer: VisSettings?
         var directories: [DirectorySource]?
         var leveling: Bool?
+        /// Keeps the opening station lists saved and fresh in the background. On unless turned off.
+        var backgroundStations: Bool?
     }
     let directory: URL
     private(set) var state: State

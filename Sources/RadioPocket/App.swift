@@ -152,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         favorites.edit = { [weak self] in self?.openDialog(station: $0, favoriteOnly: true) }
         favorites.report = { [weak self] in self?.showError($0) }
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
+        updateBackgroundStations()
         view.action = { [weak self] in self?.handle($0) }
         view.volumeChanged = { [weak self] value in
             guard let self else { return }
@@ -514,6 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             else { openDialog(favoriteOnly: true) }
         case "discovery":
             makeDiscovery().showLibrary()
+        case "clearstations":
+            clearSavedStations()
         case "favorites":
             favorites.showWindow(nil)
             if let frame = window?.frame { favorites.window?.setFrameTopLeftPoint(NSPoint(x: frame.minX, y: frame.minY - 8)) }
@@ -751,10 +754,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Local-only test endpoint; production always uses Radio Browser's HTTPS mirrors.
         if argument("--data-dir") != nil, let raw = argument("--directory-api"), let url = URL(string: raw),
            ["127.0.0.1", "localhost", "::1"].contains(url.host ?? ""), ["http", "https"].contains(url.scheme ?? "") {
-            return RadioDirectory(baseURLs: [url])
+            return RadioDirectory(baseURLs: [url], cache: stationCache)
         }
-        return RadioDirectory()
+        return RadioDirectory(cache: stationCache)
     }()
+    private lazy var stationCache = StationCache.standard(dataDirectory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
+    /// Opens the station lists from disk and keeps them fresh in the background; nothing happens in smoke or preview runs.
+    func updateBackgroundStations() {
+        guard smokePath == nil, argument("--preview") == nil else { return }
+        let client = directoryClient, sources = library.state.directories ?? []
+        if library.state.backgroundStations == false { Task { await client.stopBackgroundRefresh() } }
+        else { Task { await client.configure(sources); await client.startBackgroundRefresh() } }
+    }
+    func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations() } }
     private func makeDiscovery() -> DiscoveryController {
         if let discovery { return discovery }
         let client = directoryClient
@@ -816,7 +828,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch { showError(error) }
     }
     /// Tells an open library window that the user changed their directory list.
-    func directoriesChanged() { discovery?.refreshSources() }
+    func directoriesChanged() { discovery?.refreshSources(); updateBackgroundStations() }
     func showError(_ error: Error) {
         let alert = NSAlert(); alert.alertStyle = .warning
         alert.messageText = "RadioPocket"; alert.informativeText = error.localizedDescription

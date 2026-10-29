@@ -151,6 +151,8 @@ struct DirectoryPage {
     var hasMore: Bool
     var rawCount: Int
     var cached: Bool = false
+    /// When a saved page was last fetched from the directories; nil for a live response.
+    var updated: Date?
 }
 
 private struct DirectoryRows: Decodable {
@@ -300,8 +302,21 @@ actor RadioDirectory {
     private let radioBrowser: RadioBrowserDirectory
     private var sources = DirectorySource.resolved(nil)
     private var backends: [String: (key: String, backend: DirectoryBackend)] = [:]
+    private let cache: StationCache?
+    private var pending: [(key: String, query: DirectoryQuery)] = []
+    private var queued = Set<String>()
+    private var draining = false
+    private var failures = 0
+    private var pausedUntil = Date.distantPast
+    private var schedule: Task<Void, Never>?
+    /// A saved page this young is used as is; older ones are shown at once and refreshed behind the scenes.
+    static let freshFor: TimeInterval = 6 * 3600
+    /// Past this a saved page is ignored while the network works (it is still the fallback when it doesn't).
+    static let expiresAfter: TimeInterval = 7 * 86_400
+    /// The views opened first, and how many 100-station pages of each are kept warm.
+    static let warmViews: [(order: String, reverse: Bool, pages: Int)] = [("clickcount", true, 5), ("votes", true, 2), ("name", false, 2)]
 
-    init(baseURLs: [URL]? = nil) { radioBrowser = RadioBrowserDirectory(baseURLs: baseURLs) }
+    init(baseURLs: [URL]? = nil, cache: StationCache? = nil) { radioBrowser = RadioBrowserDirectory(baseURLs: baseURLs); self.cache = cache }
 
     /// Applies the user's directory list. Backends are kept between calls so their caches survive.
     func configure(_ list: [DirectorySource]) {
@@ -315,7 +330,100 @@ actor RadioDirectory {
         backends = next
     }
 
+    /// Browsing views come from disk when saved: instantly, and offline. A page older than `freshFor` is still returned at once
+    /// and queued for a quiet refresh, so what the user sees never waits on the network. Refresh and typed searches go live.
     func search(_ query: DirectoryQuery, refresh: Bool = false) async throws -> DirectoryPage {
+        guard let cache, let key = cacheKey(query) else { return try await live(query, refresh: refresh) }
+        let stored = cache.load(key)
+        if !refresh, let stored {
+            let age = Date().timeIntervalSince(stored.savedAt)
+            if age < Self.expiresAfter {
+                if age > Self.freshFor { enqueue(key, query) }
+                return stored.page
+            }
+        }
+        do {
+            let page = try await live(query, refresh: refresh)
+            cache.store(page, key: key)
+            return page
+        } catch {
+            if Task.isCancelled || error is CancellationError || refresh { throw error }
+            if let stored { return stored.page }
+            throw error
+        }
+    }
+
+    private func cacheKey(_ query: DirectoryQuery) -> String? {
+        let active = sources.filter { $0.enabled && (query.sourceID == "all" || $0.id == query.sourceID) }
+        return cache?.key(for: query, sources: active.map { $0.id + "@" + ($0.url ?? "") })
+    }
+
+    // MARK: Background refresh
+
+    /// Starts the quiet refresh loop: a short wait so the player comes up first, then a check every 45 minutes.
+    /// A check only queues pages that have gone stale, so most of them do nothing.
+    func startBackgroundRefresh() {
+        guard cache != nil, schedule == nil else { return }
+        _ = NetworkCost.shared
+        schedule = Task(priority: .utility) { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            while !Task.isCancelled {
+                await self?.warm()
+                try? await Task.sleep(for: .seconds(45 * 60), tolerance: .seconds(5 * 60))
+            }
+        }
+    }
+    func stopBackgroundRefresh() { schedule?.cancel(); schedule = nil; pending.removeAll(); queued.removeAll() }
+    func clearSavedStations() { pending.removeAll(); queued.removeAll(); cache?.clear() }
+
+    /// Queues the opening views whose saved pages are missing or stale.
+    func warm() {
+        guard let cache, Date() >= pausedUntil else { return }
+        for view in Self.warmViews {
+            for page in 0..<view.pages {
+                var query = DirectoryQuery(); query.order = view.order; query.reverse = view.reverse; query.offset = page * DirectoryQuery.pageSize
+                guard let key = cacheKey(query) else { continue }
+                if let age = cache.age(of: key), age < Self.freshFor { continue }
+                enqueue(key, query)
+            }
+        }
+    }
+
+    private func enqueue(_ key: String, _ query: DirectoryQuery) {
+        guard Date() >= pausedUntil, queued.insert(key).inserted else { return }
+        pending.append((key, query))
+        guard !draining else { return }
+        draining = true
+        Task(priority: .utility) { await self.drain() }
+    }
+
+    /// One request at a time with a pause between them, so a refresh is a trickle rather than a burst.
+    private func drain() async {
+        while !pending.isEmpty {
+            guard BackgroundPolicy.allows() else { pause(minutes: 15); break }
+            let item = pending.removeFirst()
+            do {
+                // Refreshing reuses each directory's short in-memory copy, so a big catalog is downloaded once per round.
+                let page = try await live(item.query, refresh: false)
+                try Task.checkCancellation()
+                cache?.store(page, key: item.key); failures = 0
+            } catch {
+                failures += 1
+                if failures >= 2 { pause(minutes: 15); break }
+            }
+            queued.remove(item.key)
+            try? await Task.sleep(for: .seconds(1.5))
+        }
+        draining = false
+        cache?.prune()
+        for entry in backends.values { await entry.backend.trim() }
+    }
+    private func pause(minutes: Double) {
+        pending.removeAll(); queued.removeAll(); failures = 0
+        pausedUntil = Date().addingTimeInterval(minutes * 60)
+    }
+
+    private func live(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
         let active = sources.filter { $0.enabled && (query.sourceID == "all" || $0.id == query.sourceID) }
         guard !active.isEmpty else { throw RadioError.message("That directory is turned off. Enable it in Preferences ▸ Directories.") }
         let radioBrowser = radioBrowser, backends = backends

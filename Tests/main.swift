@@ -157,6 +157,40 @@ do {
     try rejects("Reject malformed directory JSON") { _ = try RadioDirectory.decodePage(Data("not JSON".utf8), query: query) }
     let excessiveRows = try JSONSerialization.data(withJSONObject: Array(repeating: rawRows[0], count: 201))
     try rejects("Reject unbounded directory pages before allocating station models") { _ = try RadioDirectory.decodePage(excessiveRows, query: query) }
+    // Saved station lists
+    let cacheDir = root.appendingPathComponent("station-cache")
+    let saved = StationCache(directory: cacheDir)
+    var savedRow = RadioListing(id: "00000000-0000-0000-0000-0000000000aa", name: "Saved Jazz", address: "https://radio.example/jazz", tags: "jazz", country: "France", countryCode: "FR", codec: "AAC", bitrate: 96, votes: 7, clicks: 9, hls: false, sourceName: "SomaFM")
+    savedRow.directoryID = "00000000-0000-0000-0000-0000000000aa"; savedRow.homepage = "https://radio.example/"
+    let browse = DirectoryQuery()
+    let savedKey = saved.key(for: browse, sources: ["radio-browser@", "somafm@"])!
+    saved.store(DirectoryPage(stations: [savedRow], hasMore: true, rawCount: 100), key: savedKey)
+    let reloaded = saved.load(savedKey)
+    try check(reloaded?.page.stations == [savedRow] && reloaded?.page.hasMore == true && reloaded?.page.rawCount == 100 && reloaded?.page.cached == true, "A saved station page reloads with every field intact")
+    var typed = DirectoryQuery(); typed.name = "jazz"
+    try check(saved.key(for: typed, sources: ["radio-browser@"]) == nil, "Typed searches are never saved")
+    var secondPage = browse; secondPage.offset = 100; var otherSort = browse; otherSort.order = "votes"
+    let keys = Set([browse, secondPage, otherSort].compactMap { saved.key(for: $0, sources: ["radio-browser@"]) } + [saved.key(for: browse, sources: ["radio-browser@", "somafm@"])!])
+    try check(keys.count == 4 && saved.key(for: browse, sources: ["somafm@", "radio-browser@"]) == savedKey, "Saved pages are keyed by view, offset and enabled directories, not by source order")
+    let oldDate = Date().addingTimeInterval(-7200)
+    try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: cacheDir.appendingPathComponent(savedKey + ".json").path)
+    try check(abs((saved.age(of: savedKey) ?? 0) - 7200) < 5 && saved.load(savedKey)?.page.updated == saved.load(savedKey)?.savedAt, "A saved page's age is its file's modification time")
+    let tampered = String(decoding: try Data(contentsOf: cacheDir.appendingPathComponent(savedKey + ".json")), as: UTF8.self).replacingOccurrences(of: "https://radio.example/jazz", with: "file:///etc/passwd")
+    try tampered.write(to: cacheDir.appendingPathComponent(savedKey + ".json"), atomically: true, encoding: .utf8)
+    try check(saved.load(savedKey)?.page.stations.isEmpty == true, "Saved addresses are revalidated when read back")
+    try Data("not json".utf8).write(to: cacheDir.appendingPathComponent(savedKey + ".json"))
+    try check(saved.load(savedKey) == nil, "A damaged saved page is ignored")
+    for index in 0..<(StationCache.maximumFiles + 20) {
+        var q = browse; q.offset = index * 100
+        saved.store(DirectoryPage(stations: [savedRow], hasMore: false, rawCount: 1), key: saved.key(for: q, sources: ["prune@"])!)
+    }
+    let ancient = saved.key(for: browse, sources: ["prune@"])!
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-StationCache.maximumAge - 60)], ofItemAtPath: cacheDir.appendingPathComponent(ancient + ".json").path)
+    saved.prune()
+    let kept = try FileManager.default.contentsOfDirectory(atPath: cacheDir.path).filter { $0.hasSuffix(".json") }.count
+    try check(kept <= StationCache.maximumFiles && saved.load(ancient) == nil, "Pruning drops month-old pages and caps the number of saved pages")
+    saved.clear()
+    try check(!FileManager.default.fileExists(atPath: cacheDir.path), "Clearing removes the saved pages")
     let historyDir = root.appendingPathComponent("history")
     let history = try Library(directory: historyDir)
     for i in 0..<35 { try history.recordRecent(Station(name: "Station \(i)", address: "https://radio.example/\(i)")) }

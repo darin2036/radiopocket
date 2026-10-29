@@ -1,4 +1,5 @@
 RadioPocket 0.8
+* Added: Saved station lists — the library opens instantly from a small on-disk cache (even offline) and quietly refreshes stale pages in the background, one request at a time, pausing on Low Power Mode, hotspots, Low Data Mode or a hot Mac; Preferences ▸ Media Library can turn it off or clear it
 * Changed: The Station Library is one continuous list instead of pages — more stations load automatically as you scroll, and Previous/Next are gone
 * Added: A real Fire visualization — a flame simulation fed by the spectrum — in the visualization window, full screen, and as the player's Fire mini mode
 * Added: Visualization Settings (Visualization menu or Preferences): peak falloff, band line width, flame height, turbulence and colors (Flame, Blue Flame, Toxic Green, Skin Colors), plus the existing options in one place

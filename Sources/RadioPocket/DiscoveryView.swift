@@ -85,7 +85,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private var loadingMore = false
     private var hiddenCount = 0
     private var sourceTitle = "directories"
-    private var pageWasCached = false
+    private var cacheNote = ""
     private var busy = false
     private var hasLoaded = false
     private var generation = UUID()
@@ -363,7 +363,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
                 self.rows = page.stations; self.hasMore = page.hasMore; self.hasLoaded = true
-                self.hiddenCount = max(0, page.rawCount - page.stations.count); self.pageWasCached = page.cached
+                self.hiddenCount = max(0, page.rawCount - page.stations.count); self.cacheNote = Self.note(for: page)
                 self.setBusy(false); self.table.reloadData()
                 self.message.stringValue = !page.stations.isEmpty ? "" : (page.hasMore ? "Looking for supported streams…" : "No stations found. Try a broader search or change the filters.")
                 self.message.isHidden = !page.stations.isEmpty
@@ -380,8 +380,14 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             }
         }
     }
+    /// Says when a saved list was last fetched, so a stale-looking list explains itself; Refresh fetches live.
+    private static func note(for page: DirectoryPage) -> String {
+        guard page.cached else { return "" }
+        guard let date = page.updated, Date().timeIntervalSince(date) > 90 else { return " • Cached" }
+        return " • Saved " + RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+    }
     private func showCount() {
-        status.stringValue = "\(rows.count) stations\(hiddenCount > 0 ? " • \(hiddenCount) other entries hidden" : "")\(pageWasCached ? " • Cached" : "") • \(sourceTitle)\(hasMore ? " • Scroll for more" : "")"
+        status.stringValue = "\(rows.count) stations\(hiddenCount > 0 ? " • \(hiddenCount) other entries hidden" : "")\(cacheNote) • \(sourceTitle)\(hasMore ? " • Scroll for more" : "")"
     }
     /// Fetches the next page once the list is scrolled within a screenful of its end, appending it so the list reads as one.
     private func loadMoreIfNeeded() {
