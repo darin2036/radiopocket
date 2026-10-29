@@ -43,7 +43,7 @@ final class PlayerView: NSView {
         add("open", label: "Open stream URL", rect: NSRect(x: 136, y: 89, width: 22, height: 16)) { [weak self] rect, down in
             guard let self else { return }
             if !self.drawSprite("cbuttons.bmp", NSRect(x: 114, y: down ? 16 : 0, width: 22, height: 16), in: rect) {
-                self.bevel(rect, down: down); self.text("+", at: NSPoint(x: 7, y: 1), size: 11, color: .black)
+                self.bevel(rect, down: down); self.ejectIcon(in: rect, down: down)
             }
         }
         // EQ and PL live in shufrep.bmp, as in classic Winamp. PL opens the station library in place of a playlist.
@@ -159,11 +159,17 @@ final class PlayerView: NSView {
         _ = drawSprite("volume.bmp", NSRect(x: 15, y: 422, width: 14, height: 11), in: NSRect(x: 107 + (51 * volume).rounded(), y: 58, width: 14, height: 11))
         let balance = CGFloat(engine.balance)
         if !drawSprite("balance.bmp", NSRect(x: 9, y: Int((abs(balance) * 27).rounded()) * 15, width: 38, height: 13), in: NSRect(x: 177, y: 57, width: 38, height: 13)) {
-            fill(NSRect(x: 177, y: 62, width: 38, height: 3), NSColor(white: 0.20, alpha: 1))
-            fill(NSRect(x: 195, y: 59, width: 1, height: 9), NSColor(white: 0.45, alpha: 1))
+            // Like the volume bar, but lit end to end: green at center, shifting to red toward either side.
+            var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0
+            (green.usingColorSpace(.deviceRGB) ?? green).getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+            let lit = NSColor(hue: hue * (1 - abs(balance)), saturation: saturation, brightness: brightness, alpha: 1)
+            for i in 0..<12 { fill(NSRect(x: 178 + i * 3, y: 62, width: 2, height: 5), lit) }
         }
         let balanceThumb = NSRect(x: 177 + ((balance + 1) * 12).rounded(), y: 58, width: 14, height: 11)
-        if !drawSprite("balance.bmp", NSRect(x: 15, y: 422, width: 14, height: 11), in: balanceThumb) { fill(NSRect(x: balanceThumb.midX - 1, y: 59, width: 3, height: 9), green) }
+        if !drawSprite("balance.bmp", NSRect(x: 15, y: 422, width: 14, height: 11), in: balanceThumb) {
+            let knob = NSRect(x: balanceThumb.midX - 3, y: 58, width: 6, height: 11)
+            bevel(knob, down: false)
+        }
         // Classic skins draw their balance slider here; only the native theme has room for the readout.
         if skin == nil { fill(NSRect(x: 16, y: 72, width: 248, height: 10), ink) }
         let showsDetail = [.failed, .connecting, .paused].contains(engine.status) || (engine.status == .playing && engine.delay >= 2)
@@ -222,6 +228,14 @@ final class PlayerView: NSView {
             else { path.move(to: NSPoint(x: x, y: y)); path.line(to: NSPoint(x: x + 7, y: y + 4)); path.line(to: NSPoint(x: x, y: y + 8)); if index == 4 { NSRect(x: x + 8, y: y, width: 2, height: 8).fill() } }
             path.close(); path.fill()
         }
+    }
+    /// Winamp's eject glyph: a triangle over a bar, drawn in the same ink as the transport icons.
+    private func ejectIcon(in rect: NSRect, down: Bool) {
+        NSColor(white: 0.10, alpha: 1).setFill()
+        let midX = rect.midX + (down ? 1 : 0), top = rect.minY + (down ? 5 : 4)
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: midX, y: top)); path.line(to: NSPoint(x: midX + 5, y: top + 5)); path.line(to: NSPoint(x: midX - 5, y: top + 5)); path.close(); path.fill()
+        NSRect(x: midX - 5, y: top + 7, width: 10, height: 2).fill()
     }
     private var miniCycle: DispatchWorkItem?
     override func mouseDown(with event: NSEvent) {
