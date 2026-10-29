@@ -314,6 +314,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         suppressSelection = true
         if let popular = nodes[1].children.first { sidebar.selectRowIndexes(IndexSet(integer: sidebar.row(forItem: popular)), byExtendingSelection: false) }
         suppressSelection = false
+        // Opens on Popular with stations sorted by quality, best first, shown as the table's sort too.
+        order.selectItem(at: 3); suppressSort = true; table.sortDescriptors = [NSSortDescriptor(key: "quality", ascending: false)]; suppressSort = false
+        captureQuery()
         adaptLayout()
         updateSelection()
     }
