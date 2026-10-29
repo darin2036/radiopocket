@@ -59,7 +59,7 @@ Open `dist/RadioPocket.app` in this project folder. This build is for Apple Sili
 - Previous/next move through favorites. **Space** toggles playback. **↑ / ↓** adjust volume. Click or drag the volume bar.
 - Pause keeps the connection and buffers what the station sends (up to five minutes), so Play continues where you stopped. **← / →** (or **[ / ]**) go back or forward 10 seconds, and **L** (⌘J) jumps to live; the display shows how far behind live you are. Stop clears the elapsed listening timer and disconnects. Closing the player quits and stops audio.
 - **⌘1 / ⌘2 / ⌘3** select interface scale. Default is 550 × 232 points (2×). Drag the title strip to move the player. **⌘T** toggles always-on-top.
-- **SK / ⌘K** opens Preferences → Skins. **⌘,** opens Preferences with playback, appearance, equalizer, and library pages. **⌘I** imports a classic `.wsz` or ZIP skin. You can also drop a skin file on the player. **Appearance → Use RadioPocket Theme** restores RadioPocket’s own artwork.
+- **SK / ⌘K** opens Preferences → Skins. **⌘,** opens Preferences with playback, appearance, equalizer, and library pages. **⌘I** imports a classic `.wsz` or ZIP skin. You can also drop a skin file on the player. **View → Use RadioPocket Theme** restores RadioPocket’s own artwork.
 
 ## Opening radio links from websites
 
@@ -104,8 +104,8 @@ The library opens from a small on-disk cache of the lists people open first (Pop
 
 - **Jump to Station** (**J** in the player, or **⇧⌘J**): type part of a station name, **↑ / ↓** to choose, **Return** to tune in. It searches your favorites and recently played stations.
 - **Station Info** (**I**, or **⇧⌘I**): the live format and sample rate, the bitrate measured from the connection, how much time-shift buffer is kept and how far behind live you are, and the leveler's gain. **Look Up Details** asks Radio Browser for the country, genre and homepage; nothing is sent until you press it.
-- **Sleep Timer** (Radio menu): stops playback after 15, 30, 45, 60, 90 or 120 minutes, fading the volume over the last 20 seconds and restoring it afterwards. The countdown shows on the station line.
-- **Loudness Leveling** (Radio menu): a slow level follower with a soft limiter that brings quiet stations up (to +10 dB) and loud ones down (to −12 dB) toward one average level. It follows the EQ, applies to every stream RadioPocket decodes itself, and is off by default. Station switches take a few seconds to settle.
+- **Sleep Timer** (Controls menu): stops playback after 15, 30, 45, 60, 90 or 120 minutes, fading the volume over the last 20 seconds and restoring it afterwards. The countdown shows on the station line.
+- **Loudness Leveling** (Controls menu): a slow level follower with a soft limiter that brings quiet stations up (to +10 dB) and loud ones down (to −12 dB) toward one average level. It follows the EQ, applies to every stream RadioPocket decodes itself, and is off by default. Station switches take a few seconds to settle.
 - **Window snapping and docking**: the player, equalizer, library and favorites snap to screen edges and to one another. The equalizer opens docked under the player, and dragging the player carries docked windows with it. Hold **Option** while dragging to move freely. Double-click a title bar to window-shade it.
 
 ## Visualizer
@@ -171,7 +171,7 @@ Fallbacks and limits: fragmented-MP4 (CMAF) and SAMPLE-AES HLS, and MP3/AAC stre
 
 ## Included skins
 
-**Winamp Classic — Original Default** is selected on a fresh install. Existing imported skins are preserved. Choose **SK**, **⌘K**, or **Appearance → Choose Skin…** to switch immediately; the choice survives relaunch and applies to both player and equalizer. The Preferences window shows the installed list, current skin name, and a player preview. Imported skins remain installed for reuse. No download is required.
+**Winamp Classic — Original Default** is selected on a fresh install. Existing imported skins are preserved. Choose **SK**, **⌘K**, or **View → Choose Skin…** to switch immediately; the choice survives relaunch and applies to both player and equalizer. The Preferences window shows the installed list, current skin name, and a player preview. Imported skins remain installed for reuse. No download is required.
 
 The 11 classic skins are Winamp Classic 2.91, Amiga PPC Dark, Internet Archive, Mac OS X Aqua, My Funny Valentine, Sonic Attitude, TopazAmp, Vizor, XMMS Turquoise, Zaxon Remake, and Rei. RadioPocket Original is a twelfth appearance. These are distinct designs, not recolors. Only the selected skin is decoded; archive storage totals about 1.8 MB.
 

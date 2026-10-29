@@ -521,6 +521,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         NSApp.mainMenu = menu
         NSApp.helpMenu = help
+        // The system also adds a (here redundant) Enter Full Screen item to View; keep it out.
+        NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: view, queue: .main) { note in
+            guard let menu = note.object as? NSMenu else { return }
+            menu.items.filter { $0.action == #selector(NSWindow.toggleFullScreen(_:)) }.forEach(menu.removeItem)
+        }
     }
     @objc private func menuAction(_ sender: NSMenuItem) {
         if sender.representedObject as? String == "ontop" {

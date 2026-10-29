@@ -1,4 +1,5 @@
 RadioPocket 0.8
+* Changed: The menu bar follows Mac conventions — File, Edit, Controls, View, Visualization, Window and Help (Radio and Appearance are now Controls and View). Added Hide, Services, Close Window (⌘W), Minimize (⌘M), Undo/Redo, Previous/Next Favorite (⌥⌘←/→), Volume (⌘↑/⌘↓), a Window menu listing the player, library, favorites, equalizer and visualization, and Help with the shortcut list and version history. Items show checkmarks (size, always on top, open windows) and disable when they don't apply; Visualization options are grouped by topic
 * Added: A left/right balance slider beside the volume slider; it snaps to center when dragged near the middle and is remembered between launches
 * Added: The scroll wheel over the volume slider adjusts the volume
 * Added: Clicking the logo at the bottom right of the player opens About
