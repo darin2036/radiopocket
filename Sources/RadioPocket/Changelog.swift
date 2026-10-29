@@ -7,11 +7,26 @@ struct Release: Equatable {
     let released: String?
     let entries: [String]
     var title: String { "RadioPocket \(version)" }
-    var text: String { ([title] + entries).joined(separator: "\n") }
+    /// Short label for pickers: "0.5 and earlier" becomes "0.5".
+    var label: String { version.split(separator: " ").first.map(String.init) ?? version }
+    /// Entries grouped by kind in standard changelog order, without the `* Kind:` prefix.
+    var sections: [(kind: String, items: [String])] {
+        Changelog.kinds.compactMap { kind in
+            let prefix = "* \(kind): "
+            let items = entries.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+            return items.isEmpty ? nil : (kind, items)
+        }
+    }
+    var text: String {
+        let date = released.map { "  ·  \($0)" } ?? ""
+        return ([title + date] + sections.map { "\n\($0.kind)\n" + $0.items.map { "  • " + $0 }.joined(separator: "\n") }).joined(separator: "\n")
+    }
 }
 
 enum Changelog {
     static let header = "RadioPocket "
+    /// Standard changelog order.
+    static let kinds = ["Added", "Changed", "Removed", "Fixed"]
 
     static func parse(_ source: String) -> [Release] {
         var releases: [Release] = []

@@ -341,8 +341,10 @@ do {
     try check(sample[0].entries == ["* Added: Thing", "* Fixed: Other"], "Changelog keeps entries in order")
     let shipped = Changelog.parse(try String(contentsOfFile: "Resources/CHANGELOG.txt", encoding: .utf8))
     try check(!shipped.isEmpty && shipped.allSatisfy { !$0.entries.isEmpty }, "Shipped CHANGELOG.txt parses with entries for every release")
-    let kinds = ["Changed", "Added", "Improved", "Fixed", "Removed", "Updated", "Misc"]
-    try check(shipped.flatMap(\.entries).allSatisfy { line in kinds.contains { line.hasPrefix("* \($0): ") } }, "Every changelog entry uses a standard kind prefix")
+    try check(shipped.flatMap(\.entries).allSatisfy { line in Changelog.kinds.contains { line.hasPrefix("* \($0): ") } }, "Every changelog entry uses a standard kind prefix")
+    try check(shipped.allSatisfy { $0.sections.map(\.items.count).reduce(0, +) == $0.entries.count }, "Every changelog entry lands in a section")
+    try check(sample[0].sections.map(\.kind) == ["Added", "Fixed"] && sample[0].sections[0].items == ["Thing"], "Changelog groups entries by kind in standard order")
+    try check(shipped.last?.label == "0.5", "Release label drops the 'and earlier' suffix")
     // Visualizer: capture ring, analyzer, palette and settings
     let visDSP = rp_eq_create()!
     defer { rp_eq_destroy(visDSP) }

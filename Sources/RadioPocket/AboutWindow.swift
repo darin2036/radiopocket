@@ -10,7 +10,6 @@ final class AboutController: NSObject {
     private let text = NSTextView()
     private let tabs: [ClassicButton]
     private let versions = ClassicPopup(frame: .zero, pullsDown: false)
-    private let released = NSTextField(labelWithString: "")
     private let releases = Changelog.load()
     private var selected = Tab.about
 
@@ -29,18 +28,16 @@ final class AboutController: NSObject {
 
         var x: CGFloat = 14
         for (index, button) in tabs.enumerated() {
-            let width = CGFloat(Tab(rawValue: index)!.title.count * 6 + 22)
+            let width = CGFloat(Tab(rawValue: index)!.title.count * 6 + 16)
             button.frame = NSRect(x: x, y: 32, width: width, height: 22); x += width + 4
             button.isBordered = false; button.tag = index; button.target = self; button.action = #selector(selectTab(_:))
             root.addSubview(button)
         }
-        versions.frame = NSRect(x: 14, y: 64, width: 150, height: 21); versions.isBordered = false
-        versions.addItems(withTitles: releases.map(\.title)); versions.target = self; versions.action = #selector(selectVersion)
+        versions.frame = NSRect(x: size.width - 14 - 58, y: 32, width: 58, height: 22); versions.isBordered = false
+        versions.addItems(withTitles: releases.map(\.label)); versions.target = self; versions.action = #selector(selectVersion)
         versions.setAccessibilityLabel("Version"); root.addSubview(versions)
-        released.frame = NSRect(x: 172, y: 66, width: 290, height: 18); released.font = ClassicUI.font; released.textColor = ClassicUI.dim
-        root.addSubview(released)
 
-        let scroll = NSScrollView(frame: NSRect(x: 14, y: 92, width: size.width - 28, height: size.height - 106))
+        let scroll = NSScrollView(frame: NSRect(x: 14, y: 60, width: size.width - 28, height: size.height - 74))
         scroll.hasVerticalScroller = true; scroll.borderType = .lineBorder; scroll.drawsBackground = true; scroll.backgroundColor = ClassicUI.black
         text.isEditable = false; text.isSelectable = true; text.drawsBackground = true; text.backgroundColor = ClassicUI.black
         text.textContainerInset = NSSize(width: 6, height: 6)
@@ -70,13 +67,16 @@ final class AboutController: NSObject {
         selected = tab
         for (index, button) in tabs.enumerated() { button.state = index == tab.rawValue ? .on : .off; button.alphaValue = index == tab.rawValue ? 1 : 0.6 }
         let history = tab == .history
-        versions.isHidden = !history; released.isHidden = !history
+        versions.isHidden = !history
         if history { selectVersion() } else { setText(body(for: tab)) }
     }
 
-    private func setText(_ string: String) {
+    private func setText(_ string: String, hanging: Bool = false) {
+        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let style = NSMutableParagraphStyle()
+        if hanging { style.headIndent = ("  • " as NSString).size(withAttributes: [.font: font]).width }
         text.textStorage?.setAttributedString(NSAttributedString(string: string, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ClassicUI.text,
+            .font: font, .foregroundColor: ClassicUI.text, .paragraphStyle: style,
         ]))
         text.scrollToBeginningOfDocument(nil)
     }
@@ -100,10 +100,9 @@ final class AboutController: NSObject {
     @objc private func selectTab(_ sender: NSButton) { show(Tab(rawValue: sender.tag)!) }
     @objc private func closeWindow() { window.orderOut(nil) }
     @objc private func selectVersion() {
-        guard releases.indices.contains(versions.indexOfSelectedItem) else { setText("Version history is unavailable."); released.stringValue = ""; return }
+        guard releases.indices.contains(versions.indexOfSelectedItem) else { setText("Version history is unavailable."); return }
         let release = releases[versions.indexOfSelectedItem]
-        released.stringValue = release.released.map { "Released: \($0)" } ?? ""
-        setText(release.text)
+        setText(release.text, hanging: true)
         versions.needsDisplay = true
     }
 }
