@@ -249,7 +249,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             sideWidth!, sideScroll.bottomAnchor.constraint(equalTo: nowPlaying.topAnchor, constant: -9),
             sideGap!, main.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             main.topAnchor.constraint(equalTo: sideScroll.topAnchor), main.bottomAnchor.constraint(equalTo: sideScroll.bottomAnchor),
-            nowPlaying.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), nowPlaying.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -22),
+            nowPlaying.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             nowPlaying.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20), nowPlaying.heightAnchor.constraint(equalToConstant: 15)
         ])
         heading.font = .monospacedSystemFont(ofSize: 11, weight: .bold); heading.textColor = BrowserTheme.green
@@ -301,13 +301,16 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         add(selectedTitle, to: main); add(selectedInfo, to: main)
         tune = button("▶ Tune In", #selector(playSelected), width: 88)
         save = button("+ Favorite", #selector(saveSelected), width: 92)
-        let actionRow = row([tune, save, button("Open URL…", #selector(openURL), width: 85), NSView()]); add(actionRow, to: main)
-        status.font = BrowserTheme.small; status.textColor = BrowserTheme.dim; status.lineBreakMode = .byTruncatingTail; add(status, to: main)
+        let actionRow = row([tune, save, button("Open URL…", #selector(openURL), width: 85)]); add(actionRow, to: main)
+        // The directory status shares the bottom line with the now-playing text instead of taking a row of its own.
+        status.font = BrowserTheme.small; status.textColor = BrowserTheme.dim; status.lineBreakMode = .byTruncatingTail; add(status, to: root)
         // Long names and URLs must truncate, never widen the window.
         for label in [selectedTitle, selectedInfo, status, nowPlaying, heading] {
             label.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
             label.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         }
+        status.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(500), for: .horizontal)
+        nowPlaying.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(400), for: .horizontal)
         filterHeight = filterRow.heightAnchor.constraint(equalToConstant: 22); filterGap = filterRow.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 7)
         tableGap = tableScroll.topAnchor.constraint(equalTo: filterRow.bottomAnchor, constant: 6)
         NSLayoutConstraint.activate([
@@ -315,11 +318,14 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             searchRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), searchRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), searchRow.topAnchor.constraint(equalTo: titleRow.bottomAnchor, constant: 6),
             filterRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), filterRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), filterGap!, filterHeight!,
             tableScroll.leadingAnchor.constraint(equalTo: main.leadingAnchor), tableScroll.trailingAnchor.constraint(equalTo: main.trailingAnchor), tableGap!,
-            tableScroll.bottomAnchor.constraint(equalTo: selectedTitle.topAnchor, constant: -9),
-            selectedTitle.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 2), selectedTitle.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedTitle.heightAnchor.constraint(equalToConstant: 16),
-            selectedInfo.leadingAnchor.constraint(equalTo: selectedTitle.leadingAnchor), selectedInfo.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedInfo.topAnchor.constraint(equalTo: selectedTitle.bottomAnchor, constant: 3), selectedInfo.heightAnchor.constraint(equalToConstant: 15),
-            actionRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), actionRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), actionRow.topAnchor.constraint(equalTo: selectedInfo.bottomAnchor, constant: 6),
-            status.leadingAnchor.constraint(equalTo: main.leadingAnchor), status.trailingAnchor.constraint(equalTo: main.trailingAnchor), status.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 7), status.bottomAnchor.constraint(equalTo: main.bottomAnchor), status.heightAnchor.constraint(equalToConstant: 15),
+            // Buttons on the left, the two selection lines beside them, vertically centred on the buttons.
+            actionRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), actionRow.bottomAnchor.constraint(equalTo: main.bottomAnchor, constant: -4),
+            tableScroll.bottomAnchor.constraint(equalTo: actionRow.topAnchor, constant: -13),
+            selectedTitle.leadingAnchor.constraint(equalTo: actionRow.trailingAnchor, constant: 12), selectedTitle.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedTitle.heightAnchor.constraint(equalToConstant: 16),
+            selectedTitle.bottomAnchor.constraint(equalTo: actionRow.centerYAnchor, constant: 1),
+            selectedInfo.leadingAnchor.constraint(equalTo: selectedTitle.leadingAnchor), selectedInfo.trailingAnchor.constraint(equalTo: main.trailingAnchor), selectedInfo.topAnchor.constraint(equalTo: selectedTitle.bottomAnchor), selectedInfo.heightAnchor.constraint(equalToConstant: 15),
+            status.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -22), status.centerYAnchor.constraint(equalTo: nowPlaying.centerYAnchor), status.heightAnchor.constraint(equalToConstant: 15),
+            status.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, multiplier: 0.55), nowPlaying.trailingAnchor.constraint(lessThanOrEqualTo: status.leadingAnchor, constant: -12),
             message.centerXAnchor.constraint(equalTo: tableScroll.centerXAnchor), message.centerYAnchor.constraint(equalTo: tableScroll.centerYAnchor), message.widthAnchor.constraint(lessThanOrEqualTo: tableScroll.widthAnchor, constant: -50),
             spinner.centerXAnchor.constraint(equalTo: tableScroll.centerXAnchor), spinner.bottomAnchor.constraint(equalTo: message.topAnchor, constant: -10)
         ])
