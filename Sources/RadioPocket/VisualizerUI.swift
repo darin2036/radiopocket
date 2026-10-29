@@ -7,7 +7,7 @@ enum VisualizerKeys {
         ("Space · → · N", "Next visualization"),
         ("Backspace · ← ", "Previous visualization"),
         ("1 – 9 · 0", "Jump to one of the first ten visualizations"),
-        ("R", "Auto-cycle every 15 seconds"),
+        ("R", "Auto-cycle visualizations (interval in Visualization Settings)"),
         ("K", "Cycle colors: Normal / Fire / Line"),
         ("P", "Show / hide peak markers"),
         ("- · =", "Slower / faster falloff"),
@@ -50,6 +50,7 @@ final class VisCanvasView: NSView {
             self.needsDisplay = true
         }
         setAccessibilityRole(.image); setAccessibilityLabel("Audio visualization")
+        clipsToBounds = true   // macOS 14+ no longer clips a view's drawing to its frame; scenes that overshoot would paint over the window chrome
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -74,6 +75,8 @@ final class VisCanvasView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
+        bounds.clip()
         let (station, title, signal) = nowPlaying()
         if title != lastTitle { lastTitle = title; lastActivity = Date() }
         VisDraw.panel(hub.settings.panel, hub: hub, in: bounds, history: history, state: state)
@@ -319,6 +322,7 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         case "scope": s.scope = ScopeStyle(rawValue: parts[2]) ?? s.scope
         case "refresh": s.refresh = VisRefresh(rawValue: parts[2]) ?? s.refresh
         case "autocycle": s.autoCycle.toggle()
+        case "cycletime": s.cycleSeconds = VisCycleInterval.nearest(Int(parts[2]) ?? s.cycleSeconds)
         case "overlay": s.overlay.toggle()
         default: return
         }
@@ -353,6 +357,7 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         submenu("Fire Turbulence", ["Calm", "Gentle", "Medium", "Strong", "Wild"].enumerated().map { ($1, "vis:fireturb:\($0)") })
         submenu("Fire Colors", FirePalette.allCases.map { ($0.title, "vis:firepalette:\($0.rawValue)") })
         submenu("Oscilloscope Style", ScopeStyle.allCases.map { ($0.title, "vis:scope:\($0.rawValue)") })
+        submenu("Auto-Cycle Interval", VisCycleInterval.seconds.map { (VisCycleInterval.title($0), "vis:cycletime:\($0)") })
         submenu("Refresh Rate", VisRefresh.allCases.map { ($0.title, "vis:refresh:\($0.rawValue)") })
         menu.addItem(.separator())
         item("Visualization Settings…", "vis:prefs")
@@ -380,6 +385,7 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         case "refresh": checked = s.refresh.rawValue == parts[2]
         case "peaks": checked = s.peaks
         case "autocycle": checked = s.autoCycle
+        case "cycletime": checked = s.cycleSeconds == Int(parts[2])
         case "overlay": checked = s.overlay
         case "fullscreen": checked = isFullscreen
         default: checked = nil

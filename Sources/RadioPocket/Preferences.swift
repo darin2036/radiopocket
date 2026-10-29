@@ -119,8 +119,9 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         row("Flame height", "fireheight", levels, selected: s.fireHeight)
         row("Turbulence", "fireturb", turbulence, selected: s.fireTurbulence)
         row("Flame colors", "firepalette", FirePalette.allCases.map(\.title), selected: FirePalette.allCases.firstIndex(of: s.firePalette) ?? 0)
+        check("Automatically cycle visualizations", "autocycle", s.autoCycle)
+        row("Change visualization every", "cycletime", VisCycleInterval.seconds.map(VisCycleInterval.title), selected: VisCycleInterval.seconds.firstIndex(of: s.cycleSeconds) ?? 0)
         check("Show peak markers", "peaks", s.peaks)
-        check("Cycle visualizations every 15 seconds", "autocycle", s.autoCycle)
     }
     @objc private func visChanged(_ sender: NSPopUpButton) {
         guard let key = sender.identifier?.rawValue else { return }
@@ -138,6 +139,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         }
         app.visuals.handle("vis:\(key):\(value)")
     }
+        case "cycletime": value = String(VisCycleInterval.seconds[i])
     @objc private func visToggled(_ sender: NSButton) { if let key = sender.identifier?.rawValue { app.visuals.handle("vis:\(key)") } }
     private var directoryList: [DirectorySource] { DirectorySource.resolved(app.library.state.directories) }
     private func directoriesPage() {

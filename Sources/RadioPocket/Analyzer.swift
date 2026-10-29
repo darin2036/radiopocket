@@ -24,6 +24,13 @@ enum VisRefresh: String, Codable, CaseIterable { case full, half, quarter
     var framesPerSecond: Double { self == .full ? 60 : self == .half ? 30 : 15 }
     var title: String { self == .full ? "Full (60 fps)" : self == .half ? "Half (30 fps)" : "Quarter (15 fps)" }
 }
+/// How long auto-cycle stays on one visualization before moving to the next.
+enum VisCycleInterval {
+    static let seconds = [5, 10, 15, 30, 60, 120, 300]
+    static let standard = 15
+    static func title(_ s: Int) -> String { s < 60 ? "\(s) seconds" : s == 60 ? "1 minute" : "\(s / 60) minutes" }
+    static func nearest(_ s: Int) -> Int { seconds.min { abs($0 - s) < abs($1 - s) } ?? standard }
+}
 enum VisPanelMode: String, Codable, CaseIterable {
     case bars, scope, mirror, circle, spectrogram
     case ring, lissajous, waterfall, starfield, tunnel, plasma, kaleidoscope, fireworks, aurora, fire
@@ -68,6 +75,8 @@ struct VisSettings: Codable, Equatable {
     var scope = ScopeStyle.lines
     var refresh = VisRefresh.half
     var autoCycle = false
+    /// Seconds each visualization stays up while auto-cycling; always one of `VisCycleInterval.seconds`.
+    var cycleSeconds = VisCycleInterval.standard
     var overlay = true
 
     init() {}
@@ -87,6 +96,7 @@ struct VisSettings: Codable, Equatable {
         s.scope = (try? c.decodeIfPresent(ScopeStyle.self, forKey: .scope)) ?? s.scope
         s.refresh = (try? c.decodeIfPresent(VisRefresh.self, forKey: .refresh)) ?? s.refresh
         s.autoCycle = (try? c.decodeIfPresent(Bool.self, forKey: .autoCycle)) ?? s.autoCycle
+        s.cycleSeconds = VisCycleInterval.nearest((try? c.decodeIfPresent(Int.self, forKey: .cycleSeconds)) ?? s.cycleSeconds)
         s.overlay = (try? c.decodeIfPresent(Bool.self, forKey: .overlay)) ?? s.overlay
         self = s
     }

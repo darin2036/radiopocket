@@ -11,6 +11,8 @@ enum VisDraw {
 
     static func mini(_ hub: VisualizerHub, in slot: NSRect = miniSlot) {
         let c = hub.colors, f = hub.frame, s = hub.settings
+        NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
+        slot.clip()
         c[0].setFill(); slot.fill()
         if s.mini == .fire { miniFire(hub, in: slot); return }
         c[1].setFill()

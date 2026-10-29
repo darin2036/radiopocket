@@ -115,7 +115,7 @@ final class VisualizerHub {
             analyzer.decay(dt: dt, falloff: settings.falloff, peakFalloff: settings.peakFalloff)
         }
         if settings.mini == .fire { miniFire.resize(columns: 76, rows: 16); miniFire.advance(dt: dt, bars: analyzer.frame.bars, settings: settings) }
-        if settings.autoCycle, now - lastCycle > 15 { lastCycle = now; settings.panel = settings.panel.next }
+        if settings.autoCycle, now - lastCycle > Double(settings.cycleSeconds) { lastCycle = now; settings.panel = settings.panel.next }
         visible.forEach { $0.redraw() }
         if rate == nil, analyzer.isSilent, !animating(visible) { stop() }
     }
