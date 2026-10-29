@@ -34,12 +34,12 @@ final class StationInfoController: NSWindowController {
         }
         for (button, title, selector, x) in [(lookup, "Look Up Details", #selector(lookUp), 14.0), (homepage, "Open Homepage", #selector(openHomepage), 134.0)] {
             button.title = title; button.target = self; button.action = selector; button.isBordered = false
-            button.frame = NSRect(x: x, y: 308, width: 112, height: 23); root.addSubview(button)
+            button.frame = NSRect(x: x, y: 294, width: 112, height: 23); root.addSubview(button)
         }
         let copy = ClassicButton(title: "Copy URL", target: self, action: #selector(copyURL))
-        copy.isBordered = false; copy.frame = NSRect(x: 254, y: 308, width: 82, height: 23); root.addSubview(copy)
+        copy.isBordered = false; copy.frame = NSRect(x: 254, y: 294, width: 82, height: 23); root.addSubview(copy)
         let done = ClassicButton(title: "Close", target: self, action: #selector(dismiss))
-        done.isBordered = false; done.keyEquivalent = "\u{1b}"; done.frame = NSRect(x: 364, y: 308, width: 82, height: 23); root.addSubview(done)
+        done.isBordered = false; done.keyEquivalent = "\u{1b}"; done.frame = NSRect(x: 364, y: 294, width: 82, height: 23); root.addSubview(done)
     }
     required init?(coder: NSCoder) { fatalError() }
 
