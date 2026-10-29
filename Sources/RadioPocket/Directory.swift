@@ -214,6 +214,14 @@ actor RadioBrowserDirectory: DirectoryBackend {
         return page
     }
 
+    /// Pages held in memory right now (for checks).
+    var cachedPages: Int { cache.count }
+    func trim() async {
+        cache = cache.filter { !DirectoryCacheAge.isIdle($0.value.0) }
+        recency.removeAll { cache[$0] == nil }
+    }
+    func release() async { cache = [:]; recency = [] }
+
     static func decodePage(_ data: Data, query: DirectoryQuery) throws -> DirectoryPage {
         let values = try JSONDecoder().decode(DirectoryRows.self, from: data)
         let stations = query.supportedOnly ? values.rows.filter(\.likelyPlayable) : values.rows
@@ -309,6 +317,7 @@ actor RadioDirectory {
     private var failures = 0
     private var pausedUntil = Date.distantPast
     private var schedule: Task<Void, Never>?
+    private var trimTask: Task<Void, Never>?
     /// A saved page this young is used as is; older ones are shown at once and refreshed behind the scenes.
     static let freshFor: TimeInterval = 6 * 3600
     /// Past this a saved page is ignored while the network works (it is still the fallback when it doesn't).
@@ -333,6 +342,7 @@ actor RadioDirectory {
     /// Browsing views come from disk when saved: instantly, and offline. A page older than `freshFor` is still returned at once
     /// and queued for a quiet refresh, so what the user sees never waits on the network. Refresh and typed searches go live.
     func search(_ query: DirectoryQuery, refresh: Bool = false) async throws -> DirectoryPage {
+        scheduleTrim()
         guard let cache, let key = cacheKey(query) else { return try await live(query, refresh: refresh) }
         let stored = cache.load(key)
         if !refresh, let stored {
@@ -350,6 +360,25 @@ actor RadioDirectory {
             if Task.isCancelled || error is CancellationError || refresh { throw error }
             if let stored { return stored.page }
             throw error
+        }
+    }
+
+    // MARK: Freeing memory
+
+    /// Frees the in-memory copies of downloaded pages and catalogs: only the idle ones, or all of them when `everything`.
+    func releaseMemory(everything: Bool = false) async {
+        for entry in backends.values { if everything { await entry.backend.release() } else { await entry.backend.trim() } }
+        if everything { await radioBrowser.release() } else { await radioBrowser.trim() }
+    }
+
+    /// One pending trim, pushed back by every search: browsing leaves nothing behind once it has been quiet for a while,
+    /// and nothing wakes up while the directory isn't being used.
+    private func scheduleTrim() {
+        trimTask?.cancel()
+        trimTask = Task(priority: .utility) { [weak self] in
+            try? await Task.sleep(for: .seconds(DirectoryCacheAge.trimDelay))
+            guard !Task.isCancelled else { return }
+            await self?.releaseMemory()
         }
     }
 
@@ -416,7 +445,7 @@ actor RadioDirectory {
         }
         draining = false
         cache?.prune()
-        for entry in backends.values { await entry.backend.trim() }
+        await releaseMemory()
     }
     private func pause(minutes: Double) {
         pending.removeAll(); queued.removeAll(); failures = 0

@@ -153,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         favorites.report = { [weak self] in self?.showError($0) }
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
         updateBackgroundStations()
+        startHousekeeping()
         view.action = { [weak self] in self?.handle($0) }
         view.volumeChanged = { [weak self] value in
             guard let self else { return }
@@ -514,7 +515,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let current = engine.station ?? library.state.lastStation { openDialog(station: current, favoriteOnly: true) }
             else { openDialog(favoriteOnly: true) }
         case "discovery":
-            makeDiscovery().showLibrary()
+            // PL and the menu item toggle: a second click closes the library.
+            let browser = makeDiscovery()
+            if browser.window?.isVisible == true { browser.window?.close() } else { browser.showLibrary() }
         case "clearstations":
             clearSavedStations()
         case "favorites":
@@ -767,6 +770,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else { Task { await client.configure(sources); await client.startBackgroundRefresh() } }
     }
     func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations() } }
+    private var housekeeping: Housekeeping?
+    /// Gives memory back on system memory pressure and after the app has sat in the background; see Housekeeping.
+    private func startHousekeeping() {
+        guard smokePath == nil, argument("--preview") == nil else { return }
+        housekeeping = Housekeeping(directory: directoryClient)
+        housekeeping?.start()
+    }
     private func makeDiscovery() -> DiscoveryController {
         if let discovery { return discovery }
         let client = directoryClient

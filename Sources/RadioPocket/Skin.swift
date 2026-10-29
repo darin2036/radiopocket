@@ -62,6 +62,10 @@ final class ClassicSkin {
         return try ClassicSkin(archive: Archive(name: url.deletingPathExtension().lastPathComponent, bitmaps: bitmaps))
     }
 
+    /// `Process.waitUntilExit` spins the run loop, which lets AppKit paint a half-launched window from inside the skin load
+    /// (CoreText has crashed drawing the unskinned fallback there). The pipe has already closed, so this wait is a few milliseconds.
+    private static func wait(for process: Process) { while process.isRunning { usleep(1000) } }
+
     private static func command(_ arguments: [String], limit: Int) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
@@ -76,12 +80,12 @@ final class ClassicSkin {
             if result.count + chunk.count > limit {
                 process.terminate()
                 try? pipe.fileHandleForReading.close()
-                process.waitUntilExit()
+                Self.wait(for: process)
                 throw RadioError.message("The skin contains an oversized bitmap or file list.")
             }
             result.append(chunk)
         }
-        process.waitUntilExit()
+        Self.wait(for: process)
         guard process.terminationStatus == 0 else { throw RadioError.message("The skin ZIP is damaged, encrypted, or unreadable.") }
         return result
     }

@@ -22,6 +22,18 @@ import Foundation
             let alternates = await client.alternates(for: failing)
             try check(!alternates.isEmpty && alternates.allSatisfy { $0.address != failing.address } && alternates.count <= 3, "Alternates are searched by the station name and exclude the failing address")
             try check(try await client.search(query).cached, "Repeat searches use the small memory cache")
+            await client.releaseMemory()
+            try check(try await client.search(query).cached, "Trimming keeps pages that are still fresh")
+            await client.releaseMemory(everything: true)
+            try check(!(try await client.search(query)).cached, "Releasing memory drops every downloaded page")
+            let single = RadioBrowserDirectory(baseURLs: [base])
+            _ = try await single.search(query)
+            let held = await single.cachedPages
+            await single.trim()
+            let afterTrim = await single.cachedPages
+            await single.release()
+            let afterRelease = await single.cachedPages
+            try check(held == 1 && afterTrim == 1 && afterRelease == 0, "A directory's page cache survives a trim while fresh and empties on release")
             try check(!(try await client.search(query, refresh: true)).cached, "Refresh bypasses cached results")
             var page2 = query; page2.offset = 100
             let second = try await client.search(page2)

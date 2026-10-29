@@ -86,12 +86,24 @@ protocol DirectoryBackend: Sendable {
     func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage
     /// Lets go of a downloaded catalog once nobody is using it; the next search simply fetches it again.
     func trim() async
+    /// Drops every in-memory copy at once, for memory pressure or a quiet app. Saved pages on disk are untouched.
+    func release() async
 }
-extension DirectoryBackend { func trim() async {} }
+// A backend that holds nothing keeps these defaults. One that does must declare its own as `async` too: in an async context
+// Swift prefers the async overload, so a synchronous actor method would lose to these when called on the concrete type.
+extension DirectoryBackend { func trim() async {}; func release() async {} }
+
+/// How long an in-memory directory copy may sit before a trim frees it.
+enum DirectoryCacheAge {
+    static let idle: TimeInterval = 120
+    /// A search is followed by one trim this long after it, so nothing downloaded for browsing outlives the browsing.
+    static let trimDelay: TimeInterval = 150
+    static func isIdle(_ date: Date, now: Date = Date()) -> Bool { now.timeIntervalSince(date) > idle }
+}
 
 extension Optional where Wrapped == (Date, [RadioListing]) {
     /// True for a whole-catalog copy that has sat unused long enough to be worth freeing.
-    var idle: Bool { map { Date().timeIntervalSince($0.0) > 120 } ?? false }
+    var idle: Bool { map { DirectoryCacheAge.isIdle($0.0) } ?? false }
 }
 
 extension UUID {
@@ -155,7 +167,8 @@ enum DirectoryFetch {
 /// SomaFM's public channel list.
 actor SomaFMDirectory: DirectoryBackend {
     private var cache: (Date, [RadioListing])?
-    func trim() { if cache.idle { cache = nil } }
+    func trim() async { if cache.idle { cache = nil } }
+    func release() async { cache = nil }
     private struct Channels: Decodable {
         struct Channel: Decodable {
             struct Playlist: Decodable { var url: String; var format: String; var quality: String }
@@ -195,7 +208,8 @@ actor SomaFMDirectory: DirectoryBackend {
 actor StationListDirectory: DirectoryBackend {
     private let url: URL, label: String, sourceID: String
     private var cache: (Date, [RadioListing])?
-    func trim() { if cache.idle { cache = nil } }
+    func trim() async { if cache.idle { cache = nil } }
+    func release() async { cache = nil }
     private let limit: Int, maximumEntries: Int
     init(url: URL, label: String, sourceID: String, limit: Int = 2_097_152, maximumEntries: Int = 5000) {
         self.url = url; self.label = label; self.sourceID = sourceID; self.limit = limit; self.maximumEntries = maximumEntries
@@ -268,7 +282,8 @@ actor StationListDirectory: DirectoryBackend {
 /// Public Xiph yellow-pages feed. Only valid HTTP audio entries are retained.
 actor IcecastDirectory: DirectoryBackend {
     private var cache: (Date, [RadioListing])?
-    func trim() { if cache.idle { cache = nil } }
+    func trim() async { if cache.idle { cache = nil } }
+    func release() async { cache = nil }
     func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
         try Task.checkCancellation()
         let cached = !refresh && cache.map { Date().timeIntervalSince($0.0) < 600 } == true
@@ -348,6 +363,11 @@ actor LautFMDirectory: DirectoryBackend {
         while recency.count > 6 { cache.removeValue(forKey: recency.removeFirst()) }
         return page
     }
+    func trim() async {
+        cache = cache.filter { !DirectoryCacheAge.isIdle($0.value.0) }
+        recency.removeAll { cache[$0] == nil }
+    }
+    func release() async { cache = [:]; recency = [] }
     static func decode(_ data: Data, query: DirectoryQuery) throws -> DirectoryPage {
         let channels: [Channel], next: Int?
         if query.name.isEmpty && query.genre.isEmpty {
@@ -391,7 +411,8 @@ actor RadioParadiseDirectory: DirectoryBackend {
 /// Fetch the small public repository once, rather than requesting every station playlist separately.
 actor CuratedStreamsDirectory: DirectoryBackend {
     private var cache: (Date, [RadioListing])?
-    func trim() { if cache.idle { cache = nil } }
+    func trim() async { if cache.idle { cache = nil } }
+    func release() async { cache = nil }
     func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
         try Task.checkCancellation()
         let cached = !refresh && cache.map { Date().timeIntervalSince($0.0) < 600 } == true

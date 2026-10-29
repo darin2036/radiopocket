@@ -30,6 +30,7 @@ let root = FileManager.default.temporaryDirectory.appendingPathComponent("RadioP
 do {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
+    try check(DirectoryCacheAge.isIdle(Date().addingTimeInterval(-DirectoryCacheAge.idle - 5)) && !DirectoryCacheAge.isIdle(Date().addingTimeInterval(-5)), "In-memory directory copies count as idle after two minutes")
     try check(StreamAddress.parse(" https://radio.example/live?token=abc \n").host == "radio.example", "HTTP URL normalization")
     for invalid in ["file:///etc/passwd", "ftp://radio.example/live", "radio.example", "https://", "https://example.org/has space"] {
         try rejects("Reject \(invalid)") { _ = try StreamAddress.parse(invalid) }
@@ -65,7 +66,12 @@ do {
     zip.currentDirectoryURL = root; zip.arguments = ["-q", "-r", archive.path, "Nested"]
     try zip.run(); zip.waitUntilExit()
     try check(zip.terminationStatus == 0, "Create self-contained classic skin fixture")
+    var spins = 0
+    let probe = Timer(timeInterval: 0.001, repeats: true) { _ in spins += 1 }
+    RunLoop.main.add(probe, forMode: .common)
     let skin = try ClassicSkin.load(archive)
+    probe.invalidate()
+    try check(spins == 0, "Loading a skin never spins the run loop (no painting of a half-launched window; saw \(spins) turns)")
     try check(skin.sprite("main.bmp", NSRect(x: 0, y: 0, width: 275, height: 116)) != nil, "Import nested, case-insensitive .wsz bitmap")
     try check(skin.sprite("cbuttons.bmp", NSRect(x: 23, y: 18, width: 23, height: 18)) != nil, "Import pressed transport sprite")
     try check(skin.sprite("main.bmp", NSRect(x: 10000, y: 0, width: 10, height: 10)) == nil, "Reject out-of-bounds sprite")
