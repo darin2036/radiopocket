@@ -159,16 +159,19 @@ final class PlayerView: NSView {
         _ = drawSprite("volume.bmp", NSRect(x: 15, y: 422, width: 14, height: 11), in: NSRect(x: 107 + (51 * volume).rounded(), y: 58, width: 14, height: 11))
         let balance = CGFloat(engine.balance)
         if !drawSprite("balance.bmp", NSRect(x: 9, y: Int((abs(balance) * 27).rounded()) * 15, width: 38, height: 13), in: NSRect(x: 177, y: 57, width: 38, height: 13)) {
-            // Like the volume bar, but lit end to end: green at center, shifting to red toward either side.
+            // Winamp's groove: a sunken channel lit end to end, green at center and shifting to red toward either side.
             var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0
             (green.usingColorSpace(.deviceRGB) ?? green).getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
             let lit = NSColor(hue: hue * (1 - abs(balance)), saturation: saturation, brightness: brightness, alpha: 1)
-            for i in 0..<12 { fill(NSRect(x: 178 + i * 3, y: 62, width: 2, height: 5), lit) }
+            fill(NSRect(x: 178, y: 60, width: 36, height: 1), NSColor(white: 0.06, alpha: 1))
+            fill(NSRect(x: 178, y: 61, width: 36, height: 4), lit)
+            fill(NSRect(x: 178, y: 65, width: 36, height: 1), NSColor(white: 0.45, alpha: 1))
         }
         let balanceThumb = NSRect(x: 177 + ((balance + 1) * 12).rounded(), y: 58, width: 14, height: 11)
         if !drawSprite("balance.bmp", NSRect(x: 15, y: 422, width: 14, height: 11), in: balanceThumb) {
-            let knob = NSRect(x: balanceThumb.midX - 3, y: 58, width: 6, height: 11)
-            bevel(knob, down: false)
+            // Raised grey thumb with Winamp's three grip lines.
+            bevel(balanceThumb, down: false)
+            for dx in [-2, 0, 2] { fill(NSRect(x: balanceThumb.midX - 1 + CGFloat(dx), y: 61, width: 1, height: 5), NSColor(white: 0.25, alpha: 1)) }
         }
         // Classic skins draw their balance slider here; only the native theme has room for the readout.
         if skin == nil { fill(NSRect(x: 16, y: 72, width: 248, height: 10), ink) }
