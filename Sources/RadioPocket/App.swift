@@ -417,6 +417,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// Menu bar in the standard macOS order: app, File, Edit, the app's own Controls, View, Visualization, Window, Help.
     private func buildMenu() {
+        // macOS would add its own Enter Full Screen (⌃⌘F) to View; that shortcut belongs to the full-screen visualization.
+        UserDefaults.standard.set(false, forKey: "NSFullScreenMenuItemEverywhere")
         let menu = NSMenu()
         @discardableResult
         func add(_ title: String, to bar: NSMenu = menu) -> NSMenu {
@@ -663,7 +665,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "close": NSApp.terminate(nil)
         case "menu":
             let menu = NSMenu()
-            for (title, id) in [("Open Stream…", "open"), ("Save Favorite…", "favorite"), ("Station Library", "discovery"), ("Jump to Station…", "jump"), ("Station Info…", "info"), ("Loudness Leveling", "leveling"), ("Visualization…", "vis:panel"), ("Full Screen Visualization", "vis:fullscreen"), ("Favorite Stations", "favorites"), ("Choose Skin…", "skins"), ("Import Classic Skin…", "skin"), ("Use RadioPocket Theme", "resetSkin"), ("Size: 1×", "scale1"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
+            for (title, id) in [("Open Stream…", "open"), ("Jump to Station…", "jump"), ("Save Favorite…", "favorite"), ("Station Info…", "info"), ("", ""),
+                                ("Station Library", "discovery"), ("Favorite Stations", "favorites"), ("Equalizer", "equalizer"), ("Visualization", "vis:panel"), ("Full Screen Visualization", "vis:fullscreen"), ("", ""),
+                                ("Loudness Leveling", "leveling"), ("", ""),
+                                ("Choose Skin…", "skins"), ("Import Classic Skin…", "skin"), ("Use RadioPocket Theme", "resetSkin"), ("", ""),
+                                ("Size: 1×", "scale1"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
+                if id.isEmpty { menu.addItem(.separator()); continue }
                 let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = id; menu.addItem(item)
             }

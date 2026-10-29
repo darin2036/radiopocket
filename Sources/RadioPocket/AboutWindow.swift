@@ -2,7 +2,7 @@ import AppKit
 
 /// Classic tabbed About box: RadioPocket, Credits, Keyboard shortcuts, Version history.
 final class AboutController: NSObject {
-    private enum Tab: Int, CaseIterable {
+    enum Tab: Int, CaseIterable {
         case about, credits, shortcuts, history
         var title: String { ["RadioPocket", "Credits", "Keyboard shortcuts", "Version history"][rawValue] }
     }
@@ -50,8 +50,9 @@ final class AboutController: NSObject {
         show(.about)
     }
 
-    func present() {
+    func present(tab: Tab? = nil) {
         if !window.isVisible { window.center() }
+        if let tab { show(tab) }
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -89,7 +90,7 @@ final class AboutController: NSObject {
             let third = Bundle.main.url(forResource: "THIRD-PARTY", withExtension: "md").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
             return (third + "\n" + credits).replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
         case .shortcuts:
-            let player = "Space        Play / pause\nZ X C V B    Previous · Play · Pause · Stop · Next\n↑ / ↓        Volume\n← / →        Back / forward 10 s (pause buffers up to 5 min)\nL            Jump to live\n⌘O           Open stream\n⌘D           Save favorite\n⌘L           Favorites\n⌘B           Station library\n⌘E           Equalizer\n⌘K           Choose skin\n⌘I           Import skin\n⌘1 ⌘2 ⌘3     Window size\n⌘T           Always on top\n⇧⌘V          Visualization window\n⌃⌘F          Full screen visualization\n\nVisualizer (click the analyzer in the player):\n  click           Bars → Fire → Oscilloscope\n  double-click    Open the visualization window\n  right-click     Visualizer options\n\nVisualization window and full screen:\n"
+            let player = "Space        Play / pause\nZ X C V B    Previous · Play · Pause · Stop · Next\n↑ / ↓        Volume\n← / →        Back / forward 10 s (pause buffers up to 5 min)\nL            Jump to live\n⌘O           Open stream\n⇧⌘J          Jump to station\n⌘D           Save favorite\n⇧⌘I          Station info\n⌘L           Favorites\n⌘B           Station library\n⌘E           Equalizer\n⌘K           Choose skin\n⌘I           Import skin\n⌘1 ⌘2 ⌘3     Window size\n⌘T           Always on top\n⌘W ⌘M        Close / minimize window\n⌥⌘← / ⌥⌘→    Previous / next favorite\n⇧⌘V          Visualization window\n⌃⌘F          Full screen visualization\n\nVisualizer (click the analyzer in the player):\n  click           Bars → Fire → Oscilloscope\n  double-click    Open the visualization window\n  right-click     Visualizer options\n\nVisualization window and full screen:\n"
             return player + VisualizerKeys.help.map { "  " + $0.0.padding(toLength: 22, withPad: " ", startingAt: 0) + $0.1 }.joined(separator: "\n")
         case .history:
             return ""

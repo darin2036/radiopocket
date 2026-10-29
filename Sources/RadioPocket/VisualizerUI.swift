@@ -210,7 +210,9 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
     var perform: ((String) -> Void)?
     var nowPlaying: () -> (station: String, title: String, signal: VisSignal) = { ("", "", .idle) }
     weak var playerWindow: NSWindow?
+    private var panelCreated = false
     private lazy var panel: VisPanelController = {
+        panelCreated = true
         let panel = VisPanelController(hub: hub)
         panel.canvas.nowPlaying = { [unowned self] in self.nowPlaying() }
         panel.canvas.menuProvider = { [unowned self] in self.menu() }
@@ -223,6 +225,9 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
     var isFullscreen: Bool { fullscreenWindow != nil }
 
     func showPanel() { panel.show() }
+    /// The visualization window, once it has been opened.
+    var panelWindow: NSWindow? { panelCreated ? panel.window : nil }
+    func closePanel() { if panelCreated { panel.window.orderOut(nil); hub.refresh() } }
     /// Developer previews: the visualization window’s chrome and controls, drawn with the current demo frame.
     func exportPanelPreview(_ url: URL) {
         guard let content = panel.window.contentView else { return }
@@ -313,26 +318,31 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
             let root = NSMenuItem(title: title, action: nil, keyEquivalent: ""); let sub = NSMenu(title: title); root.submenu = sub; menu.addItem(root)
             for (name, id) in items { item(name, id, into: sub) }
         }
+        let speeds = ["Slower", "Slow", "Moderate", "Fast", "Faster"], levels = ["Lowest", "Low", "Medium", "High", "Highest"]
         item("Visualization Window", "vis:panel", key: "v", modifiers: [.command, .shift])
         item("Full Screen Visualization", "vis:fullscreen", key: "f", modifiers: [.command, .control])
+        item("Show Title in Full Screen", "vis:overlay")
         menu.addItem(.separator())
         submenu("Player Visualizer", MiniVisMode.allCases.map { ($0.title, "vis:mini:\($0.rawValue)") })
         submenu("Window Visualization", VisPanelMode.allCases.map { ($0.title, "vis:mode:\($0.rawValue)") })
         submenu("Coloring", VisColoring.allCases.map { ($0.title, "vis:color:\($0.rawValue)") })
-        submenu("Analyzer Falloff", ["Slower", "Slow", "Moderate", "Fast", "Faster"].enumerated().map { ($1, "vis:falloff:\($0)") })
-        let levels = ["Lowest", "Low", "Medium", "High", "Highest"]
-        submenu("Peak Falloff", ["Slower", "Slow", "Moderate", "Fast", "Faster"].enumerated().map { ($1, "vis:peakfall:\($0)") })
+        menu.addItem(.separator())
+        item("Auto-Cycle Visualizations", "vis:autocycle")
+        submenu("Auto-Cycle Interval", VisCycleInterval.seconds.map { (VisCycleInterval.title($0), "vis:cycletime:\($0)") })
+        menu.addItem(.separator())
+        item("Show Peaks", "vis:peaks")
+        submenu("Analyzer Falloff", speeds.enumerated().map { ($1, "vis:falloff:\($0)") })
+        submenu("Peak Falloff", speeds.enumerated().map { ($1, "vis:peakfall:\($0)") })
         submenu("Band Line Width", BandWidth.allCases.map { ($0.title, "vis:bandwidth:\($0.rawValue)") })
+        submenu("Oscilloscope Style", ScopeStyle.allCases.map { ($0.title, "vis:scope:\($0.rawValue)") })
+        menu.addItem(.separator())
         submenu("Fire Height", levels.enumerated().map { ($1, "vis:fireheight:\($0)") })
         submenu("Fire Turbulence", ["Calm", "Gentle", "Medium", "Strong", "Wild"].enumerated().map { ($1, "vis:fireturb:\($0)") })
         submenu("Fire Colors", FirePalette.allCases.map { ($0.title, "vis:firepalette:\($0.rawValue)") })
-        submenu("Oscilloscope Style", ScopeStyle.allCases.map { ($0.title, "vis:scope:\($0.rawValue)") })
-        submenu("Auto-Cycle Interval", VisCycleInterval.seconds.map { (VisCycleInterval.title($0), "vis:cycletime:\($0)") })
+        menu.addItem(.separator())
         submenu("Refresh Rate", VisRefresh.allCases.map { ($0.title, "vis:refresh:\($0.rawValue)") })
         menu.addItem(.separator())
         item("Visualization Settings…", "vis:prefs")
-        menu.addItem(.separator())
-        item("Show Peaks", "vis:peaks"); item("Auto-Cycle Visualizations", "vis:autocycle"); item("Show Title in Full Screen", "vis:overlay")
         return menu
     }
     @objc private func menuAction(_ sender: NSMenuItem) { if let id = sender.representedObject as? String { handle(id) } }
