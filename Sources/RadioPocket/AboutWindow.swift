@@ -81,10 +81,29 @@ final class AboutController: NSObject {
         text.scrollToBeginningOfDocument(nil)
     }
 
+    private static let legalNotice = """
+    TERMS OF USE & LEGAL NOTICE
+
+    Purpose of this player
+    RadioPocket plays internet audio streams, including HTTP/HTTPS URLs you enter and stations found through third-party directories. It does not host streams or offer media-file downloads, recording exports, redistribution, or social sharing of streams. Temporary playback buffering supports pause and rewind; it does not create a saved media library.
+
+    Responsible use
+    Only access streams you are legally authorized to use. You are responsible for complying with applicable laws, copyright protections, and the stream provider’s terms. A publicly accessible URL or directory listing does not, by itself, establish permission to use a stream.
+
+    Content rights
+    All rights in streamed content remain with their respective owners. This app grants no license to that content or permission to record, distribute, or publicly perform it. Do not use this app to infringe copyright or unlawfully bypass access controls or payment requirements.
+
+    Third-party streams
+    Streams and station directories are operated by third parties outside our control. We do not endorse or guarantee their content, legality, safety, or availability.
+
+    Use at your own risk
+    To the extent permitted by applicable law, this app is provided “as is” and “as available,” without warranties. Its developers disclaim liability for loss or damage arising from use of the app or third-party streams, to the extent permitted by law. Nothing in this notice excludes rights or liability that cannot legally be excluded.
+    """
+
     private func body(for tab: Tab) -> String {
         switch tab {
         case .about:
-            return "RadioPocket \(Self.version)\n\nA small native internet radio player inspired by classic desktop players.\n\nOpen a direct HTTP/HTTPS audio stream or M3U/PLS playlist. Drop a classic .wsz skin onto the player.\n\nAn independent app, not affiliated with Winamp."
+            return "RadioPocket \(Self.version)\n\nA small native internet radio player inspired by classic desktop players.\n\nOpen a direct HTTP/HTTPS audio stream or M3U/PLS playlist. Drop a classic .wsz skin onto the player.\n\nAn independent app, not affiliated with Winamp.\n\n" + Self.legalNotice
         case .credits:
             guard let url = Bundle.main.url(forResource: "SKIN-CREDITS", withExtension: "md"), let credits = try? String(contentsOf: url, encoding: .utf8) else { return "Skin credits are unavailable." }
             let third = Bundle.main.url(forResource: "THIRD-PARTY", withExtension: "md").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""

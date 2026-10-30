@@ -178,8 +178,8 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
             self.playing?()
         }
         out.failed = { [weak self] message in self?.failed?(message) }
-        lock.lock(); output = out; let pending = panned; lock.unlock()
-        out.setBalance(pending)
+        output = out
+        out.setBalance(panned)
         out.configure(format, cookie: cookie)
     }
     func sinkPacket(_ packet: AudioPacket) { ring.append(packet) }

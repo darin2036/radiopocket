@@ -69,9 +69,13 @@ final class PlayerView: NSView {
                 }
             }
         }
-        addToolTip(NSRect(x: 107, y: 57, width: 68, height: 15), owner: "Volume — click or drag" as NSString, userData: nil)
+        addToolTip(NSRect(x: 107, y: 57, width: 68, height: 15), owner: Self.volumeTip, userData: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// `addToolTip(_:owner:)` does not retain its owner; a temporary string is freed and the tooltip manager crashes on hover.
+    private static let volumeTip: NSString = "Volume — click or drag"
+    private static let visualizerTip: NSString = "Visualizer — click to open the visualization window, double-click for full screen, right-click for options"
 
     /// Connects the mini visualizer. It draws, and the display timer runs, only while this view is on screen.
     func attach(visuals: VisualizerController) {
@@ -81,7 +85,7 @@ final class PlayerView: NSView {
             return VisualizerHub.windowVisible(self.window)
         }, redraw: { [weak self] in self?.setNeedsDisplay(VisDraw.miniSlot) })
         visuals.hub.observeSettings { [weak self] _ in self?.needsDisplay = true }
-        addToolTip(VisDraw.miniSlot, owner: "Visualizer — click to open the visualization window, double-click for full screen, right-click for options" as NSString, userData: nil)
+        addToolTip(VisDraw.miniSlot, owner: Self.visualizerTip, userData: nil)
     }
     private var showsMiniVisualizer: Bool { !shaded && visuals?.hub.settings.mini != .off && visuals?.hub.hasSignal() == true }
 
@@ -137,7 +141,8 @@ final class PlayerView: NSView {
             if skin == nil { bitmapText(engine.status.rawValue, rect: NSRect(x: 26, y: 48, width: 70, height: 6)) }
         }
         
-        bitmapText(engine.title, rect: NSRect(x: 111, y: 27, width: 154, height: 6))
+        // A connecting or failed station says so in the title strip, since skins have no separate status line.
+        bitmapText([.connecting, .failed].contains(engine.status) ? engine.detail : engine.title, rect: NSRect(x: 111, y: 27, width: 154, height: 6))
         // Keep the skin’s kbps/kHz/channel labels intact; unavailable values are not invented.
         // Measured from the live connection; shown as dashes until the stream has told us.
         let info = engine.status == .playing || engine.status == .paused ? engine.streamInfo : nil

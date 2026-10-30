@@ -1,8 +1,20 @@
 import AppKit
 import UniformTypeIdentifiers
 
+private final class FavoritesTable: NSTableView {
+    var delete: (() -> Void)?
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 51 || event.keyCode == 117, selectedRow >= 0 { delete?() } else { super.keyDown(with: event) }
+    }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let index = row(at: convert(event.locationInWindow, from: nil))
+        if index >= 0 { selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) } else { deselectAll(nil) }
+        return index >= 0 ? super.menu(for: event) : nil
+    }
+}
+
 final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
-    let table = NSTableView()
+    private let table = FavoritesTable()
     let library: Library
     var play: ((Station) -> Void)?
     var edit: ((Station?) -> Void)?
@@ -35,6 +47,12 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
         table.usesAlternatingRowBackgroundColors = true
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.target = self; table.doubleAction = #selector(playSelected)
+        table.delete = { [weak self] in self?.remove() }
+        let context = NSMenu()
+        for (title, selector) in [("Play", #selector(playSelected)), ("Edit…", #selector(editSelected)), ("Remove from Favorites", #selector(remove))] {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
+        }
+        table.menu = context
         scroll.documentView = table
         content.addSubview(scroll)
         let buttons = NSStackView()
@@ -118,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         engine.setVolume(smokePath == nil ? library.state.volume : 0)
         engine.setBalance(library.state.balance ?? 0)
         engine.equalizer.settings = library.state.equalizer ?? EQSettings()
+        engine.equalizer.spatial = library.state.spatial ?? SpatialSettings()
         engine.leveling = library.state.leveling ?? false
         buildMenu()
         view = PlayerView(engine: engine)
@@ -259,7 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                 if let self, let audit = self.argument("--ui-audit") {
                     var failures: [String] = []
-                    for factor in [1.0, 2.0, 3.0] {
+                    for factor in [1.0, 1.5, 2.0, 3.0] {
                         self.scale(factor, save: false)
                         for panel in [self.view as NSView, self.eqView as NSView] {
                             let controls = panel.subviews.filter { $0 is NSControl }
@@ -319,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         readyForLinks = true
         if let url = pendingLink { pendingLink = nil; self.application(NSApp, open: [url]) }
+        else if smokePath == nil, let last = library.state.lastStation { engine.load(last) }
         if smokePath != nil && argument("--smoke-stream") == nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in self?.finishSmoke(success: false) }
         }
@@ -493,7 +513,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         command("Loudness Leveling", "leveling", to: controls)
 
         let view = add("View")
-        for factor in 1...3 { command("Size: \(factor)×", "scale\(factor)", "\(factor)", to: view) }
+        for factor in [1.0, 1.5, 2.0, 3.0] {
+            let name = String(format: "%g", factor)
+            command("Size: \(name)×", "scale\(name)", factor == 1.5 ? "" : name, to: view)
+        }
         view.addItem(.separator())
         command("Compact Player", "shade", to: view)
         command("Always on Top", "ontop", "t", to: view)
@@ -554,6 +577,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item.title = engine.status == .playing || engine.status == .connecting ? "Pause" : "Play"
             enabled = engine.station != nil || library.state.lastStation != nil
         case "stop": enabled = engine.status != .stopped
+        case "favorite": item.title = (engine.station ?? library.state.lastStation).map { library.isFavorite($0) } == true ? "Remove Favorite" : "Save Favorite…"
         case "back10", "forward10", "live": enabled = engine.canTimeShift
         case "previous", "next": enabled = !library.state.favorites.isEmpty
         case "leveling": mark(engine.leveling)
@@ -564,7 +588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "favorites": mark(favorites.window?.isVisible == true)
         case "equalizer": mark(eqWindow.isVisible)
         case "player": mark(window.isVisible)
-        case "scale1", "scale2", "scale3": mark(library.state.scale == Double(id.dropFirst(5)))
+        case "scale1", "scale1.5", "scale2", "scale3": mark(library.state.scale == Double(id.dropFirst(5)))
         default:
             if id.hasPrefix("sleep:") { mark(Int(id.dropFirst(6)) == sleepMinutes) }
         }
@@ -605,7 +629,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "volumeUp": view.volumeChanged?(min(1, engine.player.volume + 0.05))
         case "volumeDown": view.volumeChanged?(max(0, engine.player.volume - 0.05))
         case "favorite":
-            if let current = engine.station ?? library.state.lastStation { openDialog(station: current, favoriteOnly: true) }
+            if let current = engine.station ?? library.state.lastStation {
+                if library.isFavorite(current) { do { try library.removeFavorite(current) } catch { showError(error) } }
+                else { openDialog(station: current, favoriteOnly: true) }
+            }
             else { openDialog(favoriteOnly: true) }
         case "discovery":
             // PL and the menu item toggle: a second click closes the library.
@@ -657,6 +684,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             do { try library.update { $0.leveling = engine.leveling } } catch { showError(error) }
         case "shade": view.shaded.toggle(); resizePlayer()
         case "scale1": scale(1)
+        case "scale1.5": scale(1.5)
         case "scale2": scale(2)
         case "scale3": scale(3)
         case "minimize": window.miniaturize(nil)
@@ -674,7 +702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                 ("Station Library", "discovery"), ("Favorite Stations", "favorites"), ("Equalizer", "equalizer"), ("Visualization", "vis:panel"), ("Full Screen Visualization", "vis:fullscreen"), ("", ""),
                                 ("Loudness Leveling", "leveling"), ("", ""),
                                 ("Choose Skin…", "skins"), ("Import Classic Skin…", "skin"), ("Use RadioPocket Theme", "resetSkin"), ("", ""),
-                                ("Size: 1×", "scale1"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
+                                ("Size: 1×", "scale1"), ("Size: 1.5×", "scale1.5"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
                 if id.isEmpty { menu.addItem(.separator()); continue }
                 let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = id; menu.addItem(item)
@@ -690,12 +718,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     private func scale(_ value: Double, save: Bool = true) {
         let top = window.frame.maxY
-        window.setContentSize(NSSize(width: 275 * value, height: (view.shaded ? 14 : 116) * value))
+        window.setContentSize(NSSize(width: (275 * value).rounded(), height: (view.shaded ? 14 : 116) * value))
         window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
         view.setBoundsSize(NSSize(width: 275, height: view.shaded ? 14 : 116))
         view.needsDisplay = true
         if let eqWindow, let eqView {
-            eqWindow.setContentSize(NSSize(width: 275 * value, height: (eqView.shaded ? 14 : 116) * value))
+            eqWindow.setContentSize(NSSize(width: (275 * value).rounded(), height: (eqView.shaded ? 14 : 116) * value))
             eqView.setBoundsSize(NSSize(width: 275, height: eqView.shaded ? 14 : 116))
             eqWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: window.frame.minY))
         }
@@ -706,7 +734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let docked = eqWindow.isVisible && abs(eqWindow.frame.maxY - window.frame.minY) <= 6
         defer { if docked { eqWindow.setFrameTopLeftPoint(NSPoint(x: eqWindow.frame.minX, y: window.frame.minY)) } }
         let scale = library.state.scale, top = window.frame.maxY
-        window.setContentSize(NSSize(width: 275 * scale, height: (view.shaded ? 14 : 116) * scale))
+        window.setContentSize(NSSize(width: (275 * scale).rounded(), height: (view.shaded ? 14 : 116) * scale))
         window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
         view.setBoundsSize(NSSize(width: 275, height: view.shaded ? 14 : 116))
     }
@@ -720,6 +748,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// if not, offers the directory’s closest alternative, a search, or the next favorite.
     private func stationFailed(_ station: Station, _ message: String) {
         guard smokePath == nil, library != nil else { return }
+        // Remembered so the library stops listing it; a stream that connects but won't decode is not "dead".
+        if StreamProbe.isUnreachable(message) { deadStations.record(station.address, .dead) }
         Task { @MainActor [weak self] in
             guard let self else { return }
             if !self.refreshTried.contains(station.id), let current = await self.directoryClient.refreshed(uuid: station.id.uuidString), current.address != station.address {
@@ -857,19 +887,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Local-only test endpoint; production always uses Radio Browser's HTTPS mirrors.
         if argument("--data-dir") != nil, let raw = argument("--directory-api"), let url = URL(string: raw),
            ["127.0.0.1", "localhost", "::1"].contains(url.host ?? ""), ["http", "https"].contains(url.scheme ?? "") {
-            return RadioDirectory(baseURLs: [url], cache: stationCache)
+            return RadioDirectory(baseURLs: [url], cache: stationCache, dead: deadStations)
         }
-        return RadioDirectory(cache: stationCache)
+        return RadioDirectory(cache: stationCache, dead: deadStations)
     }()
+    private lazy var deadStations = DeadStations.standard(dataDirectory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
     private lazy var stationCache = StationCache.standard(dataDirectory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
     /// Opens the station lists from disk and keeps them fresh in the background; nothing happens in smoke or preview runs.
     func updateBackgroundStations() {
         guard smokePath == nil, argument("--preview") == nil else { return }
-        let client = directoryClient, sources = library.state.directories ?? []
+        let client = directoryClient, sources = library.state.directories ?? [], checking = library.state.checkStations != false
+        Task { await client.setChecking(checking) }
         if library.state.backgroundStations == false { Task { await client.stopBackgroundRefresh() } }
         else { Task { await client.configure(sources); await client.startBackgroundRefresh() } }
     }
-    func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations() } }
+    func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations(); await client.forgetDeadStations() } }
     private var housekeeping: Housekeeping?
     /// Gives memory back on system memory pressure and after the app has sat in the background; see Housekeeping.
     private func startHousekeeping() {
@@ -883,6 +915,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let browser = DiscoveryController(library: library, directory: client)
         browser.play = { [weak self] in self?.play($0) }
         browser.openStream = { [weak self] in self?.openDialog() }
+        browser.inspect = { [weak self] entry in
+            guard let self else { return }
+            if self.info == nil { self.info = StationInfoController(engine: self.engine, directory: self.directoryClient) }
+            self.info?.present(inspecting: entry, over: self.discovery?.window)
+        }
         browser.report = { [weak self] in self?.showError($0) }
         discovery = browser
         return browser
@@ -890,13 +927,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private func persistEQ() {
         guard library != nil, smokePath == nil else { return }
-        do { try library.update { $0.equalizer = engine.equalizer.settings } } catch { showError(error) }
+        do { try library.update { $0.equalizer = engine.equalizer.settings; $0.spatial = engine.equalizer.spatial } } catch { showError(error) }
     }
     private func presetAction(_ action: String) {
         if action == "shade" {
             eqView.shaded.toggle()
             let top = eqWindow.frame.maxY, factor = library.state.scale
-            eqWindow.setContentSize(NSSize(width: 275 * factor, height: (eqView.shaded ? 14 : 116) * factor))
+            eqWindow.setContentSize(NSSize(width: (275 * factor).rounded(), height: (eqView.shaded ? 14 : 116) * factor))
             eqWindow.setFrameOrigin(NSPoint(x: eqWindow.frame.minX, y: top - eqWindow.frame.height))
             eqView.setBoundsSize(NSSize(width: 275, height: eqView.shaded ? 14 : 116)); return
         }

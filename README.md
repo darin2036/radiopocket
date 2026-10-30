@@ -1,6 +1,6 @@
 # RadioPocket 0.8
 
-A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, large bundled station database. Station discovery offers eight built-in sources: Radio Browser, SomaFM, laut.fm, Radio Paradise, Curated Internet Radio Streams, Icecast / Xiph, IPRD, and Junguler Radio Playlists.
+A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, large bundled station database. Station discovery offers seven built-in sources: Radio Browser, SomaFM, laut.fm, Radio Paradise, Curated Internet Radio Streams, IPRD, and Junguler Radio Playlists.
 
 <img src="previews/RadioPocket-preview.png" alt="RadioPocket’s compact player using the original Winamp Classic skin" width="550">
 
@@ -28,7 +28,7 @@ A small, native macOS internet-radio player inspired by classic Winamp. Swift + 
 
 **Directories — eight sources and custom lists**
 
-<img src="previews/RadioPocket-directories.png" alt="Directory settings showing Radio Browser, SomaFM, laut.fm, Icecast and IPRD" width="760">
+<img src="previews/RadioPocket-directories.png" alt="Directory settings showing Radio Browser, SomaFM, laut.fm and IPRD" width="760">
 
 Screenshots show the current 0.8 player, equalizer, and library. Directory listings change over time.
 
@@ -56,7 +56,7 @@ After running `./build.sh`, open `dist/RadioPocket.app`. The build is for Apple 
 - Previous/next move through favorites. **Space** toggles playback. **↑ / ↓** adjust volume. Click or drag the volume bar.
 - Pause keeps the connection and buffers what the station sends (up to five minutes), so Play continues where you stopped. **← / →** (or **[ / ]**) go back or forward 10 seconds, and **L** (⌘J) jumps to live; the display shows how far behind live you are. Stop clears the elapsed listening timer and disconnects. Closing the player quits and stops audio.
 - **⌘1 / ⌘2 / ⌘3** select interface scale. Default is 550 × 232 points (2×). Drag the title strip to move the player. **⌘T** toggles always-on-top.
-- **SK / ⌘K** opens Preferences → Skins. **⌘,** opens Preferences with playback, appearance, equalizer, and library pages. **⌘I** imports a classic `.wsz` or ZIP skin. You can also drop a skin file on the player. **View → Use RadioPocket Theme** restores RadioPocket’s own artwork.
+- **SK / ⌘K** opens Preferences → Skins. **⌘,** opens Preferences with appearance, playback (volume, equalizer and spatial audio), and library pages. **⌘I** imports a classic `.wsz` or ZIP skin. You can also drop a skin file on the player. **View → Use RadioPocket Theme** restores RadioPocket’s own artwork.
 
 ## Opening radio links from websites
 
@@ -89,7 +89,7 @@ Click **LIB** or press **⌘B** to open the classic-style station library. The c
 - Recent history contains up to 30 unique stations that actually reached playback. Failed connection attempts are not added.
 - The default format filter favors MP3/AAC/HLS. **All formats** reveals other entries, including codecs macOS may not support. Directory codec and working-status metadata can be stale.
 
-Open **Preferences → Directories** to choose from eight built-in sources or add your own M3U / PLS list or Radio Browser API server. Radio Browser, SomaFM, laut.fm, Radio Paradise, and Mike Pierce’s Curated Internet Radio Streams start enabled. Icecast / Xiph, IPRD, and Junguler Radio Playlists are available but unchecked initially because they download larger catalogs. Saved on/off choices survive upgrades; new built-ins appear automatically. The directory list scrolls when needed.
+Open **Preferences → Directories** to choose from seven built-in sources or add your own M3U / PLS list or Radio Browser API server. Radio Browser, SomaFM, laut.fm, Radio Paradise, and Mike Pierce’s Curated Internet Radio Streams start enabled. IPRD and Junguler Radio Playlists are available but unchecked initially because they download larger catalogs. Saved on/off choices survive upgrades; new built-ins appear automatically. The directory list scrolls when needed.
 
 [Source documentation and limits](Resources/DIRECTORY-SOURCES.md) lists the public endpoints and attribution. No API key or account is needed for these eight sources. Some catalogs omit country, codec, or bitrate metadata, so those filters can hide their listings. laut.fm filters and sorts within each provider page.
 
@@ -248,7 +248,7 @@ Smoke playback is muted and exits after reaching the playing state. Add `--test-
 - Existing M3U/PLS resolution remains covered by parser checks.
 - Actual UI stream entry, playback, saving/listing a favorite, opening EQ, and selecting Flat and Full Bass with verified slider values.
 - Rendered player, equalizer, library, favorites, and stream-entry panel inspected visually.
-- Runtime layout audit: controls remain within bounds and do not overlap at 1×, 2×, and 3×; player/EQ collapse and restore.
+- Runtime layout audit: controls remain within bounds and do not overlap at 1×, 1.5×, 2×, and 3×; player/EQ collapse and restore.
 - Muted MP3 playback through the updated app with measured -12 dB EQ attenuation.
 - Live 0.6 UI checks completed October 29, 2026 in an isolated app/data directory: player and EQ collapse/restore, keyboard mute, URL validation, Escape/cancel, play/pause/resume, saving favorites and selection actions, Rock/Flat presets, live directory search and format filtering, pagination, favorite saving during uninterrupted audio, and switching to Aqua.
 

@@ -112,6 +112,14 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         return "LIVE STREAM • \(volume)% VOLUME" + sleep
     }
 
+    /// Makes a station current without connecting, so Play starts it.
+    func load(_ station: Station) {
+        guard self.station == nil, status == .stopped else { return }
+        self.station = station
+        title = station.name
+        changed?()
+    }
+
     func play(_ station: Station) {
         self.station = station
         retries = 0
