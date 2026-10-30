@@ -6,7 +6,7 @@ A small, native macOS internet-radio player inspired by classic Winamp. Swift + 
 ## At a glance
 
 - Direct internet radio streams, station discovery, favorites, and recent history.
-- Eleven bundled classic skins plus RadioPocket’s own theme.
+- Winamp Classic 2.91 bundled, RadioPocket’s own theme, and import for any classic `.wsz` skin.
 - Ten-band equalizer, preamp, all 18 classic presets, and EQF import/export.
 - Browser handoff through radio playlists and `radiopocket://` links.
 - Native macOS app, about 3.2 MB on disk, with no browser runtime or package dependencies.
@@ -51,7 +51,7 @@ If the app has already been built, just open `dist/RadioPocket.app`. Build outpu
 
 ## Run
 
-Open `dist/RadioPocket.app` in this project folder. This build is for Apple Silicon Macs running macOS 13 or later. It is locally ad-hoc signed, not notarized for public distribution.
+After running `./build.sh`, open `dist/RadioPocket.app`. The build is for Apple Silicon Macs running macOS 13 or later. It is locally ad-hoc signed, not notarized for public distribution.
 
 - Click **+** (the eject button in imported skins), or press **⌘O**, to enter a direct HTTP/HTTPS audio URL. A broadcaster’s homepage is usually not its audio stream.
 - Optionally name the station and select **Save to Favorites**.
@@ -173,7 +173,7 @@ Fallbacks and limits: fragmented-MP4 (CMAF) and SAMPLE-AES HLS, and MP3/AAC stre
 
 **Winamp Classic — Original Default** is selected on a fresh install. Existing imported skins are preserved. Choose **SK**, **⌘K**, or **View → Choose Skin…** to switch immediately; the choice survives relaunch and applies to both player and equalizer. The Preferences window shows the installed list, current skin name, and a player preview. Imported skins remain installed for reuse. No download is required.
 
-The 11 classic skins are Winamp Classic 2.91, Amiga PPC Dark, Internet Archive, Mac OS X Aqua, My Funny Valentine, Sonic Attitude, TopazAmp, Vizor, XMMS Turquoise, Zaxon Remake, and Rei. RadioPocket Original is a twelfth appearance. These are distinct designs, not recolors. Only the selected skin is decoded; archive storage totals about 1.8 MB.
+Winamp Classic 2.91 is the only bundled classic skin; RadioPocket Original is the built-in theme. Import any other `.wsz` skin with **SK / ⌘K**. Only the selected skin is decoded.
 
 ## Classic skins: implemented scope
 
@@ -191,7 +191,7 @@ The renderer uses the classic 275 × 116 main-player layout and reads:
 
 Filenames are case-insensitive and may live in a nested archive directory. Missing optional bitmaps fall back to built-in drawing. The library, favorites, and stream-entry panel use the selected skin’s generic-window border artwork when present, with a shared classic palette and native AppKit content. This does not implement every skin’s custom library controls or colors. Radio-specific buttons retain RadioPocket styling. This is **partial classic skin compatibility**, not a pixel-for-pixel implementation of every Winamp window. Modern `.wal` skins, scripts, playlist skins, custom cursors, transparency/region masks, and Windows plug-ins are not implemented.
 
-Only recognized bitmap entries are read; archive paths are never extracted to disk. Archive, decoded image dimensions, and per-entry data have limits. Imported bitmap assets are saved locally; the original skin file can then be moved. Eleven unchanged third-party classic skin archives are bundled, including the original Winamp 2.91 default. See [skin credits and provenance](Resources/SKIN-CREDITS.md); embedded author notices remain in each archive. Skins imported in v0.1 need to be reimported to add their EQ artwork, because v0.1 retained only the main-player bitmaps.
+Only recognized bitmap entries are read; archive paths are never extracted to disk. Archive, decoded image dimensions, and per-entry data have limits. Imported bitmap assets are saved locally; the original skin file can then be moved. The unchanged original Winamp 2.91 default skin archive is bundled. See [skin credits and provenance](Resources/SKIN-CREDITS.md); embedded author notices remain in each archive. Skins imported in v0.1 need to be reimported to add their EQ artwork, because v0.1 retained only the main-player bitmaps.
 
 ## Data and resource use
 
@@ -275,10 +275,14 @@ The library uses an 860 × 500 point default window and supports resizing down t
 
 ## Design references
 
-Classic skin format behavior was checked against [Webamp’s skin documentation](https://docs.webamp.org/docs/features/skins/) and its publicly documented sprite layouts. Playback uses [Apple AVFoundation](https://developer.apple.com/documentation/avfoundation). RadioPocket is an independent prototype and is not affiliated with Winamp.
+Classic skin format behavior was checked against [Webamp’s skin documentation](https://docs.webamp.org/docs/features/skins/) and its publicly documented sprite layouts. Playback uses [Apple AVFoundation](https://developer.apple.com/documentation/avfoundation). RadioPocket is an independent project and is not affiliated with Winamp or Nullsoft.
 
 Stock preset numeric data was checked against [the exported Winamp.q1 preset collection](https://github.com/schollz/Winamp-Original-Presets). Only numeric curve values are included; no original preset binaries are bundled. EQF structure was checked against [Webamp’s EQF format parser](https://github.com/captbaritone/webamp/tree/master/packages/winamp-eqf).
 
 Directory integration follows the [Radio Browser API documentation](https://docs.radio-browser.info/).
 
 UI development checks: combine `--preview /absolute/player.png` with `--eq-preview /absolute/eq.png`, `--panels-preview /existing/output/directory`, and `--ui-audit /absolute/result.txt`. Always supply an isolated `--data-dir`.
+
+## License
+
+RadioPocket's own code is released under the [MIT License](LICENSE). Bundled third-party code is listed in [THIRD-PARTY.md](Resources/THIRD-PARTY.md). Classic skins keep their authors' terms; see [SKIN-CREDITS.md](Resources/SKIN-CREDITS.md).

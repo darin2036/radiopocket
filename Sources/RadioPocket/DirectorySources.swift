@@ -120,9 +120,9 @@ extension UUID {
 /// Applies the library window's filters, ordering and paging to directories that return their whole list at once.
 enum DirectoryFilter {
     static func page(_ all: [RadioListing], query: DirectoryQuery) -> DirectoryPage {
-        let name = query.name.lowercased(), genre = query.genre.lowercased()
+        let genre = query.genre.lowercased()
         var rows = all.filter { listing in
-            if !name.isEmpty, !listing.name.lowercased().contains(name), !listing.tags.lowercased().contains(name) { return false }
+            if !query.matchesName(listing) { return false }
             if !genre.isEmpty, !listing.tags.lowercased().contains(genre) { return false }
             if !query.countryCode.isEmpty, listing.countryCode != query.countryCode { return false }
             if !query.codec.isEmpty {

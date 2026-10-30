@@ -130,7 +130,7 @@ do {
     lowRate.withUnsafeMutableBufferPointer { rp_eq_process(dsp, $0.baseAddress!, 1024, 1, 0) }
     try check(lowRate.allSatisfy { $0.isFinite && abs($0) <= 1 }, "Low sample-rate streams safely bypass bands above Nyquist")
     var query = DirectoryQuery()
-    query.name = "Miles & Jazz + Live"; query.genre = "jazz"; query.countryCode = "US"; query.minimumBitrate = 128; query.offset = 100
+    query.name = "Miles & Jazz+Live"; query.genre = "jazz"; query.countryCode = "US"; query.minimumBitrate = 128; query.offset = 100
     var components = URLComponents(string: "https://example.org/json/stations/search")!
     components.queryItems = query.items
     try check(URLComponents(url: components.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "name" })?.value == query.name, "Directory search safely encodes special characters")
@@ -299,7 +299,7 @@ do {
     }
     let bundled = URL(fileURLWithPath: "Resources/Skins", isDirectory: true)
     let skinFiles = try FileManager.default.contentsOfDirectory(at: bundled, includingPropertiesForKeys: nil).filter { $0.pathExtension == "wsz" }
-    try check(skinFiles.count == 11, "Eleven distinct classic skins are bundled")
+    try check(skinFiles.count == 1, "The original Winamp classic skin is bundled")
     for url in skinFiles {
         let skin = try ClassicSkin.load(url)
         try check(skin.sprite("main.bmp", NSRect(x: 0, y: 0, width: 275, height: 116)) != nil && skin.sprite("eqmain.bmp", NSRect(x: 0, y: 0, width: 275, height: 116)) != nil, "Bundled player and equalizer artwork: \(url.lastPathComponent)")
@@ -330,10 +330,6 @@ do {
         let frame = Int(((gain + 12) / 24 * 27).rounded())
         try check(baseSkin.sprite("eqmain.bmp", NSRect(x: 13 + (frame % 14) * 15, y: 164 + (frame / 14) * 65, width: 14, height: 63)) != nil, "EQ endpoint and center slider backgrounds stay in sprite bounds")
     }
-    let aqua = try ClassicSkin.load(bundled.appendingPathComponent("MacOSXAqua1-5.wsz"))
-    let aquaBG = aqua.displayBackground.usingColorSpace(.deviceRGB)!
-    let aquaFG = aqua.displayForeground.usingColorSpace(.deviceRGB)!
-    try check(aquaBG.redComponent > 0.8 && aquaFG.redComponent < 0.3, "Aqua display preserves light background and dark text")
     try check(baseSkin.displayBackground.usingColorSpace(.deviceRGB)!.greenComponent < 0.2 && baseSkin.displayForeground.usingColorSpace(.deviceRGB)!.greenComponent > 0.7, "Original skin display preserves dark background and green text")
     let sample = Changelog.parse("RadioPocket 1.1\nReleased: Jan 2 2027\n* Added: Thing\n* Fixed: Other\n\nRadioPocket 1.0\n* Misc: First\n")
     try check(sample.map(\.version) == ["1.1", "1.0"], "Changelog parses release headers")
@@ -561,6 +557,9 @@ do {
     let jumpList = [Station(name: "Groove Salad", address: "https://a.example/gs"), Station(name: "Deep Space One", address: "https://a.example/ds"), Station(name: "Space Station Soma", address: "https://a.example/sss")]
     try check(StationSearch.match("space", in: jumpList).map(\.name) == ["Space Station Soma", "Deep Space One"], "Jump matching ranks names that start with the text first")
     try check(StationSearch.match("station soma", in: jumpList).map(\.name) == ["Space Station Soma"], "Jump matching requires every typed word")
+    try check(StationSearch.match("DEEP one", in: jumpList).map(\.name) == ["Deep Space One"] && StationSearch.match("cafe", in: [Station(name: "Café del Mar", address: "https://a.example/c")]).count == 1, "Matching ignores case, accents and word order")
+    var multiWord = DirectoryQuery(); multiWord.name = "radio jazz"
+    try check(multiWord.items.first(where: { $0.name == "name" })?.value == "radio" && multiWord.matchesName(RadioListing(id: "1", name: "Smooth Jazz Radio", address: "https://a.example/j", tags: "", country: "", countryCode: "", codec: "MP3", bitrate: 128, votes: 0, clicks: 0, hls: false, sourceName: nil)), "Multi-word library searches match any word order")
     try check(StationSearch.match("", in: jumpList).count == 3 && StationSearch.match("zzz", in: jumpList).isEmpty, "Jump matching: empty query lists all, no match lists none")
     // Loudness leveler
     func leveled(amplitude: Float, enabled: Bool, seconds: Double = 40) -> (peak: Float, gain: Double) {

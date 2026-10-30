@@ -143,7 +143,7 @@ struct DirectoryQuery: Hashable {
     var items: [URLQueryItem] {
         var result = [URLQueryItem(name: "hidebroken", value: "true"), .init(name: "limit", value: "\(Self.pageSize)"),
                       .init(name: "offset", value: "\(max(0, offset))"), .init(name: "order", value: order == "quality" ? "bitrate" : order), .init(name: "reverse", value: reverse ? "true" : "false")]
-        for (key, value) in [("name", name), ("tag", genre), ("countrycode", countryCode), ("codec", codec)] {
+        for (key, value) in [("name", serverName), ("tag", genre), ("countrycode", countryCode), ("codec", codec)] {
             let value = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
             if !value.isEmpty { result.append(.init(name: key, value: value)) }
         }
@@ -151,8 +151,17 @@ struct DirectoryQuery: Hashable {
         if minimumBitrate > 0 { result.append(.init(name: "bitrateMin", value: "\(minimumBitrate)")) }
         return result
     }
+    var searchWords: [String] { StationSearch.words(name) }
+    /// Radio Browser matches the name as one phrase, so several words go up as the longest one and the rest are checked here.
+    private var serverName: String {
+        let words = name.split(whereSeparator: \.isWhitespace)
+        return words.count > 1 ? String(words.max { $0.count < $1.count }!) : name
+    }
     func matchesLocal(_ station: Station) -> Bool {
-        name.isEmpty || station.name.localizedCaseInsensitiveContains(name) || station.address.localizedCaseInsensitiveContains(name)
+        searchWords.isEmpty || StationSearch.matches(searchWords, in: [station.name, station.address])
+    }
+    func matchesName(_ listing: RadioListing) -> Bool {
+        searchWords.isEmpty || StationSearch.matches(searchWords, in: [listing.name, listing.tags])
     }
 }
 
@@ -234,7 +243,8 @@ actor RadioBrowserDirectory: DirectoryBackend {
 
     static func decodePage(_ data: Data, query: DirectoryQuery) throws -> DirectoryPage {
         let values = try JSONDecoder().decode(DirectoryRows.self, from: data)
-        let stations = query.supportedOnly ? values.rows.filter(\.likelyPlayable) : values.rows
+        var stations = query.supportedOnly ? values.rows.filter(\.likelyPlayable) : values.rows
+        if query.searchWords.count > 1 { stations = stations.filter(query.matchesName) }
         return DirectoryPage(stations: Array(stations.prefix(DirectoryQuery.pageSize)), hasMore: values.count >= DirectoryQuery.pageSize, rawCount: values.count)
     }
 

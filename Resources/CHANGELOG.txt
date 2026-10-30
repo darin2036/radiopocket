@@ -26,17 +26,14 @@ RadioPocket 0.8
 * Changed: Clicking the visualizer cycles Bars / Fire / Oscilloscope; double-click opens the window
 * Changed: Station Library is one continuously loading list
 * Changed: Double-clicking a title bar shades the player or equalizer; a docked equalizer follows
-* Changed: Visualization window resizes down to the player's width
 * Changed: Genre comments and collection sections are searchable
-* Changed: Station lists are released from memory when idle
+* Removed: Bundled skins other than Winamp Classic 2.91; import any .wsz instead
 * Removed: Library Previous/Next paging
 * Removed: Coloring picker in the visualization window
-* Removed: 8-buffer network backpressure
 * Fixed: Unnamed stations, URL names and page/image links no longer appear in station lists
 * Fixed: Rare crash during startup
 * Fixed: M3U names with commas in quoted metadata
 * Fixed: Library window can be closed and minimized
-* Fixed: Skinned players no longer paint black boxes
 * Fixed: Display shows reconnecting, paused and delayed status
 
 RadioPocket 0.7
@@ -49,20 +46,10 @@ RadioPocket 0.7
 * Added: Visualizer colors follow the skin's VISCOLOR.TXT
 * Added: Mac media keys, AirPods and headset controls
 * Added: Station and song title in Control Center and Now Playing
-* Changed: Display follows Winamp's 275 × 116 grid; station name replaces the seek bar
 * Changed: Always-on-top survives relaunch
-* Changed: Display colors come from the skin
-* Fixed: Missing audio metrics show dashes
-* Fixed: Volume readout stays inside its rectangle
-* Fixed: Library header and button baselines
 
 RadioPocket 0.6
-* Changed: Title buttons and transport sprites keep original dimensions
-* Changed: Custom buttons have centered labels and full bevels
-* Changed: Equalizer uses the skin's slider backgrounds and shows a gain curve
-* Changed: Library, favorites and stream windows share classic controls
-* Changed: Library opens at 860 × 500
-* Fixed: Volume clicks track the thumb's travel
+* Added: Equalizer shows a band-gain curve
 * Fixed: Player and equalizer collapse buttons restore on second click
 * Fixed: Empty favorites disable selection actions
 * Fixed: Stream entry shows validation errors in the dialog
@@ -73,5 +60,5 @@ RadioPocket 0.5 and earlier
 * Added: M3U and PLS playlists
 * Added: Ten-band equalizer with 18 Winamp presets and .eqf import/export
 * Added: Station library with Radio Browser, favorites and recents
-* Added: Classic .wsz skins with 11 bundled
+* Added: Classic .wsz skin support
 * Added: radiopocket:// links and Open With for playlists

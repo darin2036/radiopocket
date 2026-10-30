@@ -819,17 +819,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
     let bundledSkins: [(String, String)] = [
-        ("Winamp Classic — Original Default", "base-2.91"),
-        ("Amiga PPC Dark", "AmigaPPC-dark"),
-        ("Internet Archive", "Internet-Archive"),
-        ("Mac OS X Aqua", "MacOSXAqua1-5"),
-        ("My Funny Valentine", "My_Funny_Valentine"),
-        ("Sonic Attitude", "Sonic_Attitude"),
-        ("TopazAmp", "TopazAmp1-2"),
-        ("Vizor", "Vizor1-01"),
-        ("XMMS Turquoise", "XMMS-Turquoise"),
-        ("Zaxon Remake", "ZaxonRemake1-0"),
-        ("Rei", "rei_1")
+        ("Winamp Classic — Original Default", "base-2.91")
     ]
     private func bundledSkinURL(_ name: String) -> URL? {
         Bundle.main.url(forResource: name, withExtension: "wsz", subdirectory: "Skins")
