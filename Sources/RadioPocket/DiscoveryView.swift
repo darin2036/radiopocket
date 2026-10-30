@@ -70,8 +70,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let search = NSTextField()
     private let genre = ClassicCombo()
     private let country = ClassicPopup()
-    private let format = ClassicPopup()
-    private let bitrate = ClassicPopup()
     private let order = ClassicPopup()
     private let sourceMenu = ClassicPopup()
     private let heading = NSTextField(labelWithString: "POPULAR STATIONS")
@@ -95,8 +93,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let genres = ["Alternative", "Ambient", "Blues", "Classical", "Country", "Electronic", "Folk", "Hip Hop", "Indie", "Jazz", "Metal", "News", "Pop", "Reggae", "Rock", "Soul", "Talk", "World"]
     private var nodes: [LibraryNode] = []
     private var sideWidth: NSLayoutConstraint!, sideGap: NSLayoutConstraint!
-    private var filterHeight: NSLayoutConstraint!, filterGap: NSLayoutConstraint!, tableGap: NSLayoutConstraint!
-    private weak var filterRowView: NSView?
+    private var tableGap: NSLayoutConstraint!
+    private var narrowHidden: [NSView] = []
     private weak var sideScrollView: NSView?
     /// Column share of the table width and the narrowest width each stays readable at; the least important drop out first.
     private let columnLayout: [(id: String, share: CGFloat, minimum: CGFloat, hideBelow: CGFloat)] = [
@@ -120,7 +118,6 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     func findSimilar(to name: String) {
         showLibrary()
         search.stringValue = name
-        format.selectItem(at: 0)
         if let row = (0..<sidebar.numberOfRows).first(where: { (sidebar.item(atRow: $0) as? LibraryNode)?.scope == .popular }) {
             if sidebar.selectedRow == row { searchNow() } else { sidebar.selectRowIndexes([row], byExtendingSelection: false) }
         }
@@ -152,8 +149,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         sideWidth.constant = showSide ? 145 : 0; sideGap.constant = showSide ? 9 : 0; sideScrollView?.isHidden = !showSide
         let mainWidth = root.bounds.width - 24 - (showSide ? 154 : 0)
         let showFilters = mainWidth >= 580 && root.bounds.height >= 380
-        filterRowView.map { ($0 as? NSStackView)?.arrangedSubviews.forEach { $0.isHidden = !showFilters } }
-        filterHeight.constant = showFilters ? 22 : 0; filterGap.constant = showFilters ? 7 : 0; tableGap.constant = showFilters ? 6 : 0
+        narrowHidden.forEach { $0.isHidden = !showFilters }
         layoutColumns(width: mainWidth)
     }
     private func layoutColumns(width: CGFloat) {
@@ -253,10 +249,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         search.target = self; search.action = #selector(searchNow)
         search.setAccessibilityLabel("Search radio station names")
         search.heightAnchor.constraint(equalToConstant: 22).isActive = true
-        search.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        search.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
         popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Best quality"], width: 104)
         for (i, sort) in ["clickcount:1", "votes:1", "name:0", "quality:1"].enumerated() { order.item(at: i)?.representedObject = sort }
-        let searchRow = row([search, button("Search", #selector(searchNow), width: 54), order]); add(searchRow, to: main)
         genre.addItems(withObjectValues: ["All genres"] + genres.map { $0.lowercased() }); genre.stringValue = "All genres"
         genre.font = BrowserTheme.small; genre.textColor = BrowserTheme.text; genre.focusRingType = .none; genre.heightAnchor.constraint(equalToConstant: 22).isActive = true; genre.controlSize = .small; genre.target = self; genre.action = #selector(filtersChanged)
         genre.delegate = self; genre.setAccessibilityLabel("Genre filter")
@@ -264,9 +259,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         popup(country, label: "Country filter", values: ["Any country"], width: 112)
         let codes = Locale.Region.isoRegions.map(\.identifier).filter { $0.count == 2 }.map { ($0, Locale.current.localizedString(forRegionCode: $0) ?? $0) }.sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
         for (code, name) in codes { country.addItem(withTitle: name); country.lastItem?.representedObject = code }
-        popup(format, label: "Audio format filter", values: ["Common formats", "MP3", "AAC", "Opus", "Ogg Vorbis", "All formats"], width: 100)
-        popup(bitrate, label: "Minimum bitrate filter", values: ["Any kbps", "64+ kbps", "128+ kbps", "192+ kbps", "256+ kbps"], width: 84)
-        let filterRow = row([label("Genre"), genre, country, format, bitrate, NSView()], spacing: 4); add(filterRow, to: main); filterRowView = filterRow
+        let clear = button("Clear", #selector(clearFilters), width: 44)
+        narrowHidden = [genre, country, clear]
+        let searchRow = row([search, button("Search", #selector(searchNow), width: 54), genre, country, order, clear], spacing: 4); add(searchRow, to: main)
         table.delegate = self; table.dataSource = self; table.target = self; table.doubleAction = #selector(playSelected)
         table.enter = { [weak self] in self?.playSelected() }
         table.delete = { [weak self] in if self?.scope == .favorites { self?.saveSelected() } }
@@ -300,12 +295,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             label.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
             label.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         }
-        filterHeight = filterRow.heightAnchor.constraint(equalToConstant: 22); filterGap = filterRow.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 7)
-        tableGap = tableScroll.topAnchor.constraint(equalTo: filterRow.bottomAnchor, constant: 6)
+        tableGap = tableScroll.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 7)
         NSLayoutConstraint.activate([
             titleRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), titleRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), titleRow.topAnchor.constraint(equalTo: main.topAnchor), titleRow.heightAnchor.constraint(equalToConstant: 22),
             searchRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), searchRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), searchRow.topAnchor.constraint(equalTo: titleRow.bottomAnchor, constant: 6),
-            filterRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), filterRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), filterGap!, filterHeight!,
             tableScroll.leadingAnchor.constraint(equalTo: main.leadingAnchor), tableScroll.trailingAnchor.constraint(equalTo: main.trailingAnchor), tableGap!,
             // Buttons on the left, the two selection lines beside them, vertically centred on the buttons.
             actionRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), actionRow.bottomAnchor.constraint(equalTo: main.bottomAnchor, constant: -4),
@@ -332,10 +325,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         let tag = genre.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         query.genre = tag == "All genres" ? "" : tag.lowercased()
         query.countryCode = country.selectedItem?.representedObject as? String ?? ""
-        query.codec = ["", "MP3", "AAC", "OPUS", "OGG", ""][min(5, max(0, format.indexOfSelectedItem))]
-        query.supportedOnly = format.indexOfSelectedItem != 5
+        query.codec = ""; query.supportedOnly = true
         query.sourceID = sourceMenu.selectedItem?.representedObject as? String ?? "all"
-        query.minimumBitrate = [0,64,128,192,256][max(0, bitrate.indexOfSelectedItem)]
+        query.minimumBitrate = 0
         let sorting = (order.selectedItem?.representedObject as? String ?? "clickcount:1").split(separator: ":")
         query.order = String(sorting[0]); query.reverse = sorting.count > 1 && sorting[1] == "1"
         if resetPage { query.offset = 0 }
@@ -449,6 +441,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         suppressSelection = false
     }
     @objc private func filtersChanged() { leaveLocalScope(); clearSortIndicators(); captureQuery(); load() }
+    @objc private func clearFilters() {
+        search.stringValue = ""; genre.stringValue = "All genres"
+        country.selectItem(at: 0)
+        clearSortIndicators(); captureQuery(); load()
+    }
     @objc private func refresh() { leaveLocalScope(); captureQuery(); load(refresh: true) }
     @objc private func playSelected() {
         guard let selected else { return }

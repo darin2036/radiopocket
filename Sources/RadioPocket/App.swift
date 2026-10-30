@@ -338,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         readyForLinks = true
         if let url = pendingLink { pendingLink = nil; self.application(NSApp, open: [url]) }
+        else if smokePath == nil, let last = library.state.lastStation { engine.load(last) }
         if smokePath != nil && argument("--smoke-stream") == nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in self?.finishSmoke(success: false) }
         }
