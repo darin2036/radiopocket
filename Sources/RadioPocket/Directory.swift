@@ -338,6 +338,9 @@ actor RadioDirectory {
     private var pausedUntil = Date.distantPast
     private var schedule: Task<Void, Never>?
     private var trimTask: Task<Void, Never>?
+    private let dead: DeadStations?
+    private var probing = true
+    private var vetting = false
     /// A saved page this young is used as is; older ones are shown at once and refreshed behind the scenes.
     static let freshFor: TimeInterval = 6 * 3600
     /// Past this a saved page is ignored while the network works (it is still the fallback when it doesn't).
@@ -345,7 +348,13 @@ actor RadioDirectory {
     /// The views opened first, and how many 100-station pages of each are kept warm.
     static let warmViews: [(order: String, reverse: Bool, pages: Int)] = [("clickcount", true, 5), ("votes", true, 2), ("name", false, 2)]
 
-    init(baseURLs: [URL]? = nil, cache: StationCache? = nil) { radioBrowser = RadioBrowserDirectory(baseURLs: baseURLs); self.cache = cache }
+    init(baseURLs: [URL]? = nil, cache: StationCache? = nil, dead: DeadStations? = nil) {
+        radioBrowser = RadioBrowserDirectory(baseURLs: baseURLs); self.cache = cache; self.dead = dead
+    }
+
+    /// Whether directory entries that carry no health data are checked in the background.
+    func setChecking(_ on: Bool) { probing = on }
+    func forgetDeadStations() { dead?.clear() }
 
     /// Applies the user's directory list. Backends are kept between calls so their caches survive.
     func configure(_ list: [DirectorySource]) {
@@ -362,6 +371,13 @@ actor RadioDirectory {
     /// Browsing views come from disk when saved: instantly, and offline. A page older than `freshFor` is still returned at once
     /// and queued for a quiet refresh, so what the user sees never waits on the network. Refresh and typed searches go live.
     func search(_ query: DirectoryQuery, refresh: Bool = false) async throws -> DirectoryPage {
+        let page = try await browse(query, refresh: refresh)
+        guard let dead else { return page }
+        checkInBackground(page.stations)
+        return dead.filter(page)
+    }
+
+    private func browse(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
         scheduleTrim()
         guard let cache, let key = cacheKey(query) else { return try await live(query, refresh: refresh) }
         let stored = cache.load(key)
@@ -453,8 +469,10 @@ actor RadioDirectory {
             let item = pending.removeFirst()
             do {
                 // Refreshing reuses each directory's short in-memory copy, so a big catalog is downloaded once per round.
-                let page = try await live(item.query, refresh: false)
+                var page = try await live(item.query, refresh: false)
                 try Task.checkCancellation()
+                // Saved pages are vetted first, so what opens instantly is already free of stations that no longer answer.
+                if probing, let dead { vetting = true; await StreamProbe.vet(page.stations, dead: dead); vetting = false; page = dead.filter(page) }
                 cache?.store(page, key: item.key); failures = 0
             } catch {
                 failures += 1
@@ -467,6 +485,17 @@ actor RadioDirectory {
         cache?.prune()
         await releaseMemory()
     }
+    /// Pages that were not saved (typed searches, deeper pages) are checked quietly after they are shown; the next load leaves out what failed.
+    private func checkInBackground(_ rows: [RadioListing]) {
+        guard probing, let dead, !vetting, BackgroundPolicy.allows(), rows.contains(where: { $0.directoryID == nil && dead.needsCheck($0.address) }) else { return }
+        vetting = true
+        Task(priority: .utility) { [weak self] in
+            await StreamProbe.vet(rows, dead: dead)
+            await self?.finishVetting()
+        }
+    }
+    private func finishVetting() { vetting = false }
+
     private func pause(minutes: Double) {
         pending.removeAll(); queued.removeAll(); failures = 0
         pausedUntil = Date().addingTimeInterval(minutes * 60)

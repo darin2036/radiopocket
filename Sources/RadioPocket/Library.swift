@@ -95,6 +95,8 @@ final class Library {
         var leveling: Bool?
         /// Keeps the opening station lists saved and fresh in the background. On unless turned off.
         var backgroundStations: Bool?
+        /// Leaves out directory stations that no longer answer. On unless turned off.
+        var checkStations: Bool?
     }
     let directory: URL
     private(set) var state: State

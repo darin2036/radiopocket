@@ -720,6 +720,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// if not, offers the directory’s closest alternative, a search, or the next favorite.
     private func stationFailed(_ station: Station, _ message: String) {
         guard smokePath == nil, library != nil else { return }
+        // Remembered so the library stops listing it; a stream that connects but won't decode is not "dead".
+        if StreamProbe.isUnreachable(message) { deadStations.record(station.address, .dead) }
         Task { @MainActor [weak self] in
             guard let self else { return }
             if !self.refreshTried.contains(station.id), let current = await self.directoryClient.refreshed(uuid: station.id.uuidString), current.address != station.address {
@@ -857,19 +859,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Local-only test endpoint; production always uses Radio Browser's HTTPS mirrors.
         if argument("--data-dir") != nil, let raw = argument("--directory-api"), let url = URL(string: raw),
            ["127.0.0.1", "localhost", "::1"].contains(url.host ?? ""), ["http", "https"].contains(url.scheme ?? "") {
-            return RadioDirectory(baseURLs: [url], cache: stationCache)
+            return RadioDirectory(baseURLs: [url], cache: stationCache, dead: deadStations)
         }
-        return RadioDirectory(cache: stationCache)
+        return RadioDirectory(cache: stationCache, dead: deadStations)
     }()
+    private lazy var deadStations = DeadStations.standard(dataDirectory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
     private lazy var stationCache = StationCache.standard(dataDirectory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
     /// Opens the station lists from disk and keeps them fresh in the background; nothing happens in smoke or preview runs.
     func updateBackgroundStations() {
         guard smokePath == nil, argument("--preview") == nil else { return }
-        let client = directoryClient, sources = library.state.directories ?? []
+        let client = directoryClient, sources = library.state.directories ?? [], checking = library.state.checkStations != false
+        Task { await client.setChecking(checking) }
         if library.state.backgroundStations == false { Task { await client.stopBackgroundRefresh() } }
         else { Task { await client.configure(sources); await client.startBackgroundRefresh() } }
     }
-    func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations() } }
+    func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations(); await client.forgetDeadStations() } }
     private var housekeeping: Housekeeping?
     /// Gives memory back on system memory pressure and after the app has sat in the background; see Housekeeping.
     private func startHousekeeping() {

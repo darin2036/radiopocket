@@ -20,6 +20,7 @@ RadioPocket 0.8
 * Added: Opus and Ogg Vorbis library filters
 * Added: Automatic reconnect on dropouts, network changes and wake
 * Added: Moved-station recovery: retries the new address, then offers alternatives
+* Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Media Library
 * Added: Media-key skip buttons rewind and forward 10 s
 * Changed: Menus follow Mac conventions: File, Edit, Controls, View, Visualization, Window, Help
 * Changed: Player has Winamp's EQ and PL buttons; + FAV, LIB and SK moved to the ≡ menu
@@ -27,6 +28,7 @@ RadioPocket 0.8
 * Changed: Station Library is one continuously loading list
 * Changed: Double-clicking a title bar shades the player or equalizer; a docked equalizer follows
 * Changed: Genre comments and collection sections are searchable
+* Changed: Library search matches words in any order, ignoring case and accents
 * Removed: Bundled skins other than Winamp Classic 2.91; import any .wsz instead
 * Removed: Library Previous/Next paging
 * Removed: Coloring picker in the visualization window

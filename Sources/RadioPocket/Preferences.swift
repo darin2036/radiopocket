@@ -82,7 +82,9 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             button("Manage directories…", "directories", x: 0, y: 378)
             let fresh = NSButton(checkboxWithTitle: "Keep station lists saved and up to date", target: self, action: #selector(freshChanged(_:)))
             fresh.frame = NSRect(x: 0, y: 342, width: 480, height: 24); fresh.state = app.library.state.backgroundStations == false ? .off : .on; page.addSubview(fresh)
-            button("Clear saved lists", "clearstations", x: 0, y: 304)
+            let check = NSButton(checkboxWithTitle: "Hide stations that no longer respond", target: self, action: #selector(checkChanged(_:)))
+            check.frame = NSRect(x: 0, y: 314, width: 480, height: 24); check.state = app.library.state.checkStations == false ? .off : .on; page.addSubview(check)
+            button("Clear saved lists", "clearstations", x: 0, y: 276)
         default:
             button("Open a stream…", "open", x: 0, y: 418)
         }
@@ -273,6 +275,10 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func topChanged(_ sender: NSButton) { app.window.level = sender.state == .on ? .floating : .normal; app.eqWindow.level = app.window.level; app.saveWindowLevel() }
     @objc private func freshChanged(_ sender: NSButton) {
         do { try app.library.update { $0.backgroundStations = sender.state == .on }; app.updateBackgroundStations() }
+        catch { app.showError(error) }
+    }
+    @objc private func checkChanged(_ sender: NSButton) {
+        do { try app.library.update { $0.checkStations = sender.state == .on }; app.updateBackgroundStations() }
         catch { app.showError(error) }
     }
     @objc private func eqChanged(_ sender: NSButton) { app.engine.equalizer.settings.enabled = sender.state == .on }

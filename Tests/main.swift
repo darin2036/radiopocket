@@ -130,7 +130,7 @@ do {
     lowRate.withUnsafeMutableBufferPointer { rp_eq_process(dsp, $0.baseAddress!, 1024, 1, 0) }
     try check(lowRate.allSatisfy { $0.isFinite && abs($0) <= 1 }, "Low sample-rate streams safely bypass bands above Nyquist")
     var query = DirectoryQuery()
-    query.name = "Miles & Jazz+Live"; query.genre = "jazz"; query.countryCode = "US"; query.minimumBitrate = 128; query.offset = 100
+    query.name = "Miles&Jazz+Live"; query.genre = "jazz"; query.countryCode = "US"; query.minimumBitrate = 128; query.offset = 100
     var components = URLComponents(string: "https://example.org/json/stations/search")!
     components.queryItems = query.items
     try check(URLComponents(url: components.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "name" })?.value == query.name, "Directory search safely encodes special characters")
@@ -578,6 +578,44 @@ do {
     try check(quiet.gain > 6 && quiet.gain <= 10.01 && quiet.peak > 0.02 * 2, "Leveler raises a quiet station (\(String(format: "%+.1f", quiet.gain)) dB)")
     try check(loud.gain < -3 && loud.peak < 0.9, "Leveler lowers a loud station and stays below full scale (\(String(format: "%+.1f", loud.gain)) dB)")
     try check(off.gain == 0 && abs(off.peak - 0.02) < 0.0005, "Leveler off leaves audio untouched")
+    // Dead stations and stream checks
+    func listing(_ address: String, directoryID: String? = nil) -> RadioListing {
+        var row = RadioListing(id: UUID().uuidString, name: "Test", address: address, tags: "", country: "", countryCode: "", codec: "MP3", bitrate: 128, votes: 0, clicks: 0, hls: false, sourceName: "Test")
+        row.directoryID = directoryID
+        return row
+    }
+    try check(StreamProbe.verdict(status: 200, contentType: "audio/mpeg") == .alive && StreamProbe.verdict(status: 200, contentType: "") == .alive, "A 200 audio response is alive")
+    try check(StreamProbe.verdict(status: 200, contentType: "text/html; charset=utf-8") == .dead, "A web page instead of audio is dead")
+    try check(StreamProbe.verdict(status: 404, contentType: "") == .dead && StreamProbe.verdict(status: 410, contentType: "") == .dead, "404 and 410 are dead")
+    try check(StreamProbe.verdict(status: 403, contentType: "") == .doubtful && StreamProbe.verdict(status: 503, contentType: "") == .doubtful, "403 and 5xx are only doubtful")
+    try check(StreamProbe.verdict(error: URLError(.cannotFindHost)) == .dead && StreamProbe.verdict(error: URLError(.cannotConnectToHost)) == .dead, "No such host or nothing listening is dead")
+    try check(StreamProbe.verdict(error: URLError(.timedOut)) == .doubtful && StreamProbe.verdict(error: URLError(.notConnectedToInternet)) == .unknown, "Timeouts are doubtful and being offline says nothing")
+    try check(!StreamProbe.canCheck(URL(string: "http://192.168.1.5:8000/s")!) && !StreamProbe.canCheck(URL(string: "http://localhost/s")!) && !StreamProbe.canCheck(URL(string: "http://radio.local/s")!) && !StreamProbe.canCheck(URL(string: "http://[::1]/s")!), "Addresses on the user's own network are never checked")
+    try check(!StreamProbe.canCheck(URL(string: "https://x.example.com/live.m3u8")!) && !StreamProbe.canCheck(URL(string: "https://x.example.com/a.pls")!) && StreamProbe.canCheck(URL(string: "https://cast1.example.com:4660/stream")!), "Playlists and HLS are not judged by a header; public streams are checked")
+    try check(StreamProbe.isUnreachable("The station did not respond. Check the stream URL or try again.") && StreamProbe.isUnreachable("The radio server returned an error."), "Connection failures count as unreachable")
+    try check(!StreamProbe.isUnreachable("Unsupported stream audio format (1718449215).") && !StreamProbe.isUnreachable("Invalid or oversized radio packet.") && !StreamProbe.isUnreachable("The stream’s decoded audio format cannot be equalized (0)."), "Decoding problems are never recorded as dead stations")
+    let deadFile = FileManager.default.temporaryDirectory.appendingPathComponent("radiopocket-dead-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: deadFile) }
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    let deadList = DeadStations(file: deadFile)
+    deadList.record("http://a.example.com/s", .dead, now: t0)
+    deadList.record("http://b.example.com/s", .doubtful, now: t0)
+    deadList.record("http://c.example.com/s", .alive, now: t0)
+    deadList.record("http://d.example.com/s", .unknown, now: t0)
+    try check(deadList.isDead("http://a.example.com/s", now: t0) && !deadList.isDead("http://b.example.com/s", now: t0) && !deadList.isDead("http://c.example.com/s", now: t0) && !deadList.isDead("http://d.example.com/s", now: t0), "Dead is immediate, one doubtful strike is not, unknown records nothing")
+    deadList.record("http://b.example.com/s", .doubtful, now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1))
+    try check(deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1)), "A second doubtful strike makes a station dead")
+    deadList.record("http://b.example.com/s", .alive, now: t0.addingTimeInterval(DeadStations.doubtfulGap + 2))
+    try check(!deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 2)), "A station that answers again is forgiven")
+    try check(!deadList.isDead("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)) && deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)), "A dead station is retried after two weeks")
+    try check(!deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(86_400)) && !deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(86_400)) && deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(DeadStations.aliveFor + 1)) && deadList.needsCheck("http://new.example.com/s", now: t0), "Recent answers are not asked again; new and stale stations are checked")
+    let deadReloaded = DeadStations(file: deadFile)
+    try check(deadReloaded.isDead("http://a.example.com/s", now: t0), "Dead stations are saved across launches")
+    let deadPage = DirectoryPage(stations: [listing("http://a.example.com/s"), listing("http://c.example.com/s"), listing("http://z.example.com/s", directoryID: UUID().uuidString)], hasMore: true, rawCount: 3)
+    let deadFiltered = deadList.filter(deadPage, now: t0)
+    try check(deadFiltered.stations.map { $0.address } == ["http://c.example.com/s", "http://z.example.com/s"] && deadFiltered.hasMore && deadFiltered.rawCount == 3, "Pages leave out dead stations and keep their paging")
+    deadList.clear()
+    try check(!deadList.isDead("http://a.example.com/s", now: t0) && !FileManager.default.fileExists(atPath: deadFile.path), "Forgetting dead stations clears the saved list")
     print("\(checks) checks passed.")
 } catch {
     fputs("\(error.localizedDescription)\n", stderr)
