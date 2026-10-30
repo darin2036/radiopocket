@@ -1,4 +1,5 @@
 RadioPocket 0.8
+* Added: Remove a favorite from the library button, right-click menu, ⌘D, or the Delete key
 * Added: Balance slider beside volume; snaps to center
 * Added: Scroll wheel over the volume slider adjusts volume
 * Added: Clicking the player logo opens About
@@ -7,12 +8,14 @@ RadioPocket 0.8
 * Added: Visualization Settings: peak falloff, line width, flame height, turbulence, colors
 * Added: Jump to Station (⇧⌘J) searches favorites and recent stations
 * Added: Station Info (⇧⌘I): format, sample rate, bitrate, buffer, leveler gain, Radio Browser lookup
+* Added: Station Info from the library right-click menu, with the stream server's HTTP response, content type and first bytes
 * Added: Real kbps/kHz and mono/stereo lamp on the player display
 * Added: Sleep Timer, 15 minutes to 2 hours, with fade-out
 * Added: Loudness Leveling, off by default
 * Added: Windows snap to screen edges and each other; hold Option to drag freely
-* Added: Directory sources: Radio Browser, SomaFM, laut.fm, Icecast/Xiph, IPRD, Radio Paradise, Mike Pierce's streams, Junguler playlists
-* Added: Custom directories and per-source on/off in Preferences
+* Added: 1.5× player size
+* Added: Directory sources: Radio Browser, SomaFM, laut.fm, IPRD, Radio Paradise, Mike Pierce's streams, Junguler playlists
+* Added: Custom directories and per-source on/off in Preferences; any built-in directory or skin can be deleted and restored from the + menu
 * Added: Directory picker in the library: search all sources or one
 * Added: Saved station lists: instant library from an on-disk cache, refreshed in the background
 * Added: Ogg Opus, Ogg Vorbis and HLS playback with EQ and visualizer
@@ -21,6 +24,7 @@ RadioPocket 0.8
 * Added: Automatic reconnect on dropouts, network changes and wake
 * Added: Moved-station recovery: retries the new address, then offers alternatives
 * Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Media Library
+* Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
 * Added: Media-key skip buttons rewind and forward 10 s
 * Changed: Menus follow Mac conventions: File, Edit, Controls, View, Visualization, Window, Help
 * Changed: Player has Winamp's EQ and PL buttons; + FAV, LIB and SK moved to the ≡ menu
@@ -31,6 +35,7 @@ RadioPocket 0.8
 * Changed: Library search matches words in any order, ignoring case and accents
 * Removed: Bundled skins other than Winamp Classic 2.91; import any .wsz instead
 * Removed: Library Previous/Next paging
+* Removed: Open equalizer button in Preferences
 * Removed: Coloring picker in the visualization window
 * Fixed: Unnamed stations, URL names and page/image links no longer appear in station lists
 * Fixed: Rare crash during startup

@@ -23,8 +23,11 @@ final class LibraryRow: NSTableRowView {
 
 private final class StationTable: NSTableView {
     var enter: (() -> Void)?
+    var delete: (() -> Void)?
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 76 { enter?() } else { super.keyDown(with: event) }
+        if event.keyCode == 36 || event.keyCode == 76 { enter?() }
+        else if event.keyCode == 51 || event.keyCode == 117, let delete { delete() }
+        else { super.keyDown(with: event) }
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         let index = row(at: convert(event.locationInWindow, from: nil))
@@ -59,6 +62,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let directory: RadioDirectory
     var play: ((Station) -> Void)?
     var openStream: (() -> Void)?
+    var inspect: ((RadioListing) -> Void)?
     var loaded: ((Bool) -> Void)?
     var report: ((Error) -> Void)?
     private let table = StationTable()
@@ -264,7 +268,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         popup(bitrate, label: "Minimum bitrate filter", values: ["Any kbps", "64+ kbps", "128+ kbps", "192+ kbps", "256+ kbps"], width: 84)
         let filterRow = row([label("Genre"), genre, country, format, bitrate, NSView()], spacing: 4); add(filterRow, to: main); filterRowView = filterRow
         table.delegate = self; table.dataSource = self; table.target = self; table.doubleAction = #selector(playSelected)
-        table.enter = { [weak self] in self?.playSelected() }; table.setAccessibilityLabel("Internet radio stations")
+        table.enter = { [weak self] in self?.playSelected() }
+        table.delete = { [weak self] in if self?.scope == .favorites { self?.saveSelected() } }
+        ; table.setAccessibilityLabel("Internet radio stations")
         for (id, title, width) in [("name", "Station", 235.0), ("tags", "Genre", 140.0), ("country", "Country", 90.0), ("codec", "Format", 75.0), ("quality", "Quality", 62.0), ("votes", "Votes", 55.0)] {
             let c = NSTableColumn(identifier: .init(id)); c.width = width; c.minWidth = id == "name" ? 150 : 42
             c.headerCell = LibraryHeader(textCell: title); c.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true)
@@ -276,7 +282,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         tableScroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: tableScroll.contentView)
         let context = NSMenu()
-        for (title, selector) in [("Tune In", #selector(playSelected)), ("Add to Favorites", #selector(saveSelected)), ("Copy Stream URL", #selector(copySelected))] {
+        for (title, selector) in [("Tune In", #selector(playSelected)), ("Add to Favorites", #selector(saveSelected)), ("Copy Stream URL", #selector(copySelected)), ("Station Info…", #selector(inspectSelected))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
         }
         table.menu = context
@@ -428,7 +434,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             selectedInfo.stringValue = info.isEmpty ? entry.address : info
             selectedInfo.toolTip = entry.address + (entry.directoryID != nil && !entry.likelyPlayable ? "\nThis format may not play on this Mac." : "")
             let saved = library.state.favorites.contains { $0.address == entry.address }
-            save?.title = saved ? "✓ Favorite" : "+ Favorite"; save?.isEnabled = !saved
+            save?.title = saved ? "★ Favorite" : "+ Favorite"
         } else { selectedInfo.stringValue = ""; selectedInfo.toolTip = nil; save?.title = "+ Favorite" }
     }
     private func clearSortIndicators() { suppressSort = true; table.sortDescriptors = []; suppressSort = false }
@@ -451,17 +457,22 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     @objc private func saveSelected() {
         guard let selected else { return }
-        do { try library.save(selected.station); reloadKeepingSelection(); updateSelection() }
+        do {
+            if library.isFavorite(selected.station) { try library.removeFavorite(selected.station) } else { try library.save(selected.station) }
+            if !scope.local { reloadKeepingSelection(); updateSelection() }
+        }
         catch { report?(error) }
     }
     @objc private func copySelected() { guard let selected else { return }; NSPasteboard.general.clearContents(); NSPasteboard.general.setString(selected.address, forType: .string) }
+    @objc private func inspectSelected() { if let selected { inspect?(selected) } }
     @objc private func openURL() { openStream?() }
     @objc private func closeLibrary() { window?.close() }
     @objc private func minimizeLibrary() { window?.miniaturize(nil) }
     /// The popups share this target, so only the row context menu depends on a selection;
     /// otherwise every directory/country/format choice greys out whenever no row is selected or a load is running.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard let action = menuItem.action, [#selector(playSelected), #selector(saveSelected), #selector(copySelected)].contains(action) else { return true }
+        guard let action = menuItem.action, [#selector(playSelected), #selector(saveSelected), #selector(copySelected), #selector(inspectSelected)].contains(action) else { return true }
+        if action == #selector(saveSelected) { menuItem.title = selected.map { library.isFavorite($0.station) } == true ? "Remove from Favorites" : "Add to Favorites" }
         return selected != nil
     }
 

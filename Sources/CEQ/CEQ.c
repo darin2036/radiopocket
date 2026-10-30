@@ -4,6 +4,8 @@
 #include <stdatomic.h>
 #include <string.h>
 #define RP_VIS_RING 8192
+#define RP_COMB_MAX 8192
+#define RP_AP_MAX 2048
 struct RPEQ {
     // Single-producer (audio thread) / single-consumer (UI thread) ring of mono post-EQ,
     // pre-volume samples for the visualizer. Fixed storage; relaxed atomics, release/acquire on the cursor.
@@ -20,13 +22,103 @@ struct RPEQ {
     _Atomic int level;
     _Atomic double levelDb;
     double levelPower, levelGain;
+    // Spatial stage: stereo width, headphone crossfeed and a small Freeverb-style room, after the EQ.
+    _Atomic int spaceStyle;
+    _Atomic float spaceAmount, spaceWidth;
+    int spaceApplied;
+    double spaceCurrent, widthCurrent, xfLow[2];
+    int combLen[4], apLen[2], combPos[2][4], apPos[2];
+    float combStore[2][4];
+    float comb[2][4][RP_COMB_MAX], allpass[2][2][RP_AP_MAX];
     double rate, b0[10], b1[10], b2[10], a1[10], a2[10];
     double z1[8][10], z2[8][10], current[11];
 };
+typedef struct { double size, feedback, damp, wet, width, crossfeed; } SpaceStyle;
+// Order matches `SpatialStyle` in Swift. Size scales the delay lengths; wet and the width/crossfeed move with the amount slider.
+static const SpaceStyle spaceStyles[RP_SPACE_STYLES] = {
+    {0,0,0,0,1,0},              // Off
+    {.45,.70,.50,.14,1,0},      // Studio
+    {.60,.74,.40,.20,1,0},      // Room
+    {.80,.78,.30,.26,1.1,0},    // Club
+    {1.05,.84,.30,.28,1.1,0},   // Stage
+    {1.25,.88,.22,.30,1.15,0},  // Hall
+    {1.60,.92,.15,.34,1.2,0},   // Cathedral
+    {.55,.76,.35,.12,1.9,0},    // Surround
+    {0,0,0,0,1.7,0},            // Wide
+    {0,0,0,0,1,.55},            // Headphones
+};
+static const int combBase[4]={1116,1188,1277,1356}, apBase[2]={556,441};
+static void space_reset(RPEQ *e,int style) {
+    memset(e->comb,0,sizeof(e->comb)); memset(e->allpass,0,sizeof(e->allpass)); memset(e->combStore,0,sizeof(e->combStore));
+    memset(e->combPos,0,sizeof(e->combPos)); memset(e->apPos,0,sizeof(e->apPos)); e->xfLow[0]=e->xfLow[1]=0;
+    double scale=fmin(2.2,e->rate/44100)*spaceStyles[style].size;
+    for(int i=0;i<4;i++) { int n=(int)(combBase[i]*scale)+1; e->combLen[i]=n<4?4:(n>RP_COMB_MAX-32?RP_COMB_MAX-32:n); }
+    for(int i=0;i<2;i++) { int n=(int)(apBase[i]*scale)+1; e->apLen[i]=n<4?4:(n>RP_AP_MAX-1?RP_AP_MAX-1:n); }
+    e->spaceApplied=style;
+}
+void rp_space_set(RPEQ *e,int style,float amount,float width) {
+    atomic_store_explicit(&e->spaceStyle,style<0||style>=RP_SPACE_STYLES?0:style,memory_order_relaxed);
+    atomic_store_explicit(&e->spaceAmount,fmaxf(0,fminf(1,amount)),memory_order_relaxed);
+    atomic_store_explicit(&e->spaceWidth,fmaxf(0,fminf(2,width)),memory_order_relaxed);
+}
+// Interleaved stereo only: mono and per-channel buffers pass through untouched.
+static void space(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_t firstChannel) {
+    if(firstChannel!=0 || channels<2 || !frames) return;
+    int style=atomic_load_explicit(&e->spaceStyle,memory_order_relaxed);
+    double amount=atomic_load_explicit(&e->spaceAmount,memory_order_relaxed), userWidth=atomic_load_explicit(&e->spaceWidth,memory_order_relaxed);
+    if(style!=e->spaceApplied) space_reset(e,style);
+    const SpaceStyle *st=&spaceStyles[style];
+    double blend=1-exp(-(double)frames/(e->rate*.05));
+    e->spaceCurrent+=blend*(amount-e->spaceCurrent);
+    e->widthCurrent+=blend*(userWidth-e->widthCurrent);
+    double a=e->spaceCurrent, width=(1+(st->width-1)*a)*e->widthCurrent;
+    if(style==0 && fabs(width-1)<.001) return;
+    double wet=st->wet*a, xf=st->crossfeed*a, damp=st->damp, fb=st->feedback;
+    double lp=1-exp(-2*M_PI*700/e->rate);
+    int reverb=wet>.0005 && st->size>0;
+    for(uint32_t f=0;f<frames;f++) {
+        float *p=&data[f*channels];
+        double l=p[0], r=p[1];
+        if(xf>0) {
+            e->xfLow[0]+=lp*(l-e->xfLow[0]); e->xfLow[1]+=lp*(r-e->xfLow[1]);
+            double nl=(l+xf*e->xfLow[1])/(1+xf*.5), nr=(r+xf*e->xfLow[0])/(1+xf*.5);
+            l=nl; r=nr;
+        }
+        if(fabs(width-1)>.001) { double m=(l+r)*.5, s=(l-r)*.5*width; l=m+s; r=m-s; }
+        if(reverb) {
+            double in=(l+r)*.5*.25, wl=0, wr=0;
+            for(int ch=0;ch<2;ch++) {
+                double sum=0;
+                for(int c=0;c<4;c++) {
+                    int len=e->combLen[c]+(ch?23:0); if(len>RP_COMB_MAX) len=RP_COMB_MAX;
+                    int pos=e->combPos[ch][c]; if(pos>=len) pos=0;
+                    float out=e->comb[ch][c][pos];
+                    e->combStore[ch][c]=(float)(out*(1-damp)+e->combStore[ch][c]*damp);
+                    e->comb[ch][c][pos]=(float)(in+e->combStore[ch][c]*fb);
+                    e->combPos[ch][c]=pos+1;
+                    sum+=out;
+                }
+                for(int k=0;k<2;k++) {
+                    int pos=e->apPos[k];
+                    float buffered=e->allpass[ch][k][pos];
+                    float out=(float)(-sum+buffered);
+                    e->allpass[ch][k][pos]=(float)(sum+buffered*.5);
+                    sum=out;
+                }
+                if(ch) wr=sum; else wl=sum;
+            }
+            for(int k=0;k<2;k++) e->apPos[k]=(e->apPos[k]+1)%e->apLen[k];
+            l+=wl*wet*2; r+=wr*wet*2;
+        }
+        if(!isfinite(l)) l=0;
+        if(!isfinite(r)) r=0;
+        p[0]=(float)fmax(-1,fmin(1,l)); p[1]=(float)fmax(-1,fmin(1,r));
+    }
+}
 static const double frequencies[10] = {60,170,310,600,1000,3000,6000,12000,14000,16000};
 RPEQ *rp_eq_create(void) {
     RPEQ *e=calloc(1,sizeof(RPEQ));
-    if(e) { e->rate=44100; atomic_store(&e->volume,1); atomic_store(&e->ratio,1); e->levelGain=1; }
+    if(e) { e->rate=44100; atomic_store(&e->volume,1); atomic_store(&e->ratio,1); e->levelGain=1; atomic_store(&e->spaceWidth,1); e->widthCurrent=1; }
     return e;
 }
 void rp_eq_destroy(RPEQ *e) { free(e); }
@@ -88,6 +180,7 @@ static void finish(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_
 void rp_eq_prepare(RPEQ *e, double sampleRate) {
     e->rate=sampleRate>0?sampleRate:44100;
     e->levelPower=0; e->levelGain=1; atomic_store(&e->levelDb,0);
+    e->spaceApplied=-1;
     memset(e->z1,0,sizeof(e->z1)); memset(e->z2,0,sizeof(e->z2));
     memset(e->current,0,sizeof(e->current));
     atomic_store(&e->frames,0);
@@ -130,6 +223,7 @@ void rp_eq_process(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_
             for(uint32_t f=0;f<frames;f++) vis_push(e,&cursor,channels>1?(data[f*channels]+data[f*channels+1])*.5f:data[f*channels]);
             atomic_store_explicit(&e->visWrite,cursor,memory_order_release);
         }
+        space(e,data,frames,channels,firstChannel);
         finish(e,data,frames,channels,firstChannel,volume);
         atomic_fetch_add_explicit(&e->frames,frames,memory_order_relaxed);
         atomic_store_explicit(&e->ratio,1,memory_order_relaxed); return;
@@ -162,6 +256,7 @@ void rp_eq_process(RPEQ *e,float *data,uint32_t frames,uint32_t channels,uint32_
     if(firstChannel==0) vis_push(e,&cursor,mix);
     }
     if(firstChannel==0) atomic_store_explicit(&e->visWrite,cursor,memory_order_release);
+    space(e,data,frames,channels,firstChannel);
     finish(e,data,frames,channels,firstChannel,volume);
     atomic_fetch_add_explicit(&e->frames,frames,memory_order_relaxed);
     atomic_store_explicit(&e->ratio,inputEnergy>1e-15?sqrt(outputEnergy/inputEnergy):1,memory_order_relaxed);

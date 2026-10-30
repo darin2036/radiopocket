@@ -18,6 +18,9 @@ uint32_t rp_vis_read(RPEQ *eq, float *out, uint32_t count);
 /// Loudness leveler: steers the output toward a fixed average level. `rp_level_db` is the gain it currently applies.
 void rp_level_set(RPEQ *eq, int enabled);
 double rp_level_db(RPEQ *eq);
+#define RP_SPACE_STYLES 10
+/// Spatial style (0 = off), its amount 0...1 and a stereo width 0...2 (1 = unchanged). Stereo output only.
+void rp_space_set(RPEQ *eq, int style, float amount, float width);
 uint64_t rp_eq_frames(RPEQ *eq);
 double rp_eq_ratio(RPEQ *eq);
 #endif

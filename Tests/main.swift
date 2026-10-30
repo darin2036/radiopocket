@@ -230,12 +230,15 @@ do {
     var paged = DirectoryQuery(); paged.offset = 1
     try check(DirectoryFilter.page(listed, query: paged).stations.count == 1 && !DirectoryFilter.page(listed, query: paged).hasMore, "Local directories page like the network ones")
     let resolvedSources = DirectorySource.resolved([DirectorySource(id: "somafm", name: "x", kind: .somaFM, enabled: false), try DirectorySource.custom(name: "Mine", url: "https://lists.example/radio.m3u", kind: .stationList)])
-    try check(resolvedSources.map(\.id).prefix(2) == ["radio-browser", "somafm"] && !resolvedSources[1].enabled && resolvedSources.count == 9, "Built-in directories always exist; saved choices and custom directories are kept")
-    try check(DirectorySource.defaults.count == 8 && DirectorySource.defaults.filter(\.enabled).count == 5, "Eight built-in catalogs; larger feeds are opt-in")
-    try check(DirectorySource.defaults.allSatisfy(\.builtIn) && DirectorySource.resolved(resolvedSources).count == 9, "Built-in migration is idempotent and does not duplicate saved sources")
-    let oldChoices = [DirectorySource.radioBrowser, DirectorySource.somaFM, DirectorySource.lautFM, DirectorySource.icecast, DirectorySource.iprd]
+    try check(resolvedSources.map(\.id).prefix(2) == ["radio-browser", "somafm"] && !resolvedSources[1].enabled && resolvedSources.count == 8, "Built-in directories always exist; saved choices and custom directories are kept")
+    try check(DirectorySource.defaults.count == 7 && DirectorySource.defaults.filter(\.enabled).count == 5, "Seven built-in catalogs; larger feeds are opt-in")
+    try check(DirectorySource.defaults.allSatisfy(\.builtIn) && DirectorySource.resolved(resolvedSources).count == 8, "Built-in migration is idempotent and does not duplicate saved sources")
+    let oldChoices = [DirectorySource.radioBrowser, DirectorySource.somaFM, DirectorySource.lautFM, DirectorySource.iprd]
     let upgradedChoices = DirectorySource.resolved(oldChoices)
-    try check(upgradedChoices.count == 8 && upgradedChoices.contains { $0.id == "curated-streams" && $0.enabled } && upgradedChoices.contains { $0.id == "junguler" && !$0.enabled }, "Existing five-source settings gain the new sources with lightweight defaults")
+    try check(upgradedChoices.count == 7 && upgradedChoices.contains { $0.id == "curated-streams" && $0.enabled } && upgradedChoices.contains { $0.id == "junguler" && !$0.enabled }, "Existing five-source settings gain the new sources with lightweight defaults")
+    var deleted = DirectorySource.somaFM; deleted.removed = true
+    let withoutSoma = DirectorySource.resolved([deleted])
+    try check(withoutSoma.count == 6 && !withoutSoma.contains { $0.id == "somafm" } && DirectorySource.resolved([deleted] + withoutSoma).count == 6, "A deleted built-in directory stays deleted")
     let collectionDirectory = root.appendingPathComponent("Collection")
     try FileManager.default.createDirectory(at: collectionDirectory.appendingPathComponent("DEMOTED"), withIntermediateDirectories: true)
     try Data("#EXTM3U\n#EXTINF:-1,Keep Radio\n#EXTGENRE: electronic\nhttps://keep.example/live\n".utf8).write(to: collectionDirectory.appendingPathComponent("Keep.m3u"))
@@ -260,11 +263,6 @@ do {
     let quotedList = "#EXTM3U\n#EXTINF:-1 group-title=\"Jazz,Blues\" tvg-logo=\"https://img.example/a,b.png\",Station, One\nhttps://radio.example/live\n"
     let quotedRows = StationListDirectory.parse(quotedList, base: URL(string: "https://lists.example/r.m3u")!, label: "IPRD", sourceID: "iprd")
     try check(quotedRows.first?.name == "Station, One" && quotedRows.first?.tags == "Jazz,Blues", "IPRD-style M3U commas in quoted attributes preserve station names")
-    let xml = "<directory><entry><server_name>Jazz &amp; Soul</server_name><server_type>audio/mpeg</server_type><bitrate>128</bitrate><genre>Jazz</genre><listen_url>https://radio.example/live</listen_url></entry><entry><listen_url>file:///etc/passwd</listen_url></entry><entry><listen_url></listen_url></entry></directory>"
-    let ice = try IcecastDirectory.parse(Data(xml.utf8))
-    try check(ice.count == 1 && ice[0].name == "Jazz & Soul" && ice[0].codec == "MP3" && ice[0].bitrate == 128, "Icecast decodes XML entities, formats and bitrate while skipping invalid streams")
-    try rejects("Icecast rejects malformed XML") { _ = try IcecastDirectory.parse(Data("<directory><entry>".utf8)) }
-    try rejects("Icecast rejects entity declarations") { _ = try IcecastDirectory.parse(Data("<!DOCTYPE directory [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><directory/>".utf8)) }
     let lautBrowse = Data(#"{"items":[{"name":"jazz","display_name":"Jazz","stream_url":"https://jazz.example/live","genres":["Jazz"],"active":true},{"name":"bad","stream_url":"file:///tmp/audio"},{"name":"off","stream_url":"https://off.example/live","active":false}],"next_offset":100}"#.utf8)
     let lautPage = try LautFMDirectory.decode(lautBrowse, query: DirectoryQuery())
     try check(lautPage.stations.count == 1 && lautPage.hasMore && lautPage.rawCount == 3 && lautPage.stations[0].sourceName == "laut.fm", "laut.fm browse pages skip invalid and inactive stations while retaining server pagination")
@@ -290,8 +288,6 @@ do {
         var liveJazz = DirectoryQuery(); liveJazz.name = "jazz"
         let lautSearch = try await LautFMDirectory().search(liveJazz, refresh: true)
         try check(!lautSearch.stations.isEmpty, "Live laut.fm keyword search loads")
-        let ice = try await IcecastDirectory().search(DirectoryQuery(), refresh: true)
-        try check(!ice.stations.isEmpty, "Live Icecast catalog loads")
         let iprd = try await DirectorySource.iprd.makeBackend()!.search(DirectoryQuery(), refresh: true)
         try check(!iprd.stations.isEmpty && iprd.hasMore, "Live IPRD catalog loads beyond the first page")
         let soma = try await SomaFMDirectory().search(DirectoryQuery(), refresh: true)

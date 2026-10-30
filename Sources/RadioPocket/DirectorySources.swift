@@ -4,9 +4,11 @@ import CryptoKit
 /// Built-in and user-supplied station catalogs. Larger full-catalog feeds are opt-in.
 struct DirectorySource: Codable, Equatable, Identifiable {
     enum Kind: String, Codable {
-        case radioBrowser, somaFM, icecast, lautFM, iprd, radioParadise, curatedStreams, junguler
+        case radioBrowser, somaFM, lautFM, iprd, radioParadise, curatedStreams, junguler
         /// A server speaking the Radio Browser JSON API (for example a self-hosted mirror).
         case radioBrowserAPI
+        /// Retired built-in; kept only so older saved settings still decode.
+        case icecast
         /// A hosted M3U / PLS list of stations.
         case stationList
     }
@@ -15,18 +17,20 @@ struct DirectorySource: Codable, Equatable, Identifiable {
     var kind: Kind
     var url: String?
     var enabled = true
+    /// Set on a saved built-in the user has deleted, so it stays gone; nil on everything else.
+    var removed: Bool?
 
     var builtIn: Bool { Self.defaults.contains { $0.id == id } }
     var detail: String {
         switch kind {
         case .radioBrowser: return "Community directory with tens of thousands of stations"
         case .somaFM: return "Listener-supported, commercial-free channels"
-        case .icecast: return "Icecast / Xiph public streams • larger catalog, optional"
         case .lautFM: return "Independent, user-run stations • public, paged search"
         case .iprd: return "International Public Radio Directory • larger catalog, optional"
         case .radioParadise: return "Listener-supported mixes • direct 128 kbps AAC streams"
         case .curatedStreams: return "Mike Pierce’s hand-picked streams • small public playlist collection"
         case .junguler: return "Named genre playlists by Junguler • larger collection, optional"
+        case .icecast: return ""
         case .radioBrowserAPI: return "Radio Browser–compatible server • \(url ?? "")"
         case .stationList: return "M3U / PLS station list • \(url ?? "")"
         }
@@ -34,21 +38,23 @@ struct DirectorySource: Codable, Equatable, Identifiable {
 
     static let radioBrowser = DirectorySource(id: "radio-browser", name: "Radio Browser", kind: .radioBrowser)
     static let somaFM = DirectorySource(id: "somafm", name: "SomaFM", kind: .somaFM)
-    static let icecast = DirectorySource(id: "icecast", name: "Icecast / Xiph", kind: .icecast, enabled: false)
     static let lautFM = DirectorySource(id: "laut-fm", name: "laut.fm", kind: .lautFM)
     static let iprd = DirectorySource(id: "iprd", name: "IPRD — International Public Radio Directory", kind: .iprd, url: "https://iprd-org.github.io/iprd/site_data/all_stations.m3u", enabled: false)
     static let radioParadise = DirectorySource(id: "radio-paradise", name: "Radio Paradise", kind: .radioParadise)
     static let curatedStreams = DirectorySource(id: "curated-streams", name: "Curated Internet Radio Streams", kind: .curatedStreams)
     static let junguler = DirectorySource(id: "junguler", name: "Junguler Radio Playlists", kind: .junguler, url: "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists/main/---everything-full.m3u", enabled: false)
-    static let defaults = [radioBrowser, somaFM, lautFM, radioParadise, curatedStreams, icecast, iprd, junguler]
+    static let defaults = [radioBrowser, somaFM, lautFM, radioParadise, curatedStreams, iprd, junguler]
     static let maximumCustom = 8
 
     /// Built-in sources first (keeping any saved on/off choice), then the user's own in the order they were added.
     static func resolved(_ saved: [DirectorySource]?) -> [DirectorySource] {
         let saved = saved ?? []
-        let builtIns = defaults.map { base -> DirectorySource in
+        let builtIns = defaults.compactMap { base -> DirectorySource? in
             var source = base
-            if let match = saved.first(where: { $0.id == base.id }) { source.enabled = match.enabled }
+            if let match = saved.first(where: { $0.id == base.id }) {
+                if match.removed == true { return nil }
+                source.enabled = match.enabled
+            }
             return source
         }
         return builtIns + saved.filter { !$0.builtIn && [.radioBrowserAPI, .stationList].contains($0.kind) && $0.url != nil }
@@ -64,7 +70,6 @@ struct DirectorySource: Codable, Equatable, Identifiable {
         switch kind {
         case .radioBrowser: return nil // Owned by the hub so mirror discovery and playback counting stay in one place.
         case .somaFM: return SomaFMDirectory()
-        case .icecast: return IcecastDirectory()
         case .lautFM: return LautFMDirectory()
         case .iprd:
             return StationListDirectory(url: URL(string: Self.iprd.url!)!, label: name, sourceID: id, limit: 8_388_608, maximumEntries: 30_000)
@@ -72,6 +77,7 @@ struct DirectorySource: Codable, Equatable, Identifiable {
         case .curatedStreams: return CuratedStreamsDirectory()
         case .junguler:
             return StationListDirectory(url: URL(string: Self.junguler.url!)!, label: name, sourceID: id, limit: 8_388_608, maximumEntries: 50_000)
+        case .icecast: return nil
         case .radioBrowserAPI:
             guard let url = url.flatMap({ URL(string: $0) }) else { return nil }
             return RadioBrowserDirectory(baseURLs: [url], label: name, primary: false)
@@ -276,61 +282,6 @@ actor StationListDirectory: DirectoryBackend {
                                 address: valid.absoluteString, tags: String(entry.group.prefix(500)), country: "", countryCode: "", codec: codec,
                                 bitrate: 0, votes: 0, clicks: 0, hls: ext == "m3u8", sourceName: label)
         }
-    }
-}
-
-/// Public Xiph yellow-pages feed. Only valid HTTP audio entries are retained.
-actor IcecastDirectory: DirectoryBackend {
-    private var cache: (Date, [RadioListing])?
-    func trim() async { if cache.idle { cache = nil } }
-    func release() async { cache = nil }
-    func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
-        try Task.checkCancellation()
-        let cached = !refresh && cache.map { Date().timeIntervalSince($0.0) < 600 } == true
-        if !cached {
-            let data = try await DirectoryFetch.data(URL(string: "https://dir.xiph.org/yp.xml")!, limit: 16_777_216)
-            cache = (Date(), try Self.parse(data))
-        }
-        var page = DirectoryFilter.page(cache?.1 ?? [], query: query); page.cached = cached; return page
-    }
-    static func parse(_ data: Data) throws -> [RadioListing] {
-        guard data.count <= 16_777_216,
-              !String(decoding: data, as: UTF8.self).localizedCaseInsensitiveContains("<!DOCTYPE") else {
-            throw RadioError.message("The Icecast directory returned an unsupported XML document.")
-        }
-        let reader = IcecastReader(), parser = XMLParser(data: data)
-        parser.shouldResolveExternalEntities = false; parser.delegate = reader
-        guard parser.parse(), reader.validRoot else { throw RadioError.message("The Icecast station list couldn’t be read.") }
-        try Task.checkCancellation()
-        return reader.rows
-    }
-}
-
-private final class IcecastReader: NSObject, XMLParserDelegate {
-    var rows: [RadioListing] = [], validRoot = false
-    private var fields: [String: String] = [:], element = "", inEntry = false, seen = Set<String>(), entries = 0
-    func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String]) {
-        element = name
-        if name == "directory" { validRoot = true }
-        if name == "entry" { fields = [:]; inEntry = true; entries += 1; if entries > 50_000 { parser.abortParsing() } }
-    }
-    func parser(_ parser: XMLParser, foundCharacters string: String) {
-        if inEntry, ["server_name", "server_type", "bitrate", "listen_url", "genre"].contains(element) {
-            fields[element] = String(((fields[element] ?? "") + string).prefix(4096))
-        }
-    }
-    func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
-        defer { element = "" }
-        guard name == "entry" else { return }; inEntry = false
-        if Task.isCancelled { parser.abortParsing(); return }
-        let title = (fields["server_name"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = try? StreamAddress.parse(fields["listen_url"] ?? ""), RadioListing.isViable(name: title, address: url), seen.insert(url.absoluteString).inserted else { return }
-        let mime = (fields["server_type"] ?? "").lowercased()
-        // Ogg can contain several codecs; leave it as a container rather than guessing Vorbis.
-        let codec = ["audio/mpeg": "MP3", "audio/mp3": "MP3", "audio/aac": "AAC", "audio/aacp": "AAC+", "application/ogg": "OGG", "audio/ogg": "OGG", "audio/opus": "OPUS" ][mime] ?? mime.uppercased()
-        rows.append(RadioListing(id: UUID.stable("icecast:" + url.absoluteString).uuidString, name: String(title.prefix(300)), address: url.absoluteString,
-                                 tags: String((fields["genre"] ?? "").prefix(500)), country: "", countryCode: "", codec: codec,
-                                 bitrate: max(0, Int(fields["bitrate"] ?? "") ?? 0), votes: 0, clicks: 0, hls: false, sourceName: "Icecast / Xiph"))
     }
 }
 

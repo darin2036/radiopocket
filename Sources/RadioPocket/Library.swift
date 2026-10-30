@@ -89,9 +89,12 @@ final class Library {
         var alwaysOnTop: Bool?
         var scale: Double = 2
         var equalizer: EQSettings?
+        var spatial: SpatialSettings?
         var recentStations: [Station]?
         var visualizer: VisSettings?
         var directories: [DirectorySource]?
+        /// Built-in skins the user has deleted, by their menu action.
+        var hiddenSkins: [String]?
         var leveling: Bool?
         /// Keeps the opening station lists saved and fresh in the background. On unless turned off.
         var backgroundStations: Bool?
@@ -111,7 +114,7 @@ final class Library {
         } else { state = State() }
         state.volume = min(1, max(0, state.volume))
         state.balance = state.balance.map { min(1, max(-1, $0)) }
-        if ![1.0, 2.0, 3.0].contains(state.scale) { state.scale = 2 }
+        if ![1.0, 1.5, 2.0, 3.0].contains(state.scale) { state.scale = 2 }
     }
 
     func update(_ edit: (inout State) -> Void) throws {
@@ -131,6 +134,14 @@ final class Library {
             entries.insert(station, at: 0)
             state.recentStations = Array(entries.prefix(30))
         }
+    }
+
+    func isFavorite(_ station: Station) -> Bool {
+        state.favorites.contains { $0.address == station.address || $0.id == station.id }
+    }
+
+    func removeFavorite(_ station: Station) throws {
+        try update { $0.favorites.removeAll { $0.address == station.address || $0.id == station.id } }
     }
 
     func save(_ station: Station) throws {
