@@ -43,7 +43,11 @@ struct DirectorySource: Codable, Equatable, Identifiable {
     static let radioParadise = DirectorySource(id: "radio-paradise", name: "Radio Paradise", kind: .radioParadise)
     static let curatedStreams = DirectorySource(id: "curated-streams", name: "Curated Internet Radio Streams", kind: .curatedStreams)
     static let junguler = DirectorySource(id: "junguler", name: "Junguler Radio Playlists", kind: .junguler, url: "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists/main/---everything-full.m3u", enabled: false)
+    #if os(macOS)
     static let defaults = [radioBrowser, somaFM, lautFM, radioParadise, curatedStreams, iprd, junguler]
+    #else
+    static let defaults = [radioBrowser, somaFM, lautFM, radioParadise, iprd, junguler]
+    #endif
     static let maximumCustom = 8
 
     /// Built-in sources first (keeping any saved on/off choice), then the user's own in the order they were added.
@@ -394,6 +398,7 @@ actor CuratedStreamsDirectory: DirectoryBackend {
         guard let text = String(data: data, encoding: .utf8) else { throw RadioError.message("The curated playlists couldn’t be read.") }
         return text
     }
+#if os(macOS)
     private static func unzip(_ arguments: [String], limit: Int) throws -> Data {
         let process = Process(), pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip"); process.arguments = arguments
@@ -414,4 +419,10 @@ actor CuratedStreamsDirectory: DirectoryBackend {
             try? pipe.fileHandleForReading.close(); process.waitUntilExit(); throw error
         }
     }
+#else
+    // iOS can't launch /usr/bin/unzip, so this source is left out of `DirectorySource.defaults` there.
+    private static func unzip(_ arguments: [String], limit: Int) throws -> Data {
+        throw RadioError.message("The curated archive can’t be read on this device.")
+    }
+#endif
 }

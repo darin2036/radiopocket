@@ -1,5 +1,8 @@
-import AppKit
+import Foundation
 import AVFoundation
+#if os(macOS)
+import AppKit
+#endif
 import Network
 import CEQ
 
@@ -49,7 +52,16 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         }
         monitor.pathUpdateHandler = { [weak self] path in DispatchQueue.main.async { self?.pathChanged(path) } }
         monitor.start(queue: DispatchQueue(label: "radiopocket.network", qos: .utility))
+        #if os(macOS)
         notifications.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.didWake() })
+        #else
+        // Streams keep playing with the screen locked, and the session needs reclaiming after a call or Siri interrupts it.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        notifications.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            self?.didWake()
+        })
+        #endif
     }
     deinit { monitor.cancel() }
 
