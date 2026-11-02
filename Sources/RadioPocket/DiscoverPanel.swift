@@ -102,6 +102,37 @@ private final class DiscoveryReasonScrollView: NSScrollView {
     }
 }
 
+/// Explicit content insets keep the artwork inside the card even at compact sizes.
+private final class DiscoveryStationCard: NSView {
+    let content = NSStackView()
+    var artworkHeight: NSLayoutConstraint?
+    var titleHeight: NSLayoutConstraint?
+    var titleField: NSTextField?
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        content.orientation = .vertical; content.alignment = .leading; content.spacing = 7
+        content.translatesAutoresizingMaskIntoConstraints = false; addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layout() {
+        let tight = bounds.width < 280 || (enclosingScrollView.map { $0.contentView.bounds.height < 450 } ?? false)
+        let imageSize: CGFloat = tight ? 44 : 64
+        if artworkHeight?.constant != imageSize { artworkHeight?.constant = imageSize }
+        let fontSize: CGFloat = tight ? 14 : 16
+        if titleField?.font?.pointSize != fontSize { titleField?.font = .systemFont(ofSize: fontSize, weight: .semibold) }
+        let titleSize: CGFloat = tight ? 34 : 39
+        if titleHeight?.constant != titleSize { titleHeight?.constant = titleSize }
+        content.spacing = tight ? 5 : 7
+        super.layout()
+    }
+}
+
 /// Presentation-only discovery surface; metadata, preference persistence and ranking are owned separately.
 final class DiscoverPanel: NSView {
     var useLocationRequested: (() -> Void)?
@@ -342,19 +373,17 @@ final class DiscoverPanel: NSView {
     }
     private func card(_ pick: DiscoveryPick, saved: Bool) -> NSView {
         let row = pick.listing
-        let card = NSStackView(); card.orientation = .vertical; card.alignment = .leading; card.spacing = 10
-        card.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
-        // Shared geometry for Discover and Moods, independent of copy length.
-        card.heightAnchor.constraint(equalToConstant: 384).isActive = true
+        let card = DiscoveryStationCard(frame: .zero)
         card.wantsLayer = true; card.layer?.backgroundColor = NSColor(calibratedRed: 0.10, green: 0.12, blue: 0.16, alpha: 1).cgColor; card.layer?.cornerRadius = 14; card.layer?.borderWidth = 1; card.layer?.borderColor = NSColor.white.withAlphaComponent(0.06).cgColor
         func append(_ view: NSView, height: CGFloat? = nil) {
-            card.addArrangedSubview(view); view.translatesAutoresizingMaskIntoConstraints = false; view.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -28).isActive = true
+            card.content.addArrangedSubview(view); view.translatesAutoresizingMaskIntoConstraints = false; view.widthAnchor.constraint(equalTo: card.content.widthAnchor).isActive = true
             if let height { view.heightAnchor.constraint(equalToConstant: height).isActive = true }
         }
         let genre = DiscoverySafety.interests(row).sorted().first ?? "music"
-        let artwork = FrequencyArtwork(genre, artworkURL: preferences.showArtwork ? row.artworkURL : nil); artwork.wantsLayer = true; artwork.layer?.cornerRadius = 8; artwork.layer?.masksToBounds = true; artwork.heightAnchor.constraint(equalToConstant: 112).isActive = true; append(artwork)
+        let artwork = FrequencyArtwork(genre, artworkURL: preferences.showArtwork ? row.artworkURL : nil); artwork.wantsLayer = true; artwork.layer?.cornerRadius = 8; artwork.layer?.masksToBounds = true; card.artworkHeight = artwork.heightAnchor.constraint(equalToConstant: 64); card.artworkHeight?.isActive = true; append(artwork)
         append(text(genre.uppercased() + (row.video ? "  /  TV" : "  /  RADIO"), size: 10, color: .systemTeal, weight: .semibold), height: 12)
-        let title = text(row.name, size: 17, color: .white, weight: .semibold); title.maximumNumberOfLines = 2; title.toolTip = row.name; append(title, height: 42)
+        let title = text(row.name, size: 16, color: .white, weight: .semibold); title.maximumNumberOfLines = 2; title.toolTip = row.name; append(title)
+        card.titleField = title; card.titleHeight = title.heightAnchor.constraint(equalToConstant: 39); card.titleHeight?.isActive = true
         let reasonScroll = DiscoveryReasonScrollView()
         reasonScroll.drawsBackground = false; reasonScroll.borderType = .noBorder
         reasonScroll.hasVerticalScroller = true; reasonScroll.autohidesScrollers = true
@@ -369,7 +398,7 @@ final class DiscoverPanel: NSView {
         reason.textContainer?.containerSize = NSSize(width: 1, height: CGFloat.greatestFiniteMagnitude)
         reason.setAccessibilityLabel("Why this station")
         reasonScroll.documentView = reason
-        append(reasonScroll, height: 48)
+        append(reasonScroll, height: 30)
         let details = [row.country, (row.languages ?? []).map(DiscoveryCatalog.languageName).joined(separator: ", ")].filter { !$0.isEmpty }.joined(separator: " · ")
         let quality = text(row.quality > 0 ? row.qualityStars : "☆ ☆ ☆ ☆ ☆", size: 10, color: .secondaryLabelColor)
         quality.toolTip = row.quality > 0 ? "Estimated stream quality: \(row.quality) of 5" : "Stream quality not published"
@@ -418,7 +447,10 @@ final class DiscoverPanel: NSView {
         weatherRow.orientation = compact ? .vertical : .horizontal
         weatherRow.alignment = compact ? .leading : .centerY
         for width in compactWidths where width.isActive != compact { width.isActive = compact }
-        for row in cardRows { row.orientation = compact ? .vertical : .horizontal; row.alignment = compact ? .leading : .top }
+        for row in cardRows {
+            row.orientation = compact ? .vertical : .horizontal; row.alignment = compact ? .leading : .top
+            for card in row.arrangedSubviews { card.needsLayout = true }
+        }
     }
     private func showMoodsExplainer() {
         guard let howMoods, let window else { return }
