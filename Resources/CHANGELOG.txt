@@ -1,9 +1,8 @@
 RadioPocket 0.9
 * Added: Internet TV in the library, with 40media Group's free channels in a classic video window
-* Added: Preferences ▸ Internet TV: manage your own M3U TV channel lists and turn the adult and unreliable-channel filters on or off
+* Added: Preferences ▸ Internet TV: manage your own M3U TV channel lists
 * Added: Video window follows Always on Top; double-click it for full screen; closing it stops the stream
 * Added: Visualizer dock beside the video window
-* Added: iPhone app: the classic player in landscape, stacked classic windows in portrait
 * Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
 * Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Internet Radio
 * Added: Remove a favorite from the library button, right-click menu, ⌘D, or the Delete key
