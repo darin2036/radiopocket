@@ -28,6 +28,8 @@ targets:
           - Changelog.swift
           - EQPresets.swift
           - Directory.swift
+          - DiscoveryIndex.swift
+          - DiscoveryRecommendations.swift
           - Library.swift
           - Equalizer.swift
           - EQFile.swift

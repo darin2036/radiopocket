@@ -83,7 +83,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
         }
     }
     var formatLabel: String { hls ? (codec.isEmpty ? "HLS" : "\(codec)/HLS") : (codec.isEmpty ? "—" : codec) }
-    var station: Station { Station(id: UUID(uuidString: id) ?? UUID(), name: name, address: address, video: video ? true : nil) }
+    var station: Station { Station(id: UUID(uuidString: id) ?? UUID.stable(address), name: name, address: address, video: video ? true : nil) }
     init(station: Station) {
         id = station.id.uuidString; name = station.name; address = station.address; video = station.video == true
         tags = ""; country = ""; countryCode = ""; codec = ""; bitrate = 0; votes = 0; clicks = 0; hls = false; directoryID = nil; sourceName = nil
@@ -336,6 +336,71 @@ actor RadioDirectory {
     private var safety = TVSafety.Settings()
     private var backends: [String: (key: String, backend: DirectoryBackend)] = [:]
     private let cache: StationCache?
+    private var discoveryIndex: DiscoveryIndex?
+    private var indexAttempted = false
+    private var configurationRevision = 0
+    private var indexConfigured = false
+    private var indexError: String?
+    private func discoveryStore() -> DiscoveryIndex? {
+        if !indexAttempted {
+            indexAttempted = true
+            do { discoveryIndex = try DiscoveryIndex(url: cache?.directory.deletingLastPathComponent().appendingPathComponent("discovery-v1.sqlite")) }
+            catch {
+                // Only rebuild the disposable index. Keep favorites, sources and history untouched.
+                if let url = cache?.directory.deletingLastPathComponent().appendingPathComponent("discovery-v1.sqlite"), FileManager.default.fileExists(atPath: url.path) {
+                    let quarantine = url.deletingPathExtension().appendingPathExtension("corrupt.sqlite")
+                    try? FileManager.default.removeItem(at: quarantine)
+                    do {
+                        try FileManager.default.moveItem(at: url, to: quarantine)
+                        discoveryIndex = try DiscoveryIndex(url: url)
+                    } catch { indexError = "Discovery storage could not be rebuilt. The station browser and favorites still work." }
+                } else { indexError = error.localizedDescription }
+            }
+        }
+        return discoveryIndex
+    }
+    private func sourceKey(_ source: DirectorySource) -> String {
+        source.id + "|" + (source.url ?? "") + (source.isTV ? "|" + safety.key : "")
+    }
+    func discoveryRecords(video: Bool, text: String = "", sourceID: String = "all") throws -> [DiscoveryIndex.Record] {
+        guard let store = discoveryStore() else { throw RadioError.message(indexError ?? "Discovery index is unavailable.") }
+        let active = sources.filter { $0.enabled && $0.serves(video: video) && (sourceID == "all" || sourceID == $0.id) }
+        return try store.records(text: text, sources: Set(active.map(sourceKey)))
+    }
+    /// Explicit foreground refresh, bounded to the first page of each enabled source.
+    func refreshDiscovery(video: Bool, genre: String = "") async throws -> [String] {
+        var failures: [String] = []
+        let revision = configurationRevision
+        for source in sources.filter({ $0.enabled && $0.serves(video: video) }) {
+            try Task.checkCancellation()
+            guard configurationRevision == revision else { throw CancellationError() }
+            var query = DirectoryQuery(); query.video = video; query.sourceID = source.id; query.genre = genre
+            do { _ = try await live(query, refresh: true) }
+            catch is CancellationError { throw CancellationError() }
+            catch { failures.append(source.name) }
+            try await Task.sleep(for: .seconds(1.5))
+        }
+        if let indexError { throw RadioError.message(indexError) }
+        return failures
+    }
+    func ingestLocalSource(_ id: String) async throws {
+        guard let source = sources.first(where: { $0.id == id }), [.localList, .localTVList].contains(source.kind) else { return }
+        guard let url = source.url.flatMap({ URL(string: $0) }) else { return }
+        let rows = try LocalPlaylistDirectory.read(url: url, label: source.name, sourceID: source.id, video: source.isTV)
+        try discoveryStore()?.ingest(rows, source: sourceKey(source), name: source.name)
+    }
+    func searchSaved(_ query: DirectoryQuery) throws -> DirectoryPage {
+        let records = try discoveryRecords(video: query.video, text: query.name, sourceID: query.sourceID)
+        var seen = Set<String>()
+        let rows = records.map(\.restored).filter { row in
+            guard seen.insert(DiscoveryIndex.endpointKey(row.address)).inserted else { return false }
+            if row.video, let url = URL(string: row.address) { return TVSafety.allows(title: row.name, group: row.tags, address: url, settings: safety) }
+            return true
+        }
+        var filter = query; filter.name = "" // FTS already matched tokens, including country metadata.
+        var page = DirectoryFilter.page(rows, query: filter); page.cached = true; page.updated = records.map(\.fetched).max()
+        return page
+    }
     private var pending: [(key: String, query: DirectoryQuery)] = []
     private var queued = Set<String>()
     private var draining = false
@@ -363,7 +428,27 @@ actor RadioDirectory {
 
     /// Applies the user's directory list. Backends are kept between calls so their caches survive.
     func configure(_ list: [DirectorySource], safety: TVSafety.Settings = TVSafety.Settings()) {
-        sources = DirectorySource.resolved(list); self.safety = safety
+        let resolved = DirectorySource.resolved(list)
+        let changed = resolved != sources || self.safety != safety || !indexConfigured
+        if changed { configurationRevision += 1 }
+        sources = resolved; self.safety = safety
+        if let store = discoveryStore(), (try? store.hasMigratedCache()) == false {
+            do {
+                for entry in cache?.savedEntries() ?? [] {
+                    for source in sources where source.enabled {
+                        let rows = entry.page.stations.filter { row in
+                            row.sourceName == source.name || (row.sourceName == nil && row.directoryID != nil && source.kind == .radioBrowser)
+                        }
+                        if !rows.isEmpty { try store.ingest(rows, source: sourceKey(source), name: source.name, now: entry.savedAt) }
+                    }
+                }
+                try store.markCacheMigrated()
+            } catch { indexError = error.localizedDescription }
+        }
+        if changed {
+            do { try discoveryStore()?.retainSources(Set(sources.filter(\.enabled).map(sourceKey))); indexConfigured = true }
+            catch { indexError = error.localizedDescription }
+        }
         var next: [String: (key: String, backend: DirectoryBackend)] = [:]
         for source in sources where source.enabled && !(source.kind == .radioBrowser) {
             let key = "\(source.kind.rawValue)|\(source.url ?? "")|\(source.name)|\(safety.key)"
@@ -444,7 +529,15 @@ actor RadioDirectory {
         }
     }
     func stopBackgroundRefresh() { schedule?.cancel(); schedule = nil; pending.removeAll(); queued.removeAll() }
-    func clearSavedStations() { pending.removeAll(); queued.removeAll(); cache?.clear() }
+    @discardableResult func clearSavedStations() -> Bool {
+        configurationRevision += 1; pending.removeAll(); queued.removeAll()
+        do {
+            if let folder = cache?.directory, FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
+            try discoveryStore()?.clear()
+            if let quarantine = cache?.directory.deletingLastPathComponent().appendingPathComponent("discovery-v1.corrupt.sqlite"), FileManager.default.fileExists(atPath: quarantine.path) { try FileManager.default.removeItem(at: quarantine) }
+            indexError = nil; return true
+        } catch { indexError = error.localizedDescription; return false }
+    }
 
     /// Queues the opening views whose saved pages are missing or stale.
     func warm() {
@@ -477,7 +570,7 @@ actor RadioDirectory {
                 var page = try await live(item.query, refresh: false)
                 try Task.checkCancellation()
                 // Saved pages are vetted first, so what opens instantly is already free of stations that no longer answer.
-                if probing, let dead { vetting = true; await StreamProbe.vet(page.stations, dead: dead); vetting = false; page = dead.filter(page) }
+                if probing, StreamProbe.automaticProbingSupported, let dead { vetting = true; await StreamProbe.vet(page.stations, dead: dead); vetting = false; page = dead.filter(page) }
                 cache?.store(page, key: item.key); failures = 0
             } catch {
                 failures += 1
@@ -492,7 +585,7 @@ actor RadioDirectory {
     }
     /// Pages that were not saved (typed searches, deeper pages) are checked quietly after they are shown; the next load leaves out what failed.
     private func checkInBackground(_ rows: [RadioListing]) {
-        guard probing, let dead, !vetting, BackgroundPolicy.allows(), rows.contains(where: { $0.directoryID == nil && dead.needsCheck($0.address) }) else { return }
+        guard probing, StreamProbe.automaticProbingSupported, let dead, !vetting, BackgroundPolicy.allows(), rows.contains(where: { $0.directoryID == nil && dead.needsCheck($0.address) }) else { return }
         vetting = true
         Task(priority: .utility) { [weak self] in
             await StreamProbe.vet(rows, dead: dead)
@@ -510,6 +603,8 @@ actor RadioDirectory {
         let active = sources.filter { $0.enabled && $0.serves(video: query.video) && (query.sourceID == "all" || $0.id == query.sourceID) }
         guard !active.isEmpty else { throw RadioError.message("That directory is turned off. Enable it in " + (query.video ? "Preferences ▸ Internet TV." : "Preferences ▸ Internet Radio.")) }
         let radioBrowser = radioBrowser, backends = backends
+        let revision = configurationRevision
+        let keys = active.map(sourceKey)
         let results = await withTaskGroup(of: (Int, Result<DirectoryPage, Error>).self) { group in
             for (index, source) in active.enumerated() {
                 let backend: DirectoryBackend? = source.kind == .radioBrowser ? radioBrowser : backends[source.id]?.backend
@@ -524,6 +619,13 @@ actor RadioDirectory {
             return collected.sorted { $0.0 < $1.0 }.map(\.1)
         }
         try Task.checkCancellation()
+        guard revision == configurationRevision else { throw CancellationError() }
+        for (index, result) in results.enumerated() {
+            if case .success(let page) = result {
+                do { try discoveryStore()?.ingest(page.stations, source: keys[index], name: active[index].name); indexError = nil }
+                catch { indexError = error.localizedDescription }
+            }
+        }
         let pages = results.compactMap { try? $0.get() }
         guard !pages.isEmpty else {
             if case .failure(let error)? = results.first { throw error }

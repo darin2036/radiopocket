@@ -53,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
         rows = []
         for i in range(offset, offset + count):
             rows.append({'stationuuid': str(uuid.UUID(int=i+1)),
-                'name': (name or 'Test') + f' Radio {i+1:03d}',
+                'name': ('Jazz FM Deluxe' if name == 'Deluxe' else (name or 'Test')) + f' Radio {i+1:03d}',
                 'url': f'http://127.0.0.1:{PORT}/live?station={i}',
                 'url_resolved': f'http://127.0.0.1:{PORT}/live?station={i}',
                 'tags': args.get('tag', ['jazz,independent'])[0],

@@ -19,7 +19,7 @@ final class DeadStations: @unchecked Sendable {
 
     static let strikeLimit = 2
     /// A dead address is left out this long, then checked again in case the station came back.
-    static let deadFor: TimeInterval = 14 * 86_400
+    static let deadFor: TimeInterval = 12 * 3600
     /// A station that answered is not asked again for this long.
     static let aliveFor: TimeInterval = 3 * 86_400
     /// A doubtful address waits this long before its next check, so two strikes are never the same hiccup.
@@ -83,7 +83,7 @@ final class DeadStations: @unchecked Sendable {
                 case .dead: records[address] = Record(strikes: Self.strikeLimit, last: now, alive: nil)
                 case .doubtful:
                     let earlier = records[address].flatMap { now.timeIntervalSince($0.last) < Self.deadFor ? $0.strikes : nil } ?? 0
-                    records[address] = Record(strikes: min(Self.strikeLimit, earlier + 1), last: now, alive: nil)
+                    records[address] = Record(strikes: min(Self.strikeLimit - 1, earlier + 1), last: now, alive: nil)
                 case .unknown: break
                 }
             }
@@ -113,7 +113,10 @@ final class DeadStations: @unchecked Sendable {
 
 /// Opens a stream just far enough to read its response headers, then lets go.
 enum StreamProbe {
-    static let concurrency = 6
+    static let concurrency = 2
+    // URLSession's preliminary hostname checks cannot bind DNS to the actual peer.
+    // Do not automatically contact arbitrary catalog stream URLs until that guarantee exists.
+    static let automaticProbingSupported = false
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -143,9 +146,9 @@ enum StreamProbe {
 
     static func verdict(status: Int, contentType: String) -> StreamVerdict {
         switch status {
-        case 200...299: return contentType.hasPrefix("text/html") ? .dead : .alive
+        case 200...299: return contentType.hasPrefix("text/html") ? .dead : contentType.hasPrefix("audio/") || contentType.hasPrefix("video/") ? .alive : .unknown
         case 404, 410: return .dead
-        case 429: return .unknown
+        case 401, 403, 429: return .unknown
         case 400...599: return .doubtful
         default: return .unknown
         }
@@ -153,7 +156,7 @@ enum StreamProbe {
 
     static func verdict(error: URLError) -> StreamVerdict {
         switch error.code {
-        case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost: return .dead
+        case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost: return .doubtful
         case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff, .cancelled, .callIsActive: return .unknown
         default: return .doubtful
         }
@@ -177,6 +180,7 @@ enum StreamProbe {
     /// Directory entries that carry their own health data (Radio Browser) are left to that directory.
     @discardableResult
     static func vet(_ listings: [RadioListing], dead: DeadStations, limit: Int = 120) async -> Int {
+        guard automaticProbingSupported else { return 0 }
         let due = listings.filter { $0.directoryID == nil && !$0.hls && !$0.video }.compactMap { row -> (String, URL)? in
             guard dead.needsCheck(row.address), let url = URL(string: row.address), canCheck(url) else { return nil }
             return (row.address, url)

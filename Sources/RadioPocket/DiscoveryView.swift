@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 private typealias BrowserTheme = ClassicUI
 private typealias LibraryChrome = ClassicChrome
@@ -37,11 +38,12 @@ private final class StationTable: NSTableView {
 }
 
 private enum LibraryScope: Equatable {
-    case popular, rated, alphabetical, genre(String), favorites, recent, tv, tvGenre(String)
+    case discover, popular, rated, alphabetical, genre(String), favorites, recent, tv, tvGenre(String)
     var isTV: Bool { if case .tv = self { return true }; if case .tvGenre = self { return true }; return false }
     var local: Bool { self == .favorites || self == .recent }
     var title: String {
         switch self {
+        case .discover: return "DISCOVER"
         case .popular: return "POPULAR STATIONS"
         case .rated: return "TOP RATED STATIONS"
         case .alphabetical: return "ALL STATIONS"
@@ -82,9 +84,17 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let spinner = NSProgressIndicator()
     private var tune: NSButton!
     private var save: NSButton!
-    private var scope: LibraryScope = .popular
+    private var scope: LibraryScope = .discover
+    private let discoverPanel = DiscoverPanel()
+    private var browserViews: [NSView] = []
+    private var discoverVideo = false
+    private var discoverText = ""
+    private var aiTask: Task<Void, Never>?
+    private var aiTimeout: Task<Void, Never>?
+    private var aiGeneration = UUID()
     private var query = DirectoryQuery()
     private var rows: [RadioListing] = []
+    private var remoteSearch = false
     private var hasMore = false
     private var loadingMore = false
     private var busy = false
@@ -144,7 +154,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         if hasLoaded, previous != query.sourceID { hasLoaded = false }
         showWindow(nil); window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(search)
-        if !hasLoaded { load() }
+        if !hasLoaded || scope == .discover { load() }
     }
     /// The TV filters changed: reload the channels on screen, or the next time the library opens.
     func safetyChanged() { if scope == .tv, window?.isVisible == true { load() } else { hasLoaded = false } }
@@ -182,14 +192,14 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         }
     }
     func windowWillClose(_ notification: Notification) {
-        task?.cancel(); generation = UUID()
+        task?.cancel(); generation = UUID(); aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID()
         if busy || loadingMore { hasLoaded = false }
         loadingMore = false
         setBusy(false)
     }
     func libraryChanged() {
         guard window?.isVisible == true else { if scope.local { hasLoaded = false }; return }
-        if scope.local { loadLocal(preservingSelection: true) } else { reloadKeepingSelection(); updateSelection() }
+        if scope == .discover { loadDiscover() } else if scope.local { loadLocal(preservingSelection: true) } else { reloadKeepingSelection(); updateSelection() }
     }
 
     private func label(_ value: String, color: NSColor = BrowserTheme.dim) -> NSTextField {
@@ -236,7 +246,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         add(titleControls, to: root)
         NSLayoutConstraint.activate([titleControls.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -3), titleControls.topAnchor.constraint(equalTo: root.topAnchor, constant: 3)])
 
-        nodes = [LibraryNode("MY LIBRARY", children: [LibraryNode("Favorites", scope: .favorites), LibraryNode("Recently Played", scope: .recent)]),
+        nodes = [LibraryNode("MY LIBRARY", children: [LibraryNode("Discover", scope: .discover), LibraryNode("Favorites", scope: .favorites), LibraryNode("Recently Played", scope: .recent)]),
                  LibraryNode("INTERNET RADIO", children: [LibraryNode("Popular", scope: .popular), LibraryNode("Top Rated", scope: .rated), LibraryNode("All Stations", scope: .alphabetical),
                                                           LibraryNode("Genres", children: genres.map { LibraryNode($0, scope: .genre($0.lowercased())) })]),
                  LibraryNode("INTERNET TV", children: [LibraryNode("All Channels", scope: .tv),
@@ -260,7 +270,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         popup(sourceMenu, label: "Radio directory", values: [], width: 118)
         refreshSources()
         let refresh = button("Refresh", #selector(refresh), width: 56)
-        let titleRow = row([heading, NSView(), sourceMenu, refresh], spacing: 4); add(titleRow, to: main)
+        let titleRow = row([heading, NSView(), button("Discover", #selector(showDiscover), width: 65), sourceMenu, refresh], spacing: 4); add(titleRow, to: main)
         search.placeholderString = "Search station names…"; ClassicUI.field(search)
         search.target = self; search.action = #selector(searchNow)
         search.setAccessibilityLabel("Search radio station names")
@@ -325,13 +335,158 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         sidebar.reloadData(); nodes.forEach { sidebar.expandItem($0) }
         sidebar.target = self; sidebar.action = #selector(sidebarClicked)
         suppressSelection = true
-        if let popular = nodes[1].children.first { sidebar.selectRowIndexes(IndexSet(integer: sidebar.row(forItem: popular)), byExtendingSelection: false) }
+        if let popular = nodes[0].children.first { sidebar.selectRowIndexes(IndexSet(integer: sidebar.row(forItem: popular)), byExtendingSelection: false) }
         suppressSelection = false
         // Opens on Popular with stations sorted by quality, best first, shown as the table's sort too.
         order.selectItem(at: 3); suppressSort = true; table.sortDescriptors = [NSSortDescriptor(key: "quality", ascending: false)]; suppressSort = false
+        browserViews = main.subviews
+        add(discoverPanel, to: main)
+        NSLayoutConstraint.activate([discoverPanel.leadingAnchor.constraint(equalTo: main.leadingAnchor), discoverPanel.trailingAnchor.constraint(equalTo: main.trailingAnchor), discoverPanel.topAnchor.constraint(equalTo: main.topAnchor), discoverPanel.bottomAnchor.constraint(equalTo: main.bottomAnchor)])
+        wireDiscover()
         captureQuery()
         adaptLayout()
         updateSelection()
+    }
+
+    private func showDiscoverySurface(_ shown: Bool) {
+        browserViews.forEach { $0.isHidden = shown }; discoverPanel.isHidden = !shown
+        if !shown { adaptLayout() }
+    }
+    @objc private func showDiscover() { selectScope(.discover) }
+    private func selectScope(_ target: LibraryScope) {
+        if let index = (0..<sidebar.numberOfRows).first(where: { (sidebar.item(atRow: $0) as? LibraryNode)?.scope == target }) {
+            sidebar.selectRowIndexes([index], byExtendingSelection: false)
+        }
+    }
+    private func wireDiscover() {
+        discoverPanel.importPlaylist = { [weak self] in self?.importDiscoveryPlaylist() }
+        discoverPanel.browse = { [weak self] in self?.selectScope(.popular) }
+        discoverPanel.refresh = { [weak self] in self?.loadDiscover(refresh: true) }
+        discoverPanel.play = { [weak self] row in
+            guard DiscoverySafety.allows(row) else { return }
+            self?.play?(row.station) // Recommendations never report directory clicks.
+        }
+        discoverPanel.favorite = { [weak self] row in
+            guard let self else { return }
+            do { if !self.library.isFavorite(row.station) { try self.library.save(row.station) } }
+            catch { self.report?(error) }
+        }
+        discoverPanel.dismiss = { [weak self] row in
+            self?.editDiscovery { state in
+                var hidden = state.discoveryDismissed ?? []; hidden.append(DiscoveryIndex.endpointKey(row.address)); state.discoveryDismissed = Array(Set(hidden)).sorted().suffix(1000).map { $0 }
+            }
+        }
+        discoverPanel.preference = { [weak self] genre in
+            self?.editDiscovery { state in
+                if let genre { var values = state.discoveryInterests ?? []; if !values.contains(genre) { values.append(genre) }; state.discoveryInterests = values }
+                else { state.discoveryInterests = []; state.discoveryDismissed = [] }
+            }
+        }
+        discoverPanel.personalize = { [weak self] on in self?.editDiscovery { $0.discoveryPersonalization = on } }
+        discoverPanel.aiChanged = { [weak self] on in self?.aiTask?.cancel(); self?.aiTimeout?.cancel(); self?.aiGeneration = UUID(); self?.editDiscovery { $0.discoveryAI = on } }
+        discoverPanel.mediaChanged = { [weak self] video in self?.discoverVideo = video; self?.loadDiscover() }
+        discoverPanel.searchChanged = { [weak self] text in self?.discoverText = String(text.prefix(500)); self?.loadDiscover() }
+        discoverPanel.interpret = { [weak self] text in self?.interpretDiscovery(text) }
+        discoverPanel.clearData = { [weak self] in
+            guard let self else { return }
+            self.task?.cancel(); self.generation = UUID()
+            self.task = Task { @MainActor [weak self, directory] in
+                let cleared = await directory.clearSavedStations()
+                guard let self else { return }
+                guard cleared else { self.discoverPanel.setStatus("Couldn’t clear saved discovery data. Please try again."); return }
+                self.editDiscovery { $0.discoveryInterests = []; $0.discoveryDismissed = [] }
+            }
+        }
+    }
+    private func importDiscoveryPlaylist() {
+        let panel = NSOpenPanel(); panel.allowedContentTypes = ["m3u", "m3u8", "pls"].compactMap { UTType(filenameExtension: $0) }; panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let custom = DirectorySource.resolved(library.state.directories).filter { !$0.builtIn }
+            guard custom.count < DirectorySource.maximumCustom else { throw RadioError.message("Remove a custom directory in Preferences before adding another.") }
+            let id = "local-" + UUID().uuidString.lowercased(), name = url.deletingPathExtension().lastPathComponent
+            let rows = try LocalPlaylistDirectory.read(url: url, label: name, sourceID: id, video: discoverVideo)
+            guard !rows.isEmpty else { throw RadioError.message("This file has no supported absolute HTTP/HTTPS station entries.") }
+            let unique = Dictionary(grouping: rows, by: { DiscoveryIndex.endpointKey($0.address) }).count
+            let safe = rows.filter(DiscoverySafety.allows).count
+            let alert = NSAlert(); alert.messageText = "Import \(name)?"
+            alert.informativeText = "\(rows.count) usable entries, \(unique) unique streams. \(safe) entries have suitable music metadata for Discover. Up to 5,000 entries are imported. Other stations remain available in the browser."
+            alert.addButton(withTitle: "Import"); alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let folder = library.directory.appendingPathComponent("Directories")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let destination = folder.appendingPathComponent(id + ".m3u")
+            // Save only parsed names and absolute URLs, never executable playlist directives.
+            let contents = "#EXTM3U\n" + rows.map { row in
+                "#EXTINF:-1 " + (!row.video ? "radio=\"true\" " : "") + "group-title=\"" + row.tags.replacingOccurrences(of: "\"", with: "") + "\"," + row.name.replacingOccurrences(of: "\n", with: " ") + "\n" + row.address
+            }.joined(separator: "\n")
+            try Data(contents.utf8).write(to: destination, options: .atomic)
+            let source = DirectorySource(id: id, name: name, kind: discoverVideo ? .localTVList : .localList, url: destination.absoluteString)
+            do { try library.update { $0.directories = DirectorySource.resolved($0.directories) + [source] } }
+            catch { try? FileManager.default.removeItem(at: destination); throw error }
+            refreshSources()
+            task = Task { @MainActor [weak self, directory] in
+                guard let self else { return }
+                do {
+                    await directory.configure(self.library.state.directories ?? [], safety: self.library.state.tvSafety)
+                    try await directory.ingestLocalSource(id)
+                    self.loadDiscover(note: "Imported on this device; no directory refresh was needed")
+                } catch { self.report?(error) }
+            }
+        } catch { report?(error) }
+    }
+    private func editDiscovery(_ edit: (inout Library.State) -> Void) {
+        do { try library.update(edit); loadDiscover() } catch { report?(error) }
+    }
+    private func loadDiscover(refresh: Bool = false, note: String? = nil) {
+        guard scope == .discover else { return }
+        aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID()
+        task?.cancel(); generation = UUID(); let token = generation
+        hasMore = false; loadingMore = false; setBusy(false); hasLoaded = true
+        showDiscoverySurface(true); discoverPanel.configure(state: library.state)
+        let state = library.state, video = discoverVideo, text = discoverText
+        discoverPanel.setStatus(refresh ? "Refreshing enabled directories directly…" : "Searching saved listings on this device…", busy: refresh)
+        task = Task { @MainActor [weak self, directory] in
+            do {
+                await directory.configure(state.directories ?? [], safety: state.tvSafety)
+                var failures: [String] = []
+                if refresh { failures = try await directory.refreshDiscovery(video: video, genre: state.discoveryInterests?.last ?? "") }
+                let records = try await directory.discoveryRecords(video: video, text: text)
+                try Task.checkCancellation()
+                let feed = await Task.detached(priority: .userInitiated) { DiscoveryRecommendations.build(records: records, recent: state.recentStations ?? [], favorites: state.favorites, interests: state.discoveryInterests ?? [], dismissed: Set(state.discoveryDismissed ?? []), personalizes: state.discoveryPersonalization != false, video: video) }.value
+                try Task.checkCancellation()
+                guard let self, token == self.generation else { return }
+                self.discoverPanel.render(feed, favorites: state.favorites)
+                let date = feed.updated.map { " · Saved " + $0.formatted(date: .abbreviated, time: .shortened) } ?? ""
+                let warning = failures.isEmpty ? "" : " · Couldn’t refresh: " + failures.joined(separator: ", ")
+                self.discoverPanel.setStatus((note.map { $0 + " · " } ?? "") + feed.basis + " · \(feed.indexed) saved listings (partial coverage)" + date + warning)
+                self.loaded?(true)
+            } catch {
+                guard let self, token == self.generation, !Task.isCancelled else { return }
+                self.discoverPanel.setStatus(error.localizedDescription + " Your favorites and station browser still work.")
+            }
+        }
+    }
+    private func interpretDiscovery(_ text: String) {
+        discoverText = String(text.prefix(500)); loadDiscover(note: "Showing literal matches while on-device AI interprets your request")
+        aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID(); let token = aiGeneration
+        aiTask = Task { @MainActor [weak self] in
+            do {
+                let intent = try await LocalDiscoveryAI.interpret(text)
+                guard let self, self.aiGeneration == token, !Task.isCancelled, self.scope == .discover else { return }
+                self.aiTimeout?.cancel()
+                self.discoverText = intent.keywords.isEmpty ? intent.genres.first ?? text : intent.keywords
+                self.loadDiscover(note: "AI interpretation: " + self.discoverText + ". Edit the search to change it")
+            } catch {
+                guard let self, self.aiGeneration == token, !Task.isCancelled else { return }
+                self.aiTimeout?.cancel(); self.loadDiscover(note: "AI unavailable; using literal search")
+            }
+        }
+        aiTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, !Task.isCancelled, self.aiGeneration == token else { return }
+            self.aiTask?.cancel(); self.aiGeneration = UUID(); self.loadDiscover(note: "AI took too long; using literal search")
+        }
     }
 
     private func chooseGenre(_ name: String) {
@@ -351,9 +506,13 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     private func load(refresh: Bool = false) {
         task?.cancel(); generation = UUID()
+        aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID()
+        showDiscoverySurface(scope == .discover)
+        if scope == .discover { loadDiscover(refresh: refresh); return }
         if scope.local { loadLocal(); return }
         let token = generation
         let request = query
+        remoteSearch = refresh
         heading.stringValue = scope.title
         rows = []; hasMore = false; loadingMore = false; table.reloadData(); table.deselectAll(nil)
         message.stringValue = "Loading stations…"; message.isHidden = false
@@ -362,12 +521,13 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         task = Task { @MainActor [weak self, directory] in
             do {
                 await directory.configure(sources, safety: safety)
-                let page = try await directory.search(request, refresh: refresh)
+                let page = try await (!request.name.isEmpty && !refresh ? directory.searchSaved(request) : directory.search(request, refresh: refresh))
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
                 self.rows = page.stations; self.hasMore = page.hasMore; self.hasLoaded = true
+                if !request.name.isEmpty && !refresh { self.heading.stringValue = "SAVED MATCHES · PARTIAL INDEX" }
                 self.setBusy(false); self.table.reloadData()
-                self.message.stringValue = !page.stations.isEmpty ? "" : (page.hasMore ? "Looking for supported streams…" : "No stations found")
+                self.message.stringValue = !page.stations.isEmpty ? "" : (page.hasMore ? "Looking for supported streams…" : (!request.name.isEmpty ? "No saved matches. Refresh searches enabled directories." : "No stations found"))
                 self.message.isHidden = !page.stations.isEmpty
                 self.updateSelection(); self.loaded?(true)
                 self.loadMoreIfNeeded()
@@ -382,15 +542,16 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     /// Fetches the next page once the list is scrolled within a screenful of its end, appending it so the list reads as one.
     private func loadMoreIfNeeded() {
-        guard hasMore, !busy, !loadingMore, !scope.local, hasLoaded, let scroll = table.enclosingScrollView else { return }
+        guard scope != .discover, hasMore, !busy, !loadingMore, !scope.local, hasLoaded, let scroll = table.enclosingScrollView else { return }
         let visible = scroll.contentView.bounds
         guard visible.maxY >= table.frame.height - visible.height else { return }
         loadingMore = true
         var request = query; request.offset += DirectoryQuery.pageSize
+        let useRemoteSearch = remoteSearch
         let token = generation
         task = Task { @MainActor [weak self, directory] in
             do {
-                let page = try await directory.search(request, refresh: false)
+                let page = try await (!request.name.isEmpty && !useRemoteSearch ? directory.searchSaved(request) : directory.search(request, refresh: false))
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
                 self.query.offset = request.offset; self.loadingMore = false
@@ -472,7 +633,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     @objc private func playSelected() {
         guard let selected else { return }
         play?(selected.station)
-        if let id = selected.directoryID { Task { [directory] in await directory.countPlay(id) } }
+        if library.state.directoryClickReporting == true, let id = selected.directoryID { Task { [directory] in await directory.countPlay(id) } }
     }
     @objc private func saveSelected() {
         guard let selected else { return }

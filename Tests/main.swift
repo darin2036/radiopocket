@@ -35,6 +35,7 @@ do {
     for invalid in ["file:///etc/passwd", "ftp://radio.example/live", "radio.example", "https://", "https://example.org/has space"] {
         try rejects("Reject \(invalid)") { _ = try StreamAddress.parse(invalid) }
     }
+    try checkDiscovery(at: root)
     let base = URL(string: "https://radio.example/playlists/list.m3u")!
     try check(StreamAddress.playlistEntry("#EXTM3U\n#EXTINF:-1,Radio\n../live.mp3", base: base).absoluteString == "https://radio.example/live.mp3", "Relative M3U entries")
     try check(StreamAddress.playlistEntry("[playlist]\nFile2=https://b.example/live\nFile1=https://a.example/live", base: base).host == "a.example", "Ordered PLS entries")
@@ -268,15 +269,17 @@ do {
     var paged = DirectoryQuery(); paged.offset = 1
     try check(DirectoryFilter.page(listed, query: paged).stations.count == 1 && !DirectoryFilter.page(listed, query: paged).hasMore, "Local directories page like the network ones")
     let resolvedSources = DirectorySource.resolved([DirectorySource(id: "somafm", name: "x", kind: .somaFM, enabled: false), try DirectorySource.custom(name: "Mine", url: "https://lists.example/radio.m3u", kind: .stationList)])
-    try check(resolvedSources.map(\.id).prefix(2) == ["radio-browser", "somafm"] && !resolvedSources[1].enabled && resolvedSources.count == 8, "Built-in directories always exist; saved choices and custom directories are kept")
-    try check(DirectorySource.defaults.count == 7 && DirectorySource.defaults.filter(\.enabled).count == 5, "Seven built-in catalogs; larger feeds are opt-in")
-    try check(DirectorySource.defaults.allSatisfy(\.builtIn) && DirectorySource.resolved(resolvedSources).count == 8, "Built-in migration is idempotent and does not duplicate saved sources")
+    try check(resolvedSources.map(\.id).prefix(2) == ["radio-browser", "somafm"] && !resolvedSources[1].enabled && resolvedSources.count == 10, "Built-in directories always exist; saved choices and custom directories are kept")
+    try check(DirectorySource.defaults.count == 9 && DirectorySource.defaults.filter(\.enabled).count == 6, "Nine built-in catalogs; larger feeds are opt-in")
+    try check(DirectorySource.defaults.allSatisfy(\.builtIn) && DirectorySource.resolved(resolvedSources).count == 10, "Built-in migration is idempotent and does not duplicate saved sources")
     let oldChoices = [DirectorySource.radioBrowser, DirectorySource.somaFM, DirectorySource.lautFM, DirectorySource.iprd]
     let upgradedChoices = DirectorySource.resolved(oldChoices)
-    try check(upgradedChoices.count == 7 && upgradedChoices.contains { $0.id == "curated-streams" && $0.enabled } && upgradedChoices.contains { $0.id == "junguler" && !$0.enabled }, "Existing five-source settings gain the new sources with lightweight defaults")
+    try check(upgradedChoices.count == 9 && upgradedChoices.contains { $0.id == "curated-streams" && $0.enabled } && upgradedChoices.contains { $0.id == "junguler" && !$0.enabled } && upgradedChoices.contains { $0.id == "rrradio" && !$0.enabled }, "Existing five-source settings gain the new sources with lightweight defaults")
+    let rrradioRows = try RrradioDirectory.decode(Data(#"{"stations":[{"id":"a","name":"Grrif","streamUrl":"https://grrif.example/a.aac","country":"CH","tags":["rock","indie"],"codec":"AAC","bitrate":128,"status":"working"},{"id":"b","name":"Bulk Copy","streamUrl":"https://bulk.example/b","status":"stream-only"}]}"#.utf8))
+    try check(rrradioRows.count == 1 && rrradioRows[0].tags == "rock, indie" && rrradioRows[0].countryCode == "CH" && rrradioRows[0].bitrate == 128, "rrradio keeps its own checked stations and skips the bulk copy of other directories")
     var deleted = DirectorySource.somaFM; deleted.removed = true
     let withoutSoma = DirectorySource.resolved([deleted])
-    try check(withoutSoma.count == 6 && !withoutSoma.contains { $0.id == "somafm" } && DirectorySource.resolved([deleted] + withoutSoma).count == 6, "A deleted built-in directory stays deleted")
+    try check(withoutSoma.count == 8 && !withoutSoma.contains { $0.id == "somafm" } && DirectorySource.resolved([deleted] + withoutSoma).count == 8, "A deleted built-in directory stays deleted")
     let collectionDirectory = root.appendingPathComponent("Collection")
     try FileManager.default.createDirectory(at: collectionDirectory.appendingPathComponent("DEMOTED"), withIntermediateDirectories: true)
     try Data("#EXTM3U\n#EXTINF:-1,Keep Radio\n#EXTGENRE: electronic\nhttps://keep.example/live\n".utf8).write(to: collectionDirectory.appendingPathComponent("Keep.m3u"))
@@ -506,9 +509,9 @@ do {
     OggOpusDemuxer(sink: unknownSink).feed(oggPage(flags: 2, sequence: 0, packets: [Data([0x7F]) + Data("FLAC".utf8) + Data(count: 20)]))
     try check(unknownSink.failures.first?.hasPrefix("\u{1}") == true && unknownSink.failures.first?.contains("Opus or Vorbis") == true, "Other Ogg codecs fail permanently with a clear message")
     let mixedSink = Recorder()
-    let mixed = OggDemuxer(sink: mixedSink)
-    mixed.feed(oggPage(flags: 2, sequence: 0, packets: [head]))
-    mixed.feed(oggPage(flags: 2, serial: 10, sequence: 0, packets: [Data([1]) + Data("vorbis".utf8) + Data(count: 20)]))
+    let mixedDemuxer = OggDemuxer(sink: mixedSink)
+    mixedDemuxer.feed(oggPage(flags: 2, sequence: 0, packets: [head]))
+    mixedDemuxer.feed(oggPage(flags: 2, serial: 10, sequence: 0, packets: [Data([1]) + Data("vorbis".utf8) + Data(count: 20)]))
     try check(mixedSink.failures.first?.contains("changed its audio format") == true, "A chained stream that switches codec is rejected")
     var vorbisComment = Data([3]) + Data("vorbis".utf8) + le32(4) + Data("test".utf8) + le32(2)
     for comment in comments { vorbisComment += le32(UInt32(comment.count)) + comment }
@@ -516,7 +519,17 @@ do {
     let ffmpeg = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"].first { FileManager.default.isExecutableFile(atPath: $0) }
     if let ffmpeg {
         let wavURL = root.appendingPathComponent("tone.wav"), oggURL = root.appendingPathComponent("tone.ogg")
-        var wav = Data("RIFF".utf8) + le32(36 + 44100 * 4) + Data("WAVEfmt ".utf8) + le32(16) + Data([1, 0, 2, 0]) + le32(44100) + le32(44100 * 4) + Data([4, 0, 16, 0]) + Data("data".utf8) + le32(44100 * 4)
+        var wav = Data()
+        wav.append(Data("RIFF".utf8))
+        wav.append(le32(36 + 44100 * 4))
+        wav.append(Data("WAVEfmt ".utf8))
+        wav.append(le32(16))
+        wav.append(Data([1, 0, 2, 0]))
+        wav.append(le32(44100))
+        wav.append(le32(44100 * 4))
+        wav.append(Data([4, 0, 16, 0]))
+        wav.append(Data("data".utf8))
+        wav.append(le32(44100 * 4))
         for n in 0..<44100 { let v = Int16(8000 * sin(2 * Double.pi * 1000 * Double(n) / 44100)); for _ in 0..<2 { wav += withUnsafeBytes(of: v.littleEndian) { Data($0) } } }
         try wav.write(to: wavURL)
         let encoder = Process(); encoder.executableURL = URL(fileURLWithPath: ffmpeg)
@@ -618,11 +631,11 @@ do {
         row.directoryID = directoryID
         return row
     }
-    try check(StreamProbe.verdict(status: 200, contentType: "audio/mpeg") == .alive && StreamProbe.verdict(status: 200, contentType: "") == .alive, "A 200 audio response is alive")
+    try check(StreamProbe.verdict(status: 200, contentType: "audio/mpeg") == .alive && StreamProbe.verdict(status: 200, contentType: "") == .unknown, "Audio headers indicate reachability; missing content type is inconclusive")
     try check(StreamProbe.verdict(status: 200, contentType: "text/html; charset=utf-8") == .dead, "A web page instead of audio is dead")
     try check(StreamProbe.verdict(status: 404, contentType: "") == .dead && StreamProbe.verdict(status: 410, contentType: "") == .dead, "404 and 410 are dead")
-    try check(StreamProbe.verdict(status: 403, contentType: "") == .doubtful && StreamProbe.verdict(status: 503, contentType: "") == .doubtful, "403 and 5xx are only doubtful")
-    try check(StreamProbe.verdict(error: URLError(.cannotFindHost)) == .dead && StreamProbe.verdict(error: URLError(.cannotConnectToHost)) == .dead, "No such host or nothing listening is dead")
+    try check(StreamProbe.verdict(status: 403, contentType: "") == .unknown && StreamProbe.verdict(status: 503, contentType: "") == .doubtful, "403 is restricted/inconclusive; 5xx remains transient")
+    try check(StreamProbe.verdict(error: URLError(.cannotFindHost)) == .doubtful && StreamProbe.verdict(error: URLError(.cannotConnectToHost)) == .doubtful, "DNS and connection failures are transient evidence")
     try check(StreamProbe.verdict(error: URLError(.timedOut)) == .doubtful && StreamProbe.verdict(error: URLError(.notConnectedToInternet)) == .unknown, "Timeouts are doubtful and being offline says nothing")
     try check(!StreamProbe.canCheck(URL(string: "http://192.168.1.5:8000/s")!) && !StreamProbe.canCheck(URL(string: "http://localhost/s")!) && !StreamProbe.canCheck(URL(string: "http://radio.local/s")!) && !StreamProbe.canCheck(URL(string: "http://[::1]/s")!), "Addresses on the user's own network are never checked")
     try check(!StreamProbe.canCheck(URL(string: "https://x.example.com/live.m3u8")!) && !StreamProbe.canCheck(URL(string: "https://x.example.com/a.pls")!) && StreamProbe.canCheck(URL(string: "https://cast1.example.com:4660/stream")!), "Playlists and HLS are not judged by a header; public streams are checked")
@@ -638,11 +651,11 @@ do {
     deadList.record("http://d.example.com/s", .unknown, now: t0)
     try check(deadList.isDead("http://a.example.com/s", now: t0) && !deadList.isDead("http://b.example.com/s", now: t0) && !deadList.isDead("http://c.example.com/s", now: t0) && !deadList.isDead("http://d.example.com/s", now: t0), "Dead is immediate, one doubtful strike is not, unknown records nothing")
     deadList.record("http://b.example.com/s", .doubtful, now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1))
-    try check(deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1)), "A second doubtful strike makes a station dead")
+    try check(!deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1)), "Repeated transient failures never hide a station as dead")
     deadList.record("http://b.example.com/s", .alive, now: t0.addingTimeInterval(DeadStations.doubtfulGap + 2))
     try check(!deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 2)), "A station that answers again is forgiven")
-    try check(!deadList.isDead("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)) && deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)), "A dead station is retried after two weeks")
-    try check(!deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(86_400)) && !deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(86_400)) && deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(DeadStations.aliveFor + 1)) && deadList.needsCheck("http://new.example.com/s", now: t0), "Recent answers are not asked again; new and stale stations are checked")
+    try check(!deadList.isDead("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)) && deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)), "A failed endpoint is retried after twelve hours")
+    try check(!deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(3600)) && !deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(86_400)) && deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(DeadStations.aliveFor + 1)) && deadList.needsCheck("http://new.example.com/s", now: t0), "Recent answers are not asked again; new and stale stations are checked")
     let deadReloaded = DeadStations(file: deadFile)
     try check(deadReloaded.isDead("http://a.example.com/s", now: t0), "Dead stations are saved across launches")
     let deadPage = DirectoryPage(stations: [listing("http://a.example.com/s"), listing("http://c.example.com/s"), listing("http://z.example.com/s", directoryID: UUID().uuidString)], hasMore: true, rawCount: 3)

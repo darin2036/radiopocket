@@ -74,6 +74,15 @@ struct StationCache: Sendable {
         }
     }
 
+    /// Bounded migration into the local index; source attribution is verified by the caller.
+    func savedEntries() -> [Entry] {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return [] }
+        return files.filter { $0.pathExtension == "json" }.prefix(Self.maximumFiles).compactMap { url in
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 2_097_152 else { return nil }
+            return load(url.deletingPathExtension().lastPathComponent)
+        }
+    }
+
     func clear() { try? FileManager.default.removeItem(at: directory) }
 
     /// A deliberately terse on-disk shape; the API-shaped `RadioListing` coding is not a storage format.

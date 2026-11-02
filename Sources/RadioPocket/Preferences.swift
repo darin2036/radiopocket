@@ -186,7 +186,12 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         directoryControl?.setEnabled(directoryTable.selectedRow >= 0 && (showsTV || directoryList.count > 1), forSegment: 1)
     }
     private func saveDirectories(_ list: [DirectorySource], removed: [DirectorySource]? = nil) {
+        let discarded = allDirectories.filter { old in [.localList, .localTVList].contains(old.kind) && !list.contains(where: { $0.id == old.id }) }
         do { try app.library.update { $0.directories = list + (removed ?? allRemovedBuiltIns) } } catch { app.showError(error); return }
+        let importedFolder = app.library.directory.appendingPathComponent("Directories").standardizedFileURL.path + "/"
+        for source in discarded {
+            if let url = source.url.flatMap({ URL(string: $0) }), url.isFileURL, url.standardizedFileURL.path.hasPrefix(importedFolder) { try? FileManager.default.removeItem(at: url) }
+        }
         let position = page.subviews.compactMap { $0 as? NSScrollView }.first?.contentView.bounds.origin
         let selected = directoryTable.selectedRow
         app.directoriesChanged(); refresh()

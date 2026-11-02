@@ -105,6 +105,11 @@ final class Library {
         /// Internet TV filters: adult channels, and geo-blocked or unidentifiable streams. Both on unless turned off.
         var tvHideAdult: Bool?
         var tvHideUnreliable: Bool?
+        var discoveryInterests: [String]?
+        var discoveryDismissed: [String]?
+        var discoveryPersonalization: Bool?
+        var discoveryAI: Bool?
+        var directoryClickReporting: Bool?
     }
     let directory: URL
     private(set) var state: State

@@ -48,6 +48,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 sed -i '' "s|<string>0.7.0</string>|<string>$VERSION</string>|" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
 xattr -cr "$APP"
 codesign --force --sign - "$APP"
-echo "Built $APP"
+ditto -c -k --keepParent "$APP" "${APP:h}/RadioPocket-$VERSION.zip"
+echo "Built $APP and ${APP:h}/RadioPocket-$VERSION.zip"
