@@ -129,6 +129,25 @@ final class PlayerWindow: NSWindow {
         return result
     }
 
+    /// Pulls the edges being dragged (`x` values for left/right, `y` values for the bottom) onto the screen edges and
+    /// the edges of neighbouring panels within `snapDistance`, so a resized window lines up with what it sits beside.
+    func snappedResize(_ rect: NSRect, left: Bool, right: Bool, bottom: Bool) -> NSRect {
+        let screen = (NSScreen.screens.first { $0.frame.intersects(rect) } ?? self.screen ?? NSScreen.main)?.visibleFrame ?? rect
+        var xs: [CGFloat] = [screen.minX, screen.maxX], ys: [CGFloat] = [screen.minY, screen.maxY]
+        for other in neighbours.map(\.frame) {
+            if rect.minY - Self.snapDistance < other.maxY && rect.maxY + Self.snapDistance > other.minY { xs += [other.minX, other.maxX] }
+            if rect.minX - Self.snapDistance < other.maxX && rect.maxX + Self.snapDistance > other.minX { ys += [other.minY, other.maxY] }
+        }
+        func pull(_ value: CGFloat, _ targets: [CGFloat]) -> CGFloat {
+            targets.filter { abs($0 - value) <= Self.snapDistance }.min { abs($0 - value) < abs($1 - value) } ?? value
+        }
+        var minX = rect.minX, maxX = rect.maxX, minY = rect.minY
+        if left { minX = min(pull(minX, xs), maxX - minSize.width) }
+        if right { maxX = max(pull(maxX, xs), minX + minSize.width) }
+        if bottom { minY = min(pull(minY, ys), rect.maxY - minSize.height) }
+        return NSRect(x: minX, y: minY, width: maxX - minX, height: rect.maxY - minY)
+    }
+
     /// Drags the window by its title strip with Winamp-style snapping. Hold Option to move freely. With
     /// `movesDockedWindows` (the player), anything docked to it moves too.
     func trackDrag(_ event: NSEvent, movesDockedWindows: Bool = false) {
@@ -235,11 +254,11 @@ class ClassicChrome: NSView {
             }
             let corner = min(125, w / 2)
             _ = sprite(NSRect(x: 0, y: 42, width: corner, height: 14), NSRect(x: 0, y: h - 14, width: corner, height: 14))
-            // The filler's 14th row (y 85) is the sheet's cyan divider, so take 13 rows and stretch them over the 14px strip.
+            // The filler is a full 14 rows (y 72-85; the cyan divider is y 86), so it draws 1:1 and its lines meet the corners' lines.
             var fx = corner
             while fx < w - corner {
                 let width = min(25, w - corner - fx)
-                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 13), NSRect(x: fx, y: h - 14, width: width, height: 14)); fx += width
+                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 14), NSRect(x: fx, y: h - 14, width: width, height: 14)); fx += width
             }
             _ = sprite(NSRect(x: 125 - corner, y: 57, width: corner, height: 14), NSRect(x: w - corner, y: h - 14, width: corner, height: 14))
             let titleColor = ClassicUI.skin?.genTitleColor ?? ClassicUI.text
@@ -268,7 +287,11 @@ class ClassicChrome: NSView {
         if edges.contains(.right) { width = max(window.minSize.width, start.width + dx) }
         if edges.contains(.left) { width = max(window.minSize.width, start.width - dx); x = start.maxX - width }
         if edges.contains(.bottom) { height = max(window.minSize.height, start.height - dy) }
-        window.setFrame(NSRect(x: x, y: start.maxY - height, width: width, height: height), display: true)
+        var frame = NSRect(x: x, y: start.maxY - height, width: width, height: height)
+        if !event.modifierFlags.contains(.option), let player = window as? PlayerWindow {
+            frame = player.snappedResize(frame, left: edges.contains(.left), right: edges.contains(.right), bottom: edges.contains(.bottom))
+        }
+        window.setFrame(frame, display: true)
     }
     override func mouseUp(with event: NSEvent) { resizeStart = nil }
 }

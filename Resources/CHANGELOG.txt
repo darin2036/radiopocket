@@ -1,7 +1,25 @@
-RadioPocket 0.8
+RadioPocket 0.9
 * Added: Internet TV in the library, with 40media Group's free channels in a classic video window
 * Added: Preferences ▸ Internet TV: manage your own M3U TV channel lists and turn the adult and unreliable-channel filters on or off
+* Added: Video window follows Always on Top; double-click it for full screen; closing it stops the stream
+* Added: Visualizer dock beside the video window
+* Added: iPhone app: the classic player in landscape, stacked classic windows in portrait
+* Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
+* Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Internet Radio
 * Added: Remove a favorite from the library button, right-click menu, ⌘D, or the Delete key
+* Added: Station Info from the library right-click menu, with the stream server's HTTP response, content type and first bytes
+* Added: 1.5× player size
+* Added: Any built-in directory or skin can be deleted and restored from the + menu
+* Added: The last station is restored on launch
+* Added: Windows snap to neighbours while resizing
+* Added: Terms of use and legal notice in About
+* Changed: Library search matches words in any order, ignoring case and accents
+* Changed: Library filters simplified
+* Removed: Icecast/Xiph directory source
+* Removed: Open equalizer button in Preferences
+* Fixed: About window showed blank text
+
+RadioPocket 0.8
 * Added: Balance slider beside volume; snaps to center
 * Added: Scroll wheel over the volume slider adjusts volume
 * Added: Clicking the player logo opens About
@@ -10,14 +28,12 @@ RadioPocket 0.8
 * Added: Visualization Settings: peak falloff, line width, flame height, turbulence, colors
 * Added: Jump to Station (⇧⌘J) searches favorites and recent stations
 * Added: Station Info (⇧⌘I): format, sample rate, bitrate, buffer, leveler gain, Radio Browser lookup
-* Added: Station Info from the library right-click menu, with the stream server's HTTP response, content type and first bytes
 * Added: Real kbps/kHz and mono/stereo lamp on the player display
 * Added: Sleep Timer, 15 minutes to 2 hours, with fade-out
 * Added: Loudness Leveling, off by default
 * Added: Windows snap to screen edges and each other; hold Option to drag freely
-* Added: 1.5× player size
-* Added: Directory sources: Radio Browser, SomaFM, laut.fm, IPRD, Radio Paradise, Mike Pierce's streams, Junguler playlists
-* Added: Custom directories and per-source on/off in Preferences; any built-in directory or skin can be deleted and restored from the + menu
+* Added: Directory sources: Radio Browser, SomaFM, laut.fm, Icecast/Xiph, IPRD, Radio Paradise, Mike Pierce's streams, Junguler playlists
+* Added: Custom directories and per-source on/off in Preferences
 * Added: Directory picker in the library: search all sources or one
 * Added: Saved station lists: instant library from an on-disk cache, refreshed in the background
 * Added: Ogg Opus, Ogg Vorbis and HLS playback with EQ and visualizer
@@ -25,8 +41,6 @@ RadioPocket 0.8
 * Added: Opus and Ogg Vorbis library filters
 * Added: Automatic reconnect on dropouts, network changes and wake
 * Added: Moved-station recovery: retries the new address, then offers alternatives
-* Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Internet Radio
-* Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
 * Added: Media-key skip buttons rewind and forward 10 s
 * Changed: Menus follow Mac conventions: File, Edit, Controls, View, Visualization, Window, Help
 * Changed: Player has Winamp's EQ and PL buttons; + FAV, LIB and SK moved to the ≡ menu
@@ -34,10 +48,8 @@ RadioPocket 0.8
 * Changed: Station Library is one continuously loading list
 * Changed: Double-clicking a title bar shades the player or equalizer; a docked equalizer follows
 * Changed: Genre comments and collection sections are searchable
-* Changed: Library search matches words in any order, ignoring case and accents
 * Removed: Bundled skins other than Winamp Classic 2.91; import any .wsz instead
 * Removed: Library Previous/Next paging
-* Removed: Open equalizer button in Preferences
 * Removed: Coloring picker in the visualization window
 * Fixed: Unnamed stations, URL names and page/image links no longer appear in station lists
 * Fixed: Rare crash during startup

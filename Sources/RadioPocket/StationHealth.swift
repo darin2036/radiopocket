@@ -163,7 +163,7 @@ enum StreamProbe {
         guard canCheck(url) else { return .unknown }
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.setValue("1", forHTTPHeaderField: "Icy-MetaData")
-        request.setValue("RadioPocket/0.8", forHTTPHeaderField: "User-Agent")
+        request.setValue("RadioPocket/0.9", forHTTPHeaderField: "User-Agent")
         do {
             let (bytes, response) = try await session.bytes(for: request)
             bytes.task.cancel()
