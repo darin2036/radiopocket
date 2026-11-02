@@ -2,21 +2,15 @@ RadioPocket 0.9
 * Added: Internet TV in the library, with 40media Group's free channels in a classic video window
 * Added: Preferences ▸ Internet TV: manage your own M3U TV channel lists
 * Added: Video window follows Always on Top; double-click it for full screen; closing it stops the stream
-* Added: Visualizer dock beside the video window
 * Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
 * Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Internet Radio
 * Added: Remove a favorite from the library button, right-click menu, ⌘D, or the Delete key
-* Added: Station Info from the library right-click menu, with the stream server's HTTP response, content type and first bytes
 * Added: 1.5× player size
 * Added: Any built-in directory or skin can be deleted and restored from the + menu
 * Added: The last station is restored on launch
-* Added: Windows snap to neighbours while resizing
 * Added: Terms of use and legal notice in About
 * Changed: Library search matches words in any order, ignoring case and accents
-* Changed: Library filters simplified
 * Removed: Icecast/Xiph directory source
-* Removed: Open equalizer button in Preferences
-* Fixed: About window showed blank text
 
 RadioPocket 0.8
 * Added: Balance slider beside volume; snaps to center
