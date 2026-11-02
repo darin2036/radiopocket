@@ -5,6 +5,10 @@ import CryptoKit
 struct DirectorySource: Codable, Equatable, Identifiable {
     enum Kind: String, Codable {
         case radioBrowser, somaFM, lautFM, iprd, radioParadise, curatedStreams, junguler
+        /// Internet TV: 40media Group’s public HLS channels.
+        case fortyMedia
+        /// A hosted M3U list of Internet TV channels the user added.
+        case tvList
         /// A server speaking the Radio Browser JSON API (for example a self-hosted mirror).
         case radioBrowserAPI
         /// Retired built-in; kept only so older saved settings still decode.
@@ -21,6 +25,10 @@ struct DirectorySource: Codable, Equatable, Identifiable {
     var removed: Bool?
 
     var builtIn: Bool { Self.defaults.contains { $0.id == id } }
+    /// Whether the directory lists Internet TV channels instead of radio stations.
+    var isTV: Bool { kind == .fortyMedia || kind == .tvList }
+    /// Whether the source can answer a radio (`video` false) or TV query. A TV list can hold audio-only streams, which go to radio.
+    func serves(video: Bool) -> Bool { video ? isTV : (!isTV || kind == .tvList) }
     var detail: String {
         switch kind {
         case .radioBrowser: return "Community directory with tens of thousands of stations"
@@ -30,6 +38,8 @@ struct DirectorySource: Codable, Equatable, Identifiable {
         case .radioParadise: return "Listener-supported mixes • direct 128 kbps AAC streams"
         case .curatedStreams: return "Mike Pierce’s hand-picked streams • small public playlist collection"
         case .junguler: return "Named genre playlists by Junguler • larger collection, optional"
+        case .tvList: return "M3U TV channel list • \(url ?? "")"
+        case .fortyMedia: return "Live music, movie and entertainment TV channels • free HLS video"
         case .icecast: return ""
         case .radioBrowserAPI: return "Radio Browser–compatible server • \(url ?? "")"
         case .stationList: return "M3U / PLS station list • \(url ?? "")"
@@ -41,10 +51,11 @@ struct DirectorySource: Codable, Equatable, Identifiable {
     static let lautFM = DirectorySource(id: "laut-fm", name: "laut.fm", kind: .lautFM)
     static let iprd = DirectorySource(id: "iprd", name: "IPRD — International Public Radio Directory", kind: .iprd, url: "https://iprd-org.github.io/iprd/site_data/all_stations.m3u", enabled: false)
     static let radioParadise = DirectorySource(id: "radio-paradise", name: "Radio Paradise", kind: .radioParadise)
+    static let fortyMedia = DirectorySource(id: "40media", name: "40media Group", kind: .fortyMedia)
     static let curatedStreams = DirectorySource(id: "curated-streams", name: "Curated Internet Radio Streams", kind: .curatedStreams)
     static let junguler = DirectorySource(id: "junguler", name: "Junguler Radio Playlists", kind: .junguler, url: "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists/main/---everything-full.m3u", enabled: false)
     #if os(macOS)
-    static let defaults = [radioBrowser, somaFM, lautFM, radioParadise, curatedStreams, iprd, junguler]
+    static let defaults = [radioBrowser, somaFM, lautFM, radioParadise, curatedStreams, iprd, junguler, fortyMedia]
     #else
     static let defaults = [radioBrowser, somaFM, lautFM, radioParadise, iprd, junguler]
     #endif
@@ -61,7 +72,7 @@ struct DirectorySource: Codable, Equatable, Identifiable {
             }
             return source
         }
-        return builtIns + saved.filter { !$0.builtIn && [.radioBrowserAPI, .stationList].contains($0.kind) && $0.url != nil }
+        return builtIns + saved.filter { !$0.builtIn && [.radioBrowserAPI, .stationList, .tvList].contains($0.kind) && $0.url != nil }
     }
 
     static func custom(name: String, url: String, kind: Kind) throws -> DirectorySource {
@@ -70,7 +81,7 @@ struct DirectorySource: Codable, Equatable, Identifiable {
         return DirectorySource(id: "custom-" + UUID().uuidString.lowercased(), name: clean.isEmpty ? (address.host ?? "Directory") : clean, kind: kind, url: address.absoluteString)
     }
 
-    func makeBackend() -> DirectoryBackend? {
+    func makeBackend(safety: TVSafety.Settings = TVSafety.Settings()) -> DirectoryBackend? {
         switch kind {
         case .radioBrowser: return nil // Owned by the hub so mirror discovery and playback counting stay in one place.
         case .somaFM: return SomaFMDirectory()
@@ -81,6 +92,7 @@ struct DirectorySource: Codable, Equatable, Identifiable {
         case .curatedStreams: return CuratedStreamsDirectory()
         case .junguler:
             return StationListDirectory(url: URL(string: Self.junguler.url!)!, label: name, sourceID: id, limit: 8_388_608, maximumEntries: 50_000)
+        case .fortyMedia: return FortyMediaDirectory()
         case .icecast: return nil
         case .radioBrowserAPI:
             guard let url = url.flatMap({ URL(string: $0) }) else { return nil }
@@ -88,6 +100,9 @@ struct DirectorySource: Codable, Equatable, Identifiable {
         case .stationList:
             guard let url = url.flatMap({ URL(string: $0) }) else { return nil }
             return StationListDirectory(url: url, label: name, sourceID: id)
+        case .tvList:
+            guard let url = url.flatMap({ URL(string: $0) }) else { return nil }
+            return StationListDirectory(url: url, label: name, sourceID: id, limit: 8_388_608, maximumEntries: 20_000, video: true) { TVSafety.rejects(title: $0, group: $1, address: $2, settings: safety) }
         }
     }
 }
@@ -132,6 +147,7 @@ enum DirectoryFilter {
     static func page(_ all: [RadioListing], query: DirectoryQuery) -> DirectoryPage {
         let genre = query.genre.lowercased()
         var rows = all.filter { listing in
+            if listing.video != query.video { return false }
             if !query.matchesName(listing) { return false }
             if !genre.isEmpty, !listing.tags.lowercased().contains(genre) { return false }
             if !query.countryCode.isEmpty, listing.countryCode != query.countryCode { return false }
@@ -220,9 +236,12 @@ actor StationListDirectory: DirectoryBackend {
     private var cache: (Date, [RadioListing])?
     func trim() async { if cache.idle { cache = nil } }
     func release() async { cache = nil }
-    private let limit: Int, maximumEntries: Int
-    init(url: URL, label: String, sourceID: String, limit: Int = 2_097_152, maximumEntries: Int = 5000) {
+    private let limit: Int, maximumEntries: Int, video: Bool
+    private let reject: (@Sendable (String, String, URL) -> Bool)?
+    init(url: URL, label: String, sourceID: String, limit: Int = 2_097_152, maximumEntries: Int = 5000, video: Bool = false,
+         reject: (@Sendable (String, String, URL) -> Bool)? = nil) {
         self.url = url; self.label = label; self.sourceID = sourceID; self.limit = limit; self.maximumEntries = maximumEntries
+        self.video = video; self.reject = reject
     }
 
     func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
@@ -234,7 +253,7 @@ actor StationListDirectory: DirectoryBackend {
             guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
                 throw RadioError.message("The station list couldn’t be read.")
             }
-            let rows = Self.parse(text, base: url, label: label, sourceID: sourceID, maximumEntries: maximumEntries)
+            let rows = Self.parse(text, base: url, label: label, sourceID: sourceID, maximumEntries: maximumEntries, video: video, reject: reject)
             guard !rows.isEmpty else { throw RadioError.message("No stations were found in this M3U / PLS list.") }
             cache = (Date(), rows)
         }
@@ -243,9 +262,10 @@ actor StationListDirectory: DirectoryBackend {
         return page
     }
 
-    static func parse(_ text: String, base: URL, label: String, sourceID: String, maximumEntries: Int = 5000) -> [RadioListing] {
+    static func parse(_ text: String, base: URL, label: String, sourceID: String, maximumEntries: Int = 5000, video: Bool = false,
+                      reject: ((_ title: String, _ group: String, _ address: URL) -> Bool)? = nil) -> [RadioListing] {
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        var entries: [(title: String, group: String, address: String)] = []
+        var entries: [(title: String, group: String, address: String, radio: Bool)] = []
         if lines.contains(where: { $0.lowercased() == "[playlist]" }) {
             var files: [Int: String] = [:], titles: [Int: String] = [:]
             for line in lines {
@@ -255,9 +275,9 @@ actor StationListDirectory: DirectoryBackend {
                 if key.hasPrefix("file"), let i = Int(key.dropFirst(4)) { files[i] = parts[1] }
                 else if key.hasPrefix("title"), let i = Int(key.dropFirst(5)) { titles[i] = parts[1] }
             }
-            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!)) }
+            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!, false)) }
         } else {
-            var title = "", group = "", playlistGroup = ""
+            var title = "", group = "", playlistGroup = "", radio = false
             for line in lines where !line.isEmpty {
                 if line.hasPrefix("#PLAYLIST:") {
                     playlistGroup = String(line.dropFirst(10)).trimmingCharacters(in: .whitespaces)
@@ -272,21 +292,82 @@ actor StationListDirectory: DirectoryBackend {
                     }
                     title = separator.map { String(line[line.index(after: $0)...]) } ?? ""
                     if let range = line.range(of: "group-title=\"") { group = String(line[range.upperBound...].prefix { $0 != "\"" }) } else { group = playlistGroup }
-                } else if !line.hasPrefix("#") { entries.append((title, group, line)); title = ""; group = "" }
+                    // Lists that mix radio into a TV playlist say so with radio="true" or tvg-type="radio".
+                    let lower = line.lowercased()
+                    radio = lower.contains("radio=\"true\"") || lower.contains("tvg-type=\"radio\"")
+                } else if !line.hasPrefix("#") { entries.append((title, group, line, radio)); title = ""; group = ""; radio = false }
             }
         }
         var seen = Set<String>()
         return entries.prefix(maximumEntries).compactMap { entry in
             guard let address = URL(string: entry.address, relativeTo: base)?.absoluteURL, let valid = try? StreamAddress.parse(address.absoluteString),
-                  RadioListing.isViable(name: entry.title, address: valid), seen.insert(valid.absoluteString).inserted else { return nil }
+                  RadioListing.isViable(name: entry.title, address: valid), reject?(entry.title, entry.group, valid) != true,
+                  seen.insert(valid.absoluteString).inserted else { return nil }
             let ext = valid.pathExtension.lowercased()
             let codec = ["mp3": "MP3", "aac": "AAC", "ogg": "OGG", "opus": "OPUS", "m3u8": "HLS"][ext] ?? ""
             let name = String(entry.title.trimmingCharacters(in: .whitespaces).prefix(300))
-            return RadioListing(id: UUID.stable("list:\(sourceID):\(valid.absoluteString)").uuidString, name: name,
-                                address: valid.absoluteString, tags: String(entry.group.prefix(500)), country: "", countryCode: "", codec: codec,
-                                bitrate: 0, votes: 0, clicks: 0, hls: ext == "m3u8", sourceName: label)
+            // In a TV list, a stream that is only audio (an audio file type, or marked as radio) is a radio station, not a channel.
+            let audioOnly = video && (entry.radio || ["mp3", "aac", "aacp", "ogg", "oga", "opus", "m4a", "flac"].contains(ext))
+            var row = RadioListing(id: UUID.stable("list:\(sourceID):\(valid.absoluteString)").uuidString, name: name,
+                                   address: valid.absoluteString, tags: String(entry.group.prefix(500)), country: "", countryCode: "", codec: video && !audioOnly ? "" : codec,
+                                   bitrate: 0, votes: 0, clicks: 0, hls: ext == "m3u8", sourceName: label)
+            row.video = video && !audioOnly
+            return row
         }
     }
+}
+
+/// 40media Group’s free channels. Each one is a public HLS stream (H.264 video with AAC audio), so the list is fixed.
+actor FortyMediaDirectory: DirectoryBackend {
+    static let channels: [RadioListing] = [
+        ("ENT_Channel", "ENT Channel", "Entertainment"), ("ENT_Classics", "ENT Classic", "Classic TV"), ("ENT_Drama", "ENT Drama", "Drama"),
+        ("ENT_Family", "ENT Family", "Family"), ("ENT_Life", "ENT Life", "Lifestyle"), ("ENT_Movies", "ENT Movies", "Movies"),
+        ("Totalmusic", "Totalmusic", "Music"), ("Totalmusic_00s", "Totalmusic 00s", "Music, 2000s"), ("Totalmusic_80s", "Totalmusic 80s", "Music, 80s"),
+        ("Totalmusic_Concerts", "Totalmusic Concerts", "Music, Concerts"), ("Totalmusic_Dance", "Totalmusic Dance", "Music, Dance")
+    ].map { path, title, tags in
+        var row = RadioListing(id: UUID.stable("40media:" + path).uuidString, name: title,
+                               address: "https://cdn.40mediagroup.com/live/c7eds/\(path)/SA_LIVE_hls_enc/master.m3u8", tags: tags, country: "", countryCode: "",
+                               codec: "", bitrate: 0, votes: 0, clicks: 0, hls: true, sourceName: "40media Group")
+        row.video = true; row.homepage = "https://www.40mediagroup.com/canales/"
+        return row
+    }
+    func search(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
+        try Task.checkCancellation()
+        return DirectoryFilter.page(Self.channels, query: query)
+    }
+}
+
+/// What Internet TV listings must pass before they are shown. A video player can be pointed at anything, so this is deliberately strict:
+/// it errs toward hiding a channel.
+enum TVSafety {
+    /// Which checks apply. Both are on unless the user turns them off in Preferences ▸ Internet TV.
+    struct Settings: Equatable {
+        var hideAdult = true
+        var hideUnreliable = true
+        var key: String { "\(hideAdult ? 1 : 0)\(hideUnreliable ? 1 : 0)" }
+    }
+    private static let adult = try! NSRegularExpression(pattern: #"(?i)(?<![a-z])(xxx|porn\w*|sex\w*|erotic\w*|nsfw|hentai|playboy|penthouse|hustler|brazzers|naked|nude|stripper\w*|fetish|bdsm|milf|18\+|adults? only|adult (?!swim))"#)
+    private static let unreliable = ["geo-blocked", "not 24/7"]
+
+    static func rejects(title: String, group: String, address: URL, settings: Settings) -> Bool { !allows(title: title, group: group, address: address, settings: settings) }
+
+    static func allows(title: String, group: String, address: URL, settings: Settings = Settings()) -> Bool {
+        if settings.hideAdult {
+            for text in [title, group] where adult.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil { return false }
+        }
+        if settings.hideUnreliable {
+            let lower = title.lowercased()
+            if unreliable.contains(where: lower.contains) { return false }
+            guard let host = address.host?.lowercased() else { return false }
+            // A bare IP address is not a channel operator that can be identified or asked to take a stream down.
+            if host.contains(":") || host.split(separator: ".").allSatisfy({ Int($0) != nil }) { return false }
+        }
+        return true
+    }
+}
+
+extension Library.State {
+    var tvSafety: TVSafety.Settings { TVSafety.Settings(hideAdult: tvHideAdult != false, hideUnreliable: tvHideUnreliable != false) }
 }
 
 /// Paged official APIs keep laut.fm discovery small; never download its complete catalog.

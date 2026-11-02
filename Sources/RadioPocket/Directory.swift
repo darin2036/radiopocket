@@ -18,6 +18,8 @@ struct RadioListing: Codable, Equatable, Identifiable {
     var homepage = ""
     /// Which directory the listing came from; display only, never stored.
     var sourceName: String?
+    /// An Internet TV channel rather than a radio station.
+    var video = false
 
     /// A station worth importing: it has a real name (not blank, a bare web address or just symbols) and its address isn't a page or image.
     static func isViable(name: String, address: URL) -> Bool {
@@ -31,7 +33,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
 
     var likelyPlayable: Bool {
         // Lists that carry no codec (station lists, saved stations) get the benefit of the doubt.
-        (directoryID == nil && codec.isEmpty) || hls || ["MP3", "AAC", "AAC+", "AAC-LC", "HE-AAC", "HE-AACV2", "OPUS", "OGG", "VORBIS"].contains(codec.uppercased())
+        video || (directoryID == nil && codec.isEmpty) || hls || ["MP3", "AAC", "AAC+", "AAC-LC", "HE-AAC", "HE-AACV2", "OPUS", "OGG", "VORBIS"].contains(codec.uppercased())
     }
     /// Quality on a 0–5 scale from codec and bitrate, so 64 kbps HE-AAC and 128 kbps MP3 compare fairly. 0 means unknown.
     var quality: Int {
@@ -81,9 +83,9 @@ struct RadioListing: Codable, Equatable, Identifiable {
         }
     }
     var formatLabel: String { hls ? (codec.isEmpty ? "HLS" : "\(codec)/HLS") : (codec.isEmpty ? "—" : codec) }
-    var station: Station { Station(id: UUID(uuidString: id) ?? UUID(), name: name, address: address) }
+    var station: Station { Station(id: UUID(uuidString: id) ?? UUID(), name: name, address: address, video: video ? true : nil) }
     init(station: Station) {
-        id = station.id.uuidString; name = station.name; address = station.address
+        id = station.id.uuidString; name = station.name; address = station.address; video = station.video == true
         tags = ""; country = ""; countryCode = ""; codec = ""; bitrate = 0; votes = 0; clicks = 0; hls = false; directoryID = nil; sourceName = nil
     }
     init(id: String, name: String, address: String, tags: String, country: String, countryCode: String, codec: String, bitrate: Int, votes: Int, clicks: Int, hls: Bool, sourceName: String?) {
@@ -136,6 +138,8 @@ struct DirectoryQuery: Hashable {
     var order = "clickcount"
     var reverse = true
     var supportedOnly = true
+    /// Internet TV channels instead of radio stations.
+    var video = false
     /// "all", or the identifier of one `DirectorySource`.
     var sourceID = "all"
     var offset = 0
@@ -329,6 +333,7 @@ actor RadioBrowserDirectory: DirectoryBackend {
 actor RadioDirectory {
     private let radioBrowser: RadioBrowserDirectory
     private var sources = DirectorySource.resolved(nil)
+    private var safety = TVSafety.Settings()
     private var backends: [String: (key: String, backend: DirectoryBackend)] = [:]
     private let cache: StationCache?
     private var pending: [(key: String, query: DirectoryQuery)] = []
@@ -357,13 +362,13 @@ actor RadioDirectory {
     func forgetDeadStations() { dead?.clear() }
 
     /// Applies the user's directory list. Backends are kept between calls so their caches survive.
-    func configure(_ list: [DirectorySource]) {
-        sources = DirectorySource.resolved(list)
+    func configure(_ list: [DirectorySource], safety: TVSafety.Settings = TVSafety.Settings()) {
+        sources = DirectorySource.resolved(list); self.safety = safety
         var next: [String: (key: String, backend: DirectoryBackend)] = [:]
         for source in sources where source.enabled && !(source.kind == .radioBrowser) {
-            let key = "\(source.kind.rawValue)|\(source.url ?? "")|\(source.name)"
+            let key = "\(source.kind.rawValue)|\(source.url ?? "")|\(source.name)|\(safety.key)"
             if let existing = backends[source.id], existing.key == key { next[source.id] = existing }
-            else if let backend = source.makeBackend() { next[source.id] = (key, backend) }
+            else if let backend = source.makeBackend(safety: safety) { next[source.id] = (key, backend) }
         }
         backends = next
     }
@@ -419,8 +424,8 @@ actor RadioDirectory {
     }
 
     private func cacheKey(_ query: DirectoryQuery) -> String? {
-        let active = sources.filter { $0.enabled && (query.sourceID == "all" || $0.id == query.sourceID) }
-        return cache?.key(for: query, sources: active.map { $0.id + "@" + ($0.url ?? "") })
+        let active = sources.filter { $0.enabled && $0.serves(video: query.video) && (query.sourceID == "all" || $0.id == query.sourceID) }
+        return cache?.key(for: query, sources: active.map { $0.id + "@" + ($0.url ?? "") + ($0.kind == .tvList ? "#" + safety.key : "") })
     }
 
     // MARK: Background refresh
@@ -502,8 +507,8 @@ actor RadioDirectory {
     }
 
     private func live(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
-        let active = sources.filter { $0.enabled && (query.sourceID == "all" || $0.id == query.sourceID) }
-        guard !active.isEmpty else { throw RadioError.message("That directory is turned off. Enable it in Preferences ▸ Directories.") }
+        let active = sources.filter { $0.enabled && $0.serves(video: query.video) && (query.sourceID == "all" || $0.id == query.sourceID) }
+        guard !active.isEmpty else { throw RadioError.message("That directory is turned off. Enable it in " + (query.video ? "Preferences ▸ Internet TV." : "Preferences ▸ Internet Radio.")) }
         let radioBrowser = radioBrowser, backends = backends
         let results = await withTaskGroup(of: (Int, Result<DirectoryPage, Error>).self) { group in
             for (index, source) in active.enumerated() {

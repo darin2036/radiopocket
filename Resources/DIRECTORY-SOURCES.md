@@ -8,11 +8,12 @@ Checked October 29, 2026. RadioPocket connects directly to each enabled source o
 | [SomaFM](https://somafm.com/) | https://somafm.com/channels.json | Enabled |
 | [laut.fm](https://laut.fm/) | [Station API](https://docs.api.laut.fm/) and [Search API](https://search.api.laut.fm/v1/docs/) | Enabled |
 | [Radio Paradise](https://radioparadise.com/listen/stream-links) | [Published direct AAC links](https://img.radioparadise.com/content/prod/listen/streams/template.html) | Enabled |
+| [40media Group](https://www.40mediagroup.com/canales/) (Internet TV) | Published public HLS channels, built in | Enabled |
 | [Curated Internet Radio Streams](https://github.com/mikepierce/internet-radio-streams) | Root M3U files from Mike Pierce’s public repository | Enabled |
 | [IPRD](https://iprd-org.github.io/iprd/catalog/) | [Complete M3U](https://iprd-org.github.io/iprd/site_data/all_stations.m3u) | Optional, unchecked |
 | [Junguler Radio Playlists](https://github.com/junguler/m3u-radio-music-playlists) | [Named M3U collection](https://raw.githubusercontent.com/junguler/m3u-radio-music-playlists/main/---everything-full.m3u) | Optional, unchecked |
 
-IPRD and Junguler supply full catalogs. They are opt-in to avoid downloading multi-megabyte lists during ordinary searches. Catalogs cache in memory for ten minutes. IPRD at 8 MiB and 30,000 entries, custom playlists at 2 MiB and 5,000 entries. laut.fm requests at most 100 records per page and retains six pages for ten minutes. Junguler is capped at 8 MiB and 50,000 entries and uses the named version, preserving playlist sections as genre tags. The opening views (Popular, Top Rated, A–Z) of the enabled sources are saved on disk and refreshed in the background about every six hours, one request at a time, unless Preferences ▸ Media Library turns that off; a downloaded full catalog is released from memory afterwards.
+IPRD and Junguler supply full catalogs. They are opt-in to avoid downloading multi-megabyte lists during ordinary searches. Catalogs cache in memory for ten minutes. IPRD at 8 MiB and 30,000 entries, custom playlists at 2 MiB and 5,000 entries. laut.fm requests at most 100 records per page and retains six pages for ten minutes. Junguler is capped at 8 MiB and 50,000 entries and uses the named version, preserving playlist sections as genre tags. The opening views (Popular, Top Rated, A–Z) of the enabled sources are saved on disk and refreshed in the background about every six hours, one request at a time, unless Preferences ▸ Internet Radio turns that off; a downloaded full catalog is released from memory afterwards.
 
 Radio Paradise contributes four published 128 kbps AAC mixes (Main, Mellow, Rock and World / Etc), without a catalog download. These links are built in; no artwork or audio is bundled. Its streams were checked for an audio response on October 29, 2026.
 
@@ -47,3 +48,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Internet TV
+
+40media Group's free channels are built in. Other TV channels come from an M3U list you add yourself in Preferences ▸ Internet TV. The list format is the usual one: an `#EXTINF` line per channel with an optional `group-title` (shown as the channel's category), then the stream address, up to 20,000 channels and 8 MiB. Streams in the list that are audio only (an mp3, aac, ogg, opus, m4a or flac address, or an entry marked `radio="true"`) are listed under Internet Radio instead; music video channels stay in Internet TV.
+
+You choose what to add and are responsible for having the right to watch it. RadioPocket stores, records and re-serves no video; it plays each channel straight from the address the list gives.
+
+Two filters apply to the channels in your TV lists, both on by default and switchable in Preferences ▸ Internet TV. "Hide adult channels" hides names or categories that suggest adult content; turning it off asks for confirmation. "Hide geo-blocked and unreliable channels" hides channels marked geo-blocked or not 24/7 and streams on a bare IP address. The filters err toward hiding a channel.

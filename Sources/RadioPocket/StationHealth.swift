@@ -177,7 +177,7 @@ enum StreamProbe {
     /// Directory entries that carry their own health data (Radio Browser) are left to that directory.
     @discardableResult
     static func vet(_ listings: [RadioListing], dead: DeadStations, limit: Int = 120) async -> Int {
-        let due = listings.filter { $0.directoryID == nil && !$0.hls }.compactMap { row -> (String, URL)? in
+        let due = listings.filter { $0.directoryID == nil && !$0.hls && !$0.video }.compactMap { row -> (String, URL)? in
             guard dead.needsCheck(row.address), let url = URL(string: row.address), canCheck(url) else { return nil }
             return (row.address, url)
         }.prefix(limit)

@@ -1,4 +1,6 @@
 RadioPocket 0.8
+* Added: Internet TV in the library, with 40media Group's free channels in a classic video window
+* Added: Preferences ▸ Internet TV: manage your own M3U TV channel lists and turn the adult and unreliable-channel filters on or off
 * Added: Remove a favorite from the library button, right-click menu, ⌘D, or the Delete key
 * Added: Balance slider beside volume; snaps to center
 * Added: Scroll wheel over the volume slider adjusts volume
@@ -23,7 +25,7 @@ RadioPocket 0.8
 * Added: Opus and Ogg Vorbis library filters
 * Added: Automatic reconnect on dropouts, network changes and wake
 * Added: Moved-station recovery: retries the new address, then offers alternatives
-* Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Media Library
+* Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Internet Radio
 * Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
 * Added: Media-key skip buttons rewind and forward 10 s
 * Changed: Menus follow Mac conventions: File, Edit, Controls, View, Visualization, Window, Help

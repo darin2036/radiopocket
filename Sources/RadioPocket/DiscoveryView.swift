@@ -37,7 +37,8 @@ private final class StationTable: NSTableView {
 }
 
 private enum LibraryScope: Equatable {
-    case popular, rated, alphabetical, genre(String), favorites, recent
+    case popular, rated, alphabetical, genre(String), favorites, recent, tv, tvGenre(String)
+    var isTV: Bool { if case .tv = self { return true }; if case .tvGenre = self { return true }; return false }
     var local: Bool { self == .favorites || self == .recent }
     var title: String {
         switch self {
@@ -47,6 +48,8 @@ private enum LibraryScope: Equatable {
         case .genre(let value): return value.uppercased() + " RADIO"
         case .favorites: return "FAVORITE STATIONS"
         case .recent: return "RECENTLY PLAYED"
+        case .tv: return "INTERNET TV CHANNELS"
+        case .tvGenre(let value): return value.uppercased() + " TV"
         }
     }
 }
@@ -68,7 +71,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let table = StationTable()
     private let sidebar = NSOutlineView()
     private let search = NSTextField()
-    private let genre = ClassicCombo()
+    private let genre = ClassicPopup()
     private let country = ClassicPopup()
     private let order = ClassicPopup()
     private let sourceMenu = ClassicPopup()
@@ -90,6 +93,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private var task: Task<Void, Never>?
     private var suppressSelection = false
     private var suppressSort = false
+    private let tvGenres = ["Animation", "Classic", "Comedy", "Cooking", "Culture", "Documentary", "Drama", "Education", "Entertainment", "Family", "General", "Kids", "Lifestyle", "Movies", "Music", "News", "Religious", "Series", "Sports", "Travel"]
+    private var genreListIsTV = false
     private let genres = ["Alternative", "Ambient", "Blues", "Classical", "Country", "Electronic", "Folk", "Hip Hop", "Indie", "Jazz", "Metal", "News", "Pop", "Reggae", "Rock", "Soul", "Talk", "World"]
     private var nodes: [LibraryNode] = []
     private var sideWidth: NSLayoutConstraint!, sideGap: NSLayoutConstraint!
@@ -103,7 +108,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     init(library: Library, directory: RadioDirectory = RadioDirectory()) {
         self.library = library; self.directory = directory
         let window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 500), styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "RadioPocket — Internet Radio Library"
+        window.title = "RadioPocket — Internet Radio & TV Library"
         window.minSize = NSSize(width: 480, height: 300); window.isUserResizable = true
         window.isReleasedWhenClosed = false; window.hasShadow = true
         window.appearance = NSAppearance(named: .darkAqua)
@@ -125,7 +130,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     /// Rebuilds the directory picker from Preferences, keeping the current choice when it still exists.
     func refreshSources() {
         let current = sourceMenu.selectedItem?.representedObject as? String ?? "all"
-        let enabled = DirectorySource.resolved(library.state.directories).filter(\.enabled)
+        let enabled = DirectorySource.resolved(library.state.directories).filter { $0.enabled && $0.serves(video: scope.isTV) }
         sourceMenu.removeAllItems()
         sourceMenu.addItem(withTitle: "All Directories"); sourceMenu.lastItem?.representedObject = "all"
         for source in enabled { sourceMenu.addItem(withTitle: source.name); sourceMenu.lastItem?.representedObject = source.id }
@@ -140,6 +145,15 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         showWindow(nil); window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(search)
         if !hasLoaded { load() }
+    }
+    /// The TV filters changed: reload the channels on screen, or the next time the library opens.
+    func safetyChanged() { if scope == .tv, window?.isVisible == true { load() } else { hasLoaded = false } }
+    /// Opens the library on the Internet TV channels.
+    func showTV() {
+        showLibrary()
+        if let row = (0..<sidebar.numberOfRows).first(where: { (sidebar.item(atRow: $0) as? LibraryNode)?.scope == .tv }), sidebar.selectedRow != row {
+            sidebar.selectRowIndexes([row], byExtendingSelection: false)
+        }
     }
     func windowDidResize(_ notification: Notification) { adaptLayout() }
     /// Compact windows shed the genre sidebar, then the filter row; the table keeps its columns proportional to its width.
@@ -195,7 +209,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         return row
     }
     private func popup(_ popup: NSPopUpButton, label: String, values: [String], width: CGFloat) {
-        popup.addItems(withTitles: values); popup.menu?.autoenablesItems = false; popup.font = BrowserTheme.small; popup.controlSize = .small
+        popup.addItems(withTitles: values); popup.menu?.autoenablesItems = false; popup.font = BrowserTheme.small
         popup.heightAnchor.constraint(equalToConstant: 22).isActive = true
         popup.target = self; popup.action = #selector(filtersChanged)
         popup.setAccessibilityLabel(label); popup.toolTip = label
@@ -223,8 +237,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         NSLayoutConstraint.activate([titleControls.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -3), titleControls.topAnchor.constraint(equalTo: root.topAnchor, constant: 3)])
 
         nodes = [LibraryNode("MY LIBRARY", children: [LibraryNode("Favorites", scope: .favorites), LibraryNode("Recently Played", scope: .recent)]),
-                 LibraryNode("INTERNET RADIO", children: [LibraryNode("Popular", scope: .popular), LibraryNode("Top Rated", scope: .rated), LibraryNode("All Stations", scope: .alphabetical)]),
-                 LibraryNode("GENRES", children: genres.map { LibraryNode($0, scope: .genre($0.lowercased())) })]
+                 LibraryNode("INTERNET RADIO", children: [LibraryNode("Popular", scope: .popular), LibraryNode("Top Rated", scope: .rated), LibraryNode("All Stations", scope: .alphabetical),
+                                                          LibraryNode("Genres", children: genres.map { LibraryNode($0, scope: .genre($0.lowercased())) })]),
+                 LibraryNode("INTERNET TV", children: [LibraryNode("All Channels", scope: .tv),
+                                                       LibraryNode("Genres", children: tvGenres.map { LibraryNode($0, scope: .tvGenre($0.lowercased())) })])]
         let sideColumn = NSTableColumn(identifier: .init("section")); sideColumn.width = 145
         sidebar.addTableColumn(sideColumn); sidebar.outlineTableColumn = sideColumn; sidebar.headerView = nil
         sidebar.style = .plain; sidebar.floatsGroupRows = false
@@ -244,7 +260,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         popup(sourceMenu, label: "Radio directory", values: [], width: 118)
         refreshSources()
         let refresh = button("Refresh", #selector(refresh), width: 56)
-        let titleRow = row([heading, NSView(), sourceMenu, refresh]); add(titleRow, to: main)
+        let titleRow = row([heading, NSView(), sourceMenu, refresh], spacing: 4); add(titleRow, to: main)
         search.placeholderString = "Search station names…"; ClassicUI.field(search)
         search.target = self; search.action = #selector(searchNow)
         search.setAccessibilityLabel("Search radio station names")
@@ -252,16 +268,13 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         search.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
         popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Best quality"], width: 104)
         for (i, sort) in ["clickcount:1", "votes:1", "name:0", "quality:1"].enumerated() { order.item(at: i)?.representedObject = sort }
-        genre.addItems(withObjectValues: ["All genres"] + genres.map { $0.lowercased() }); genre.stringValue = "All genres"
-        genre.font = BrowserTheme.small; genre.textColor = BrowserTheme.text; genre.focusRingType = .none; genre.heightAnchor.constraint(equalToConstant: 22).isActive = true; genre.controlSize = .small; genre.target = self; genre.action = #selector(filtersChanged)
-        genre.delegate = self; genre.setAccessibilityLabel("Genre filter")
-        genre.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        popup(genre, label: "Genre filter", values: ["All genres"] + genres, width: 96)
         popup(country, label: "Country filter", values: ["Any country"], width: 112)
         let codes = Locale.Region.isoRegions.map(\.identifier).filter { $0.count == 2 }.map { ($0, Locale.current.localizedString(forRegionCode: $0) ?? $0) }.sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
         for (code, name) in codes { country.addItem(withTitle: name); country.lastItem?.representedObject = code }
-        let clear = button("Clear", #selector(clearFilters), width: 44)
+        let clear = button("Clear", #selector(clearFilters), width: 56)
         narrowHidden = [genre, country, clear]
-        let searchRow = row([search, button("Search", #selector(searchNow), width: 54), genre, country, order, clear], spacing: 4); add(searchRow, to: main)
+        let searchRow = row([search, button("Search", #selector(searchNow), width: 56), genre, country, order, clear], spacing: 4); add(searchRow, to: main)
         table.delegate = self; table.dataSource = self; table.target = self; table.doubleAction = #selector(playSelected)
         table.enter = { [weak self] in self?.playSelected() }
         table.delete = { [weak self] in if self?.scope == .favorites { self?.saveSelected() } }
@@ -309,7 +322,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             message.centerXAnchor.constraint(equalTo: tableScroll.centerXAnchor), message.centerYAnchor.constraint(equalTo: tableScroll.centerYAnchor), message.widthAnchor.constraint(lessThanOrEqualTo: tableScroll.widthAnchor, constant: -50),
             spinner.centerXAnchor.constraint(equalTo: tableScroll.centerXAnchor), spinner.bottomAnchor.constraint(equalTo: message.topAnchor, constant: -10)
         ])
-        sidebar.reloadData(); sidebar.expandItem(nil, expandChildren: true)
+        sidebar.reloadData(); nodes.forEach { sidebar.expandItem($0) }
+        sidebar.target = self; sidebar.action = #selector(sidebarClicked)
         suppressSelection = true
         if let popular = nodes[1].children.first { sidebar.selectRowIndexes(IndexSet(integer: sidebar.row(forItem: popular)), byExtendingSelection: false) }
         suppressSelection = false
@@ -320,12 +334,15 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         updateSelection()
     }
 
+    private func chooseGenre(_ name: String) {
+        genre.selectItem(at: genre.itemTitles.firstIndex { $0.caseInsensitiveCompare(name) == .orderedSame } ?? 0)
+    }
     private func captureQuery(resetPage: Bool = true) {
         query.name = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let tag = genre.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tag = (genre.titleOfSelectedItem ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         query.genre = tag == "All genres" ? "" : tag.lowercased()
         query.countryCode = country.selectedItem?.representedObject as? String ?? ""
-        query.codec = ""; query.supportedOnly = true
+        query.codec = ""; query.supportedOnly = true; query.video = scope.isTV
         query.sourceID = sourceMenu.selectedItem?.representedObject as? String ?? "all"
         query.minimumBitrate = 0
         let sorting = (order.selectedItem?.representedObject as? String ?? "clickcount:1").split(separator: ":")
@@ -340,11 +357,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         heading.stringValue = scope.title
         rows = []; hasMore = false; loadingMore = false; table.reloadData(); table.deselectAll(nil)
         message.stringValue = "Loading stations…"; message.isHidden = false
-        let sources = library.state.directories ?? []
+        let sources = library.state.directories ?? [], safety = library.state.tvSafety
         setBusy(true); hasLoaded = false
         task = Task { @MainActor [weak self, directory] in
             do {
-                await directory.configure(sources)
+                await directory.configure(sources, safety: safety)
                 let page = try await directory.search(request, refresh: refresh)
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
@@ -391,6 +408,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 if self.rows.isEmpty { self.message.stringValue = "Couldn’t reach the station directory"; self.message.isHidden = false }
             }
         }
+    }
+    /// A nested heading such as Genres opens and closes when clicked.
+    @objc private func sidebarClicked() {
+        guard let node = sidebar.item(atRow: sidebar.clickedRow) as? LibraryNode, node.scope == nil, !node.children.isEmpty, sidebar.level(forItem: node) > 0 else { return }
+        if sidebar.isItemExpanded(node) { sidebar.collapseItem(node) } else { sidebar.expandItem(node) }
     }
     @objc private func listScrolled() { loadMoreIfNeeded() }
     private func loadLocal(preservingSelection: Bool = false) {
@@ -442,7 +464,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     @objc private func filtersChanged() { leaveLocalScope(); clearSortIndicators(); captureQuery(); load() }
     @objc private func clearFilters() {
-        search.stringValue = ""; genre.stringValue = "All genres"
+        search.stringValue = ""; chooseGenre("All genres")
         country.selectItem(at: 0)
         clearSortIndicators(); captureQuery(); load()
     }
@@ -520,28 +542,27 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool { false }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         let node = item as! LibraryNode
-        let cell = label(node.title, color: node.scope == nil ? BrowserTheme.dim : BrowserTheme.text)
-        if node.scope == nil { cell.font = .monospacedSystemFont(ofSize: 10, weight: .semibold) }
+        let heading = node.scope == nil && outlineView.level(forItem: item) == 0
+        let cell = label(node.title, color: heading ? BrowserTheme.dim : BrowserTheme.text)
+        if heading { cell.font = .monospacedSystemFont(ofSize: 10, weight: .semibold) }
         return cell
     }
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !suppressSelection, let node = sidebar.item(atRow: sidebar.selectedRow) as? LibraryNode, let scope = node.scope else { return }
         self.scope = scope
         clearSortIndicators()
+        if scope.isTV != genreListIsTV {
+            genreListIsTV = scope.isTV
+            genre.removeAllItems(); genre.addItems(withTitles: ["All genres"] + (scope.isTV ? tvGenres : genres)); chooseGenre("All genres")
+        }
         switch scope {
-        case .genre(let tag): genre.stringValue = tag
-        case .popular: genre.stringValue = "All genres"; order.selectItem(at: 0)
-        case .rated: genre.stringValue = "All genres"; order.selectItem(at: 1)
-        case .alphabetical: genre.stringValue = "All genres"; order.selectItem(at: 2)
+        case .genre(let tag), .tvGenre(let tag): chooseGenre(tag)
+        case .popular: chooseGenre("All genres"); order.selectItem(at: 0)
+        case .rated: chooseGenre("All genres"); order.selectItem(at: 1)
+        case .alphabetical, .tv: chooseGenre("All genres"); order.selectItem(at: 2)
         default: break
         }
+        refreshSources()
         captureQuery(); load()
-    }
-}
-
-extension DiscoveryController: NSComboBoxDelegate {
-    func comboBoxSelectionDidChange(_ notification: Notification) {
-        // AppKit sends this before the combo box's field value is updated.
-        DispatchQueue.main.async { [weak self] in self?.filtersChanged() }
     }
 }

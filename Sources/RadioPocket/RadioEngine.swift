@@ -155,7 +155,8 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
                 let url = try await StreamAddress.resolve(source)
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
-                self.install(url, token: token)
+                // TV channels are decoded by AVPlayer, which also draws the video.
+                if station.video == true { self.installAVPlayer(url, token: token) } else { self.install(url, token: token) }
             } catch {
                 guard let self, self.generation == token, !(error is CancellationError) else { return }
                 self.fail(error.localizedDescription)
@@ -199,6 +200,8 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         return StreamInfo(codec: format.codec, sampleRate: format.rate, channels: format.channels, kbps: stream.bitrate(),
                           bufferedSeconds: stream.rewindable, delay: stream.delay, levelDb: leveling ? stream.levelGain : 0)
     }
+    /// True while the current station is an Internet TV channel.
+    var isVideo: Bool { station?.video == true }
     /// True when playback runs through AVPlayer, which has no EQ, leveler or buffer to report.
     var usesFallbackPlayer: Bool { stream == nil && player.currentItem != nil }
 

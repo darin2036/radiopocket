@@ -163,6 +163,42 @@ do {
     try rejects("Reject malformed directory JSON") { _ = try RadioDirectory.decodePage(Data("not JSON".utf8), query: query) }
     let excessiveRows = try JSONSerialization.data(withJSONObject: Array(repeating: rawRows[0], count: 201))
     try rejects("Reject unbounded directory pages before allocating station models") { _ = try RadioDirectory.decodePage(excessiveRows, query: query) }
+    // Internet TV
+    let tvChannels = FortyMediaDirectory.channels
+    try check(tvChannels.count == 11 && tvChannels.allSatisfy { $0.video && $0.hls && $0.likelyPlayable && $0.station.video == true }, "40media channels are playable video listings")
+    var tvQuery = DirectoryQuery(); tvQuery.video = true
+    try check(DirectoryFilter.page(tvChannels, query: tvQuery).stations.count == 11, "The TV directory lists every channel")
+    let tvList = StationListDirectory.parse("#EXTM3U\n#EXTINF:-1 group-title=\"News\",Local News\nhttps://tv.example/news.m3u8\n#EXTINF:-1 group-title=\"Adult\",Late Night Sex TV\nhttps://tv.example/x.m3u8", base: URL(string: "https://tv.example/list.m3u")!, label: "Mine", sourceID: "mine", video: true) { !TVSafety.allows(title: $0, group: $1, address: $2) }
+    try check(tvList.count == 1 && tvList[0].video && tvList[0].tags == "News", "A user TV list keeps its channels, marked as video, after the safety filter")
+    try check(DirectorySource.fortyMedia.isTV && !DirectorySource.somaFM.isTV, "Only the 40media directory is TV")
+    try check(RadioListing(station: tvChannels[0].station).video && !RadioListing(station: Station(name: "Radio", address: "https://radio.example/live")).video, "A saved station keeps its TV flag")
+    let tvDecoded = try JSONDecoder().decode(Station.self, from: Data(#"{"id":"00000000-0000-0000-0000-0000000000bb","name":"Old","address":"https://radio.example/live"}"#.utf8))
+    try check(tvDecoded.video == nil, "Stations saved before TV support still decode")
+    let safeURL = URL(string: "https://cdn.example.com/a.m3u8")!
+    func tvAllowed(_ title: String, group: String = "", url: URL? = nil) -> Bool {
+        TVSafety.allows(title: title, group: group, address: url ?? safeURL)
+    }
+    try check(tvAllowed("Local News 8") && tvAllowed("Adult Swim West") && tvAllowed("Sussex Local TV"), "Ordinary TV channels pass the safety filter")
+    try check(!tvAllowed("Hot Sexy TV") && !tvAllowed("Okay", group: "XXX") && !tvAllowed("Adult Animation") && !tvAllowed("Playboy TV"), "Adult channels are hidden")
+    try check(!tvAllowed("Okay", url: URL(string: "http://88.212.7.14/x.m3u8")!), "Streams on a bare IP address are hidden")
+    try check(!tvAllowed("Channel [Not 24/7;Geo-blocked]"), "Geo-blocked channels are hidden")
+    var adultOff = TVSafety.Settings(); adultOff.hideAdult = false
+    var qualityOff = TVSafety.Settings(); qualityOff.hideUnreliable = false
+    let bareIP = URL(string: "http://88.212.7.14/x.m3u8")!
+    try check(TVSafety.allows(title: "Hot Sexy TV", group: "", address: safeURL, settings: adultOff) && !TVSafety.allows(title: "Hot Sexy TV", group: "", address: safeURL, settings: qualityOff), "Each TV filter turns off on its own")
+    try check(TVSafety.allows(title: "A [Geo-blocked]", group: "", address: bareIP, settings: qualityOff) && !TVSafety.allows(title: "A [Geo-blocked]", group: "", address: bareIP, settings: adultOff), "The quality filter covers geo-blocked and bare-IP streams")
+    var tvState = Library.State(); try check(tvState.tvSafety == TVSafety.Settings(), "Both TV filters are on by default")
+    tvState.tvHideAdult = false; try check(!tvState.tvSafety.hideAdult && tvState.tvSafety.hideUnreliable, "A saved TV filter choice is honored")
+    try check(adultOff.key != qualityOff.key && adultOff.key != TVSafety.Settings().key, "Filter settings change the saved-page key")
+    let mixed = StationListDirectory.parse("#EXTM3U\n#EXTINF:-1 group-title=\"Music\",Music Videos 24/7\nhttps://tv.example/mv.m3u8\n#EXTINF:-1 group-title=\"News\",Local News\nhttps://tv.example/news.m3u8\n#EXTINF:-1 group-title=\"Jazz\",Jazz FM\nhttps://radio.example/jazz.mp3\n#EXTINF:-1 radio=\"true\" group-title=\"Pop\",Pop Hits\nhttps://radio.example/pop.m3u8", base: URL(string: "https://tv.example/list.m3u")!, label: "Mine", sourceID: "mixed", video: true)
+    var radioQuery = DirectoryQuery(); radioQuery.video = false
+    var tvOnlyQuery = DirectoryQuery(); tvOnlyQuery.video = true
+    let mixedTV = DirectoryFilter.page(mixed, query: tvOnlyQuery).stations.map(\.name), mixedRadio = DirectoryFilter.page(mixed, query: radioQuery).stations.map(\.name)
+    try check(Set(mixedTV) == ["Music Videos 24/7", "Local News"], "Music video channels stay in TV")
+    try check(Set(mixedRadio) == ["Jazz FM", "Pop Hits"] && mixed.filter { !$0.video }.allSatisfy { $0.station.video == nil }, "Audio-only streams in a TV list go to radio")
+    try check(DirectorySource.fortyMedia.serves(video: true) && !DirectorySource.fortyMedia.serves(video: false) && DirectorySource.somaFM.serves(video: false) && !DirectorySource.somaFM.serves(video: true), "Sources serve the right medium")
+    let tvListSource = try DirectorySource.custom(name: "Mine", url: "https://tv.example/list.m3u", kind: .tvList)
+    try check(tvListSource.serves(video: true) && tvListSource.serves(video: false), "A TV list serves both TV and radio")
     // Saved station lists
     let cacheDir = root.appendingPathComponent("station-cache")
     let saved = StationCache(directory: cacheDir)
@@ -172,6 +208,8 @@ do {
     let savedKey = saved.key(for: browse, sources: ["radio-browser@", "somafm@"])!
     saved.store(DirectoryPage(stations: [savedRow], hasMore: true, rawCount: 100), key: savedKey)
     let reloaded = saved.load(savedKey)
+    var tvQueryKey = browse; tvQueryKey.video = true
+    try check(saved.key(for: tvQueryKey, sources: ["radio-browser@", "somafm@"]) != savedKey, "TV and radio pages are saved under different keys")
     try check(reloaded?.page.stations == [savedRow] && reloaded?.page.hasMore == true && reloaded?.page.rawCount == 100 && reloaded?.page.cached == true, "A saved station page reloads with every field intact")
     var typed = DirectoryQuery(); typed.name = "jazz"
     try check(saved.key(for: typed, sources: ["radio-browser@"]) == nil, "Typed searches are never saved")

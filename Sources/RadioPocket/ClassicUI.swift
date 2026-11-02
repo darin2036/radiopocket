@@ -159,25 +159,24 @@ class ClassicButton: NSButton {
         if window?.firstResponder === self { NSColor.darkGray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 3, dy: 3)).stroke() }
     }
 }
+/// A drop-down arrow drawn as a pixel triangle so it centres the same way in every control.
+private func dropArrow(in rect: NSRect, color: NSColor) {
+    let cx = rect.midX.rounded(), cy = rect.midY.rounded()
+    color.setFill()
+    for i in 0..<3 { NSRect(x: cx - 3 + CGFloat(i), y: cy - 1 + CGFloat(i), width: 7 - CGFloat(i) * 2, height: 1).fill() }
+}
 final class ClassicPopup: NSPopUpButton {
     override var isFlipped: Bool { true }
+    // The system bezel's alignment insets would make the drawn control larger than its constraints, so it would
+    // stand taller than a ClassicButton and crowd its neighbours.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
     override func draw(_ dirtyRect: NSRect) {
         ClassicUI.button(bounds, down: isHighlighted)
-        ClassicUI.caption(title, rect: NSRect(x: 2, y: 0, width: bounds.width - 17, height: bounds.height), color: ClassicUI.buttonText.withAlphaComponent(isEnabled ? 1 : 0.4), alignment: .left)
-        ClassicUI.caption("▾", rect: NSRect(x: bounds.width - 18, y: 0, width: 17, height: bounds.height), color: ClassicUI.buttonText)
+        let ink = ClassicUI.buttonText.withAlphaComponent(isEnabled ? 1 : 0.4)
+        ClassicUI.caption(title, rect: NSRect(x: 3, y: 0, width: bounds.width - 20, height: bounds.height), color: ink, alignment: .left)
+        dropArrow(in: NSRect(x: bounds.width - 16, y: 0, width: 12, height: bounds.height), color: ink)
     }
 }
-final class ClassicCombo: NSComboBox {
-    override var isFlipped: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-        ClassicUI.black.setFill(); bounds.fill()
-        NSColor.gray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)).stroke()
-        ClassicUI.caption(stringValue, rect: NSRect(x: 1, y: 0, width: bounds.width - 19, height: bounds.height), color: isEnabled ? ClassicUI.text : ClassicUI.dim, alignment: .left)
-        let arrow = NSRect(x: bounds.width - 18, y: 0, width: 18, height: bounds.height)
-        ClassicUI.button(arrow); ClassicUI.caption("▾", rect: arrow, color: ClassicUI.buttonText)
-    }
-}
-
 class ClassicChrome: NSView {
     var title = "MEDIA LIBRARY" { didSet { needsDisplay = true } }
     private var resizeStart: (frame: NSRect, mouse: NSPoint, edges: Edges)?

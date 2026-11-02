@@ -78,6 +78,7 @@ struct VisSettings: Codable, Equatable {
     /// Seconds each visualization stays up while auto-cycling; always one of `VisCycleInterval.seconds`.
     var cycleSeconds = VisCycleInterval.standard
     var overlay = true
+    var dockIcon = false
 
     init() {}
     init(from decoder: Decoder) throws {
@@ -98,6 +99,7 @@ struct VisSettings: Codable, Equatable {
         s.autoCycle = (try? c.decodeIfPresent(Bool.self, forKey: .autoCycle)) ?? s.autoCycle
         s.cycleSeconds = VisCycleInterval.nearest((try? c.decodeIfPresent(Int.self, forKey: .cycleSeconds)) ?? s.cycleSeconds)
         s.overlay = (try? c.decodeIfPresent(Bool.self, forKey: .overlay)) ?? s.overlay
+        s.dockIcon = (try? c.decodeIfPresent(Bool.self, forKey: .dockIcon)) ?? s.dockIcon
         self = s
     }
 }
