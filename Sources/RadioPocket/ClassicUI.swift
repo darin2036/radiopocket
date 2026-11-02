@@ -254,12 +254,14 @@ class ClassicChrome: NSView {
             }
             let corner = min(125, w / 2)
             _ = sprite(NSRect(x: 0, y: 42, width: corner, height: 14), NSRect(x: 0, y: h - 14, width: corner, height: 14))
-            // The filler is a full 14 rows (y 72-85; the cyan divider is y 86), so it draws 1:1 and its lines meet the corners' lines.
+            // The filler's 14th row (y 85) is the sheet's cyan divider: draw its 13 real rows 1:1 so its lines meet the
+            // corners' lines, and take the last row from the corners' own last row.
             var fx = corner
             while fx < w - corner {
                 let width = min(25, w - corner - fx)
-                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 14), NSRect(x: fx, y: h - 14, width: width, height: 14)); fx += width
+                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 13), NSRect(x: fx, y: h - 14, width: width, height: 13)); fx += width
             }
+            _ = sprite(NSRect(x: corner - 1, y: 55, width: 1, height: 1), NSRect(x: corner, y: h - 1, width: max(0, w - 2 * corner), height: 1))
             _ = sprite(NSRect(x: 125 - corner, y: 57, width: corner, height: 14), NSRect(x: w - corner, y: h - 14, width: corner, height: 14))
             let titleColor = ClassicUI.skin?.genTitleColor ?? ClassicUI.text
             ClassicUI.caption(title, rect: NSRect(x: titleStart + 22, y: 3, width: middle + 6, height: 12), color: titleColor, font: titleFont)
