@@ -1,14 +1,16 @@
 RadioPocket 0.9.1
-* Added: Discover in the library, with local recommendations, waveform cards, interest choices and daily exploration
-* Added: SQLite full-text discovery index with source provenance, cached search and migration from saved lists
-* Added: Local M3U/PLS import with preview, bounded parsing and no background stream probing
-* Added: Optional on-device Apple Foundation Models search with automatic literal-search fallback
-* Added: History personalization control, recommendation hiding, interest reset and clear discovery data
-* Changed: Discover always excludes sensitive/unknown-category metadata, regardless of TV browser preferences
-* Changed: Typed station searches use saved metadata; Refresh explicitly expands to enabled directories
-* Changed: Directory click reporting is off by default; recommendations never report clicks
-* Fixed: Repeated transient stream failures no longer hide stations as dead
-* Changed: Releases now use major.minor.patch version numbers
+* Added: Discover helps you find more stations you’ll enjoy
+* Added: Personalize your mix with genres and preferred languages
+* Added: Richer station cards with artwork and website links where available
+* Added: Fine-tune recommendations with simple station feedback
+* Changed: At-a-glance quality ratings keep station cards easy to scan
+* Changed: Discovery focuses on higher-quality stations
+* Changed: Recommendations favor streams that responded recently
+* Fixed: Unavailable recommendations retry before being set aside temporarily
+* Added: Bring your own station playlists into the library
+* Changed: A cleaner library experience puts listening first
+* Changed: Find saved stations even when directories are unavailable
+* Fixed: Temporary connection problems no longer keep stations hidden for long
 
 RadioPocket 0.9
 * Added: Internet TV in the library, with 40media Group's free channels in a classic video window

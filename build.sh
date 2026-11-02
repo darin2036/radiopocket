@@ -3,8 +3,21 @@ set -eu
 cd "${0:A:h}"
 VERSION=$(sed -n 's/^RadioPocket \([0-9][0-9.]*\).*/\1/p' Resources/CHANGELOG.txt | head -1)
 [ -n "$VERSION" ] || { echo "No version found in Resources/CHANGELOG.txt" >&2; exit 1; }
-swift build -c release
 APP="${RADIOPOCKET_APP_PATH:-${PWD}/dist/RadioPocket.app}"
+APP="${APP:A}"
+# Replacing a live signed bundle makes macOS reject the running process's location identity.
+ensure_app_is_stopped() {
+    local running_pid
+    while read -r running_pid; do
+        if [[ "$(ps -p "$running_pid" -o comm=)" == "$APP/Contents/MacOS/RadioPocket" ]]; then
+            print -u2 "RadioPocket is running from $APP. Quit it before rebuilding this bundle, or set RADIOPOCKET_APP_PATH to an isolated .work app."
+            return 1
+        fi
+    done < <(pgrep -x RadioPocket || true)
+}
+ensure_app_is_stopped
+swift build -c release
+ensure_app_is_stopped
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/RadioPocket "$APP/Contents/MacOS/RadioPocket"
 ditto Resources/Skins "$APP/Contents/Resources/Skins"
@@ -44,6 +57,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </array>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSLocationUsageDescription</key><string>Find your nearby city for weather-inspired Moods. RadioPocket saves an approximate area and uses it to request weather from Open-Meteo. Location is requested only when you choose Use my location.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Find your nearby city for weather-inspired Moods when you choose Use my location.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsForMedia</key><true/><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
 PLIST

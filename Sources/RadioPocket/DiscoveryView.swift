@@ -38,12 +38,14 @@ private final class StationTable: NSTableView {
 }
 
 private enum LibraryScope: Equatable {
-    case discover, popular, rated, alphabetical, genre(String), favorites, recent, tv, tvGenre(String)
+    case discover, moods, popular, rated, alphabetical, genre(String), favorites, recent, tv, tvGenre(String)
     var isTV: Bool { if case .tv = self { return true }; if case .tvGenre = self { return true }; return false }
+    var curated: Bool { self == .discover || self == .moods }
     var local: Bool { self == .favorites || self == .recent }
     var title: String {
         switch self {
         case .discover: return "DISCOVER"
+        case .moods: return "MOODS"
         case .popular: return "POPULAR STATIONS"
         case .rated: return "TOP RATED STATIONS"
         case .alphabetical: return "ALL STATIONS"
@@ -63,6 +65,9 @@ private final class LibraryNode {
 }
 
 final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuItemValidation {
+    private lazy var availability = DiscoveryAvailability.shared(directory: library.directory)
+    private var availabilityTask: Task<Void, Never>?
+    private var availabilityTimer: Timer?
     private let library: Library
     private let directory: RadioDirectory
     var play: ((Station) -> Void)?
@@ -88,7 +93,16 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let discoverPanel = DiscoverPanel()
     private var browserViews: [NSView] = []
     private var discoverVideo = false
+    private let moodLocation = MoodLocation()
+    private var locationTask: Task<Void, Never>?
+    private let moodWeather = MoodWeather()
+    private var moodPlans: [String: MoodPlan] = [:]
+    private var lastMoodWeather: (city: MoodCity, kind: MoodWeather.Kind?)?
+    private var moodTimer: Timer?
+    private var moodMomentKey = ""
     private var discoverText = ""
+    private var queryGenres: [String] = []
+    private var queryLanguages: [String] = []
     private var aiTask: Task<Void, Never>?
     private var aiTimeout: Task<Void, Never>?
     private var aiGeneration = UUID()
@@ -154,7 +168,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         if hasLoaded, previous != query.sourceID { hasLoaded = false }
         showWindow(nil); window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(search)
-        if !hasLoaded || scope == .discover { load() }
+        if !hasLoaded || scope.curated { load() }
     }
     /// The TV filters changed: reload the channels on screen, or the next time the library opens.
     func safetyChanged() { if scope == .tv, window?.isVisible == true { load() } else { hasLoaded = false } }
@@ -192,6 +206,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         }
     }
     func windowWillClose(_ notification: Notification) {
+        availabilityTask?.cancel(); availabilityTimer?.invalidate(); availabilityTimer = nil
+        moodTimer?.invalidate(); moodTimer = nil
+        locationTask?.cancel(); moodLocation.cancel(); discoverPanel.setLocationNotice(nil)
         task?.cancel(); generation = UUID(); aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID()
         if busy || loadingMore { hasLoaded = false }
         loadingMore = false
@@ -199,7 +216,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     func libraryChanged() {
         guard window?.isVisible == true else { if scope.local { hasLoaded = false }; return }
-        if scope == .discover { loadDiscover() } else if scope.local { loadLocal(preservingSelection: true) } else { reloadKeepingSelection(); updateSelection() }
+        if scope.curated { loadDiscover() } else if scope.local { loadLocal(preservingSelection: true) } else { reloadKeepingSelection(); updateSelection() }
     }
 
     private func label(_ value: String, color: NSColor = BrowserTheme.dim) -> NSTextField {
@@ -246,7 +263,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         add(titleControls, to: root)
         NSLayoutConstraint.activate([titleControls.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -3), titleControls.topAnchor.constraint(equalTo: root.topAnchor, constant: 3)])
 
-        nodes = [LibraryNode("MY LIBRARY", children: [LibraryNode("Discover", scope: .discover), LibraryNode("Favorites", scope: .favorites), LibraryNode("Recently Played", scope: .recent)]),
+        nodes = [LibraryNode("MY LIBRARY", children: [LibraryNode("Discover", scope: .discover), LibraryNode("Moods", scope: .moods), LibraryNode("Favorites", scope: .favorites), LibraryNode("Recently Played", scope: .recent)]),
                  LibraryNode("INTERNET RADIO", children: [LibraryNode("Popular", scope: .popular), LibraryNode("Top Rated", scope: .rated), LibraryNode("All Stations", scope: .alphabetical),
                                                           LibraryNode("Genres", children: genres.map { LibraryNode($0, scope: .genre($0.lowercased())) })]),
                  LibraryNode("INTERNET TV", children: [LibraryNode("All Channels", scope: .tv),
@@ -359,6 +376,32 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         }
     }
     private func wireDiscover() {
+        discoverPanel.collectionRequested = { [weak self] moods in self?.selectScope(moods ? .moods : .discover) }
+        discoverPanel.skipWeatherRequested = { [weak self] in self?.editDiscovery { $0.moodWeatherPromptHandled = true } }
+        discoverPanel.useLocationRequested = { [weak self] in
+            guard let self else { return }
+            self.editDiscovery { $0.moodWeatherPromptHandled = true }
+            self.locationTask?.cancel()
+            self.discoverPanel.setLocationNotice("Waiting for macOS location permission, then finding your nearby city…")
+            self.locationTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let city = try await self.moodLocation.detectCity()
+                    guard !Task.isCancelled else { return }
+                    self.editDiscovery { $0.moodCity = city; $0.moodWeatherPromptHandled = true }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    self.discoverPanel.setLocationNotice(error.localizedDescription)
+                }
+            }
+        }
+        discoverPanel.preferencesChanged = { [weak self] preferences in
+            guard let self else { return }
+            self.locationTask?.cancel(); self.moodLocation.cancel(); self.discoverPanel.setLocationNotice(nil)
+            self.queryGenres = []; self.queryLanguages = []; self.discoverPanel.setQuerySummary(nil)
+            if !preferences.showArtwork { StationArtwork.clearMemory() }
+            self.editDiscovery { preferences.apply(to: &$0) }
+        }
         discoverPanel.importPlaylist = { [weak self] in self?.importDiscoveryPlaylist() }
         discoverPanel.browse = { [weak self] in self?.selectScope(.popular) }
         discoverPanel.refresh = { [weak self] in self?.loadDiscover(refresh: true) }
@@ -371,30 +414,29 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             do { if !self.library.isFavorite(row.station) { try self.library.save(row.station) } }
             catch { self.report?(error) }
         }
-        discoverPanel.dismiss = { [weak self] row in
-            self?.editDiscovery { state in
-                var hidden = state.discoveryDismissed ?? []; hidden.append(DiscoveryIndex.endpointKey(row.address)); state.discoveryDismissed = Array(Set(hidden)).sorted().suffix(1000).map { $0 }
-            }
+        discoverPanel.feedbackChanged = { [weak self] row, vote in
+            self?.editDiscovery { DiscoveryFeedback.toggle(vote, station: row, state: &$0) }
         }
         discoverPanel.preference = { [weak self] genre in
             self?.editDiscovery { state in
                 if let genre { var values = state.discoveryInterests ?? []; if !values.contains(genre) { values.append(genre) }; state.discoveryInterests = values }
-                else { state.discoveryInterests = []; state.discoveryDismissed = [] }
+                else { state.discoveryDismissed = []; state.discoveryFeedback = [:] }
             }
         }
         discoverPanel.personalize = { [weak self] on in self?.editDiscovery { $0.discoveryPersonalization = on } }
         discoverPanel.aiChanged = { [weak self] on in self?.aiTask?.cancel(); self?.aiTimeout?.cancel(); self?.aiGeneration = UUID(); self?.editDiscovery { $0.discoveryAI = on } }
         discoverPanel.mediaChanged = { [weak self] video in self?.discoverVideo = video; self?.loadDiscover() }
-        discoverPanel.searchChanged = { [weak self] text in self?.discoverText = String(text.prefix(500)); self?.loadDiscover() }
+        discoverPanel.searchChanged = { [weak self] text in self?.queryGenres = []; self?.queryLanguages = []; self?.discoverPanel.setQuerySummary(nil); self?.discoverText = String(text.prefix(500)); self?.loadDiscover() }
         discoverPanel.interpret = { [weak self] text in self?.interpretDiscovery(text) }
         discoverPanel.clearData = { [weak self] in
             guard let self else { return }
-            self.task?.cancel(); self.generation = UUID()
+            self.task?.cancel(); self.generation = UUID(); self.moodPlans.removeAll()
             self.task = Task { @MainActor [weak self, directory] in
                 let cleared = await directory.clearSavedStations()
                 guard let self else { return }
-                guard cleared else { self.discoverPanel.setStatus("Couldn’t clear saved discovery data. Please try again."); return }
-                self.editDiscovery { $0.discoveryInterests = []; $0.discoveryDismissed = [] }
+                guard cleared else { self.discoverPanel.setStatus("Couldn’t clear saved discovery data. Please try again.", important: true); return }
+                self.availabilityTask?.cancel(); self.availability.clear()
+                self.editDiscovery { $0.discoveryInterests = []; $0.discoveryDismissed = []; $0.discoveryFeedback = [:] }
             }
         }
     }
@@ -418,7 +460,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             let destination = folder.appendingPathComponent(id + ".m3u")
             // Save only parsed names and absolute URLs, never executable playlist directives.
             let contents = "#EXTM3U\n" + rows.map { row in
-                "#EXTINF:-1 " + (!row.video ? "radio=\"true\" " : "") + "group-title=\"" + row.tags.replacingOccurrences(of: "\"", with: "") + "\"," + row.name.replacingOccurrences(of: "\n", with: " ") + "\n" + row.address
+                func escaped(_ value: String) -> String { value.replacingOccurrences(of: "\"", with: "").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ") }
+                let attributes = [!row.video ? "radio=\"true\"" : "", "group-title=\"" + escaped(row.tags) + "\"", "tvg-logo=\"" + escaped(row.artworkURL ?? "") + "\"", "tvg-language=\"" + (row.languages ?? []).joined(separator: ",") + "\""].filter { !$0.isEmpty }.joined(separator: " ")
+                return "#EXTINF:-1 " + attributes + "," + escaped(row.name) + "\n" + row.address
             }.joined(separator: "\n")
             try Data(contents.utf8).write(to: destination, options: .atomic)
             let source = DirectorySource(id: id, name: name, kind: discoverVideo ? .localTVList : .localList, url: destination.absoluteString)
@@ -436,15 +480,34 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         } catch { report?(error) }
     }
     private func editDiscovery(_ edit: (inout Library.State) -> Void) {
+        availabilityTask?.cancel()
         do { try library.update(edit); loadDiscover() } catch { report?(error) }
     }
-    private func loadDiscover(refresh: Bool = false, note: String? = nil) {
-        guard scope == .discover else { return }
+    private func loadDiscover(refresh: Bool = false, note: String? = nil, checkAvailability: Bool = true) {
+        guard scope.curated else { return }
         aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID()
         task?.cancel(); generation = UUID(); let token = generation
         hasMore = false; loadingMore = false; setBusy(false); hasLoaded = true
-        showDiscoverySurface(true); discoverPanel.configure(state: library.state)
-        let state = library.state, video = discoverVideo, text = discoverText
+        showDiscoverySurface(true); discoverPanel.setMoods(scope == .moods); discoverPanel.configure(state: library.state)
+        let moods = scope == .moods
+        let moment = MoodCuration.Moment()
+        moodMomentKey = moment.key + "-\(Int(Date().timeIntervalSince1970 / 900))"
+        if moodTimer == nil {
+            moodTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                guard let self, self.window?.isVisible == true, self.scope == .moods,
+                      MoodCuration.Moment().key + "-\(Int(Date().timeIntervalSince1970 / 900))" != self.moodMomentKey else { return }
+                self.loadDiscover()
+            }
+        }
+        if availabilityTimer == nil {
+            availabilityTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+                guard let self, self.window?.isVisible == true, self.scope.curated else { return }
+                self.loadDiscover()
+            }
+        }
+        let availabilitySnapshot = availability.snapshot()
+        let state = library.state, video = moods ? false : discoverVideo, text = moods ? "" : discoverText
+        let requiredGenres = queryGenres, requestedLanguages = queryLanguages
         discoverPanel.setStatus(refresh ? "Refreshing enabled directories directly…" : "Searching saved listings on this device…", busy: refresh)
         task = Task { @MainActor [weak self, directory] in
             do {
@@ -453,30 +516,101 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 if refresh { failures = try await directory.refreshDiscovery(video: video, genre: state.discoveryInterests?.last ?? "") }
                 let records = try await directory.discoveryRecords(video: video, text: text)
                 try Task.checkCancellation()
-                let feed = await Task.detached(priority: .userInitiated) { DiscoveryRecommendations.build(records: records, recent: state.recentStations ?? [], favorites: state.favorites, interests: state.discoveryInterests ?? [], dismissed: Set(state.discoveryDismissed ?? []), personalizes: state.discoveryPersonalization != false, video: video) }.value
+                var feed = await Task.detached(priority: .userInitiated) { DiscoveryRecommendations.build(records: records, recent: state.recentStations ?? [], favorites: state.favorites, interests: requiredGenres.isEmpty ? state.discoveryInterests ?? [] : requiredGenres, dismissed: Set(state.discoveryDismissed ?? []), personalizes: state.discoveryPersonalization != false, video: video, languages: requestedLanguages.isEmpty ? state.discoveryLanguages ?? [] : requestedLanguages, includeUnknownLanguage: requestedLanguages.isEmpty && state.discoveryIncludeUnknownLanguage != false, requiredGenres: requiredGenres, feedback: state.discoveryFeedback ?? [:], availability: availabilitySnapshot) }.value
                 try Task.checkCancellation()
                 guard let self, token == self.generation else { return }
+                var moodContext = MoodPlanning.context(records: records, state: state, moment: moment, weather: self.lastMoodWeather?.city == state.moodCity ? self.lastMoodWeather?.kind : nil)
+                if moods {
+                    let plan = state.discoveryAI == true ? self.moodPlans[moodContext.cacheKey] ?? MoodPlanning.fallback(moodContext) : MoodPlanning.fallback(moodContext)
+                    feed = MoodPlanning.build(records: records, state: state, context: moodContext, plan: plan, availability: availabilitySnapshot)
+                }
                 self.discoverPanel.render(feed, favorites: state.favorites)
                 let date = feed.updated.map { " · Saved " + $0.formatted(date: .abbreviated, time: .shortened) } ?? ""
                 let warning = failures.isEmpty ? "" : " · Couldn’t refresh: " + failures.joined(separator: ", ")
-                self.discoverPanel.setStatus((note.map { $0 + " · " } ?? "") + feed.basis + " · \(feed.indexed) saved listings (partial coverage)" + date + warning)
+                self.discoverPanel.setStatus((note.map { $0 + " · " } ?? "") + feed.basis + " · \(feed.indexed) saved listings (partial coverage)" + date + warning, important: !failures.isEmpty)
                 self.loaded?(true)
+                if checkAvailability, state.discoveryAvailabilityChecks != false, self.window?.isVisible == true, BackgroundPolicy.allows() {
+                    let rows = feed.shelves.flatMap(\.picks).map(\.listing)
+                    self.availabilityTask?.cancel()
+                    self.availabilityTask = Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        let changed = await DiscoveryAvailabilityChecks.shared.refresh(rows, store: self.availability)
+                        guard changed, !Task.isCancelled, token == self.generation, self.scope.curated else { return }
+                        self.loadDiscover(checkAvailability: false)
+                    }
+                }
+                if moods {
+                    self.discoverPanel.setWeather(city: state.moodCity, condition: state.moodCity == nil ? nil : "Checking weather…")
+                    if let city = state.moodCity {
+                        let weather = await self.moodWeather.current(for: city)
+                        guard !Task.isCancelled, token == self.generation else { return }
+                        self.lastMoodWeather = (city, weather?.kind)
+                        self.discoverPanel.setWeather(city: city, condition: weather?.label ?? "Weather unavailable · using time of day")
+                        moodContext = MoodPlanning.context(records: records, state: state, moment: moment, weather: weather?.kind)
+                        let plan = state.discoveryAI == true ? self.moodPlans[moodContext.cacheKey] ?? MoodPlanning.fallback(moodContext) : MoodPlanning.fallback(moodContext)
+                        feed = MoodPlanning.build(records: records, state: state, context: moodContext, plan: plan, availability: availabilitySnapshot)
+                        self.discoverPanel.render(feed, favorites: state.favorites)
+                    }
+                }
+                if moods, state.discoveryAI == true, !feed.shelves.isEmpty {
+                    self.refineMoods(records: records, state: state, context: moodContext, token: token)
+                }
             } catch {
                 guard let self, token == self.generation, !Task.isCancelled else { return }
-                self.discoverPanel.setStatus(error.localizedDescription + " Your favorites and station browser still work.")
+                self.discoverPanel.setStatus(error.localizedDescription + " Your favorites and station browser still work.", important: true)
             }
         }
     }
+    private func refineMoods(records: [DiscoveryIndex.Record], state: Library.State, context: MoodPlanning.Context, token: UUID) {
+        let moment = context.moment
+        if let plan = moodPlans[context.cacheKey] {
+            let feed = MoodPlanning.build(records: records, state: state, context: context, plan: plan, availability: self.availability.snapshot())
+            discoverPanel.render(feed, favorites: state.favorites)
+            discoverPanel.setStatus(feed.basis + " · On-device AI · Partial directory coverage")
+            return
+        }
+        aiGeneration = UUID(); let request = aiGeneration
+        discoverPanel.setStatus(moment.label + " · Matching moods with on-device AI…")
+        aiTask = Task { @MainActor [weak self] in
+            do {
+                let refined = try await LocalDiscoveryAI.curate(context: context)
+                guard let self, !Task.isCancelled, self.generation == token, self.aiGeneration == request else { return }
+                self.aiTimeout?.cancel()
+                let feed = MoodPlanning.build(records: records, state: state, context: context, plan: refined, availability: self.availability.snapshot())
+                if !feed.moodGroups.isEmpty {
+                    if self.moodPlans.count >= 8, let oldest = self.moodPlans.keys.sorted().first { self.moodPlans.removeValue(forKey: oldest) }
+                    self.moodPlans[context.cacheKey] = refined
+                }
+                if !feed.shelves.isEmpty, !self.discoverPanel.isBrowsingMood { self.discoverPanel.render(feed, favorites: state.favorites) }
+                self.discoverPanel.setStatus(feed.basis + (feed.shelves.isEmpty ? " · Using genre matching" : " · Refined with on-device AI") + " · Partial directory coverage")
+            } catch {
+                guard let self, !Task.isCancelled, self.generation == token, self.aiGeneration == request else { return }
+                self.aiTimeout?.cancel()
+                self.discoverPanel.setStatus(moment.label + " · AI unavailable; using local genre matching · Partial directory coverage")
+            }
+        }
+        aiTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard let self, !Task.isCancelled, self.generation == token, self.aiGeneration == request else { return }
+            self.aiTask?.cancel(); self.aiGeneration = UUID()
+            self.discoverPanel.setStatus(moment.label + " · AI took too long; using local genre matching · Partial directory coverage")
+        }
+    }
     private func interpretDiscovery(_ text: String) {
+        queryGenres = []; queryLanguages = []; discoverPanel.setQuerySummary(nil)
+        let preferences = DiscoveryPreferences(state: library.state)
         discoverText = String(text.prefix(500)); loadDiscover(note: "Showing literal matches while on-device AI interprets your request")
         aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID(); let token = aiGeneration
         aiTask = Task { @MainActor [weak self] in
             do {
-                let intent = try await LocalDiscoveryAI.interpret(text)
+                let intent = try await LocalDiscoveryAI.interpret(text, preferredGenres: preferences.genres, preferredLanguages: preferences.languages)
                 guard let self, self.aiGeneration == token, !Task.isCancelled, self.scope == .discover else { return }
                 self.aiTimeout?.cancel()
-                self.discoverText = intent.keywords.isEmpty ? intent.genres.first ?? text : intent.keywords
-                self.loadDiscover(note: "AI interpretation: " + self.discoverText + ". Edit the search to change it")
+                guard !intent.genres.isEmpty || !intent.languages.isEmpty || !intent.keywords.isEmpty else { self.loadDiscover(note: "Using literal search"); return }
+                self.discoverText = intent.keywords; self.queryGenres = intent.genres; self.queryLanguages = intent.languages
+                let summary = (intent.genres.map(\.capitalized) + intent.languages.map(DiscoveryCatalog.languageName) + (intent.keywords.isEmpty ? [] : [intent.keywords])).joined(separator: " · ")
+                self.discoverPanel.setQuerySummary("Searching for " + summary)
+                self.loadDiscover(note: "On-device interpretation: " + summary + ". Edit your search to change it")
             } catch {
                 guard let self, self.aiGeneration == token, !Task.isCancelled else { return }
                 self.aiTimeout?.cancel(); self.loadDiscover(note: "AI unavailable; using literal search")
@@ -507,8 +641,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private func load(refresh: Bool = false) {
         task?.cancel(); generation = UUID()
         aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID()
-        showDiscoverySurface(scope == .discover)
-        if scope == .discover { loadDiscover(refresh: refresh); return }
+        showDiscoverySurface(scope.curated)
+        if scope.curated { loadDiscover(refresh: refresh); return }
         if scope.local { loadLocal(); return }
         let token = generation
         let request = query
@@ -542,7 +676,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     }
     /// Fetches the next page once the list is scrolled within a screenful of its end, appending it so the list reads as one.
     private func loadMoreIfNeeded() {
-        guard scope != .discover, hasMore, !busy, !loadingMore, !scope.local, hasLoaded, let scroll = table.enclosingScrollView else { return }
+        guard !scope.curated, hasMore, !busy, !loadingMore, !scope.local, hasLoaded, let scroll = table.enclosingScrollView else { return }
         let visible = scroll.contentView.bounds
         guard visible.maxY >= table.frame.height - visible.height else { return }
         loadingMore = true
@@ -711,6 +845,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !suppressSelection, let node = sidebar.item(atRow: sidebar.selectedRow) as? LibraryNode, let scope = node.scope else { return }
         self.scope = scope
+        if !scope.curated { availabilityTask?.cancel() }
         clearSortIndicators()
         if scope.isTV != genreListIsTV {
             genreListIsTV = scope.isTV

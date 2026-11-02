@@ -114,6 +114,19 @@ import Foundation
             try check(localOffline.stations.count == 100, "Persisted full-text metadata is searchable while directory is offline")
             await afterRestart.configure(onlyFixture + [DirectorySource(id: "radio-browser", name: "Radio Browser", kind: .radioBrowser, enabled: false)])
             try check(try await afterRestart.searchSaved(savedQuery).stations.isEmpty, "Disabling a source immediately removes its local search results")
+            let probeBase = URL(string: CommandLine.arguments[1])!
+            var pinned = URLComponents(url: probeBase, resolvingAgainstBaseURL: false)!
+            pinned.host = "fixture.example"
+            let probeRoot = pinned.url!
+            let audioReply = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-audio"), pinnedIPv4: "127.0.0.1")
+            try check(audioReply?.status == 200 && (audioReply?.body.count ?? 0) >= 256 && (audioReply?.body.count ?? 0) <= 49152, "Pinned transport reads bounded stream bytes from the fixture")
+            let redirectReply = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-redirect"), pinnedIPv4: "127.0.0.1")
+            try check(redirectReply?.status == 302, "Pinned transport never automatically follows redirects")
+            let emptyReply = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-empty"), pinnedIPv4: "127.0.0.1")
+            try check(emptyReply?.body.isEmpty == true, "Empty stream fixture remains empty")
+            let started = Date()
+            let stalled = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-stall"), pinnedIPv4: "127.0.0.1")
+            try check(stalled?.status == 599 && Date().timeIntervalSince(started) < 9, "Stalled stream transport times out without an indefinite read")
             print("\(count) network checks passed.")
         } catch {
             fputs("\(error.localizedDescription)\n", stderr); exit(1)

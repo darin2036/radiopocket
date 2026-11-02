@@ -31,6 +31,12 @@ class Handler(BaseHTTPRequestHandler):
                         self.wfile.write(data[offset:offset+2048]); self.wfile.flush(); time.sleep(.12)
             except (BrokenPipeError, ConnectionResetError): pass
             return
+        if parsed.path == '/probe-audio': self.send(200, b'x' * 100000, 'audio/mpeg'); return
+        if parsed.path == '/probe-empty': self.send(200, b'', 'audio/mpeg'); return
+        if parsed.path == '/probe-gone': self.send(404, b'gone'); return
+        if parsed.path == '/probe-redirect':
+            self.send_response(302); self.send_header('Location', '/probe-audio'); self.end_headers(); return
+        if parsed.path == '/probe-stall': time.sleep(10); self.send(200, b'x' * 512, 'audio/mpeg'); return
         if parsed.path == '/counts': self.send(200, json.dumps(COUNTS).encode()); return
         COUNTS[self.path] = COUNTS.get(self.path, 0) + 1
         if parsed.path.startswith('/json/url/'):

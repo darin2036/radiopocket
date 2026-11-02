@@ -2,7 +2,7 @@
 
 ## Delivered
 
-- Native Discover surface inside the existing AppKit library: responsive music cards, Radio/TV switch, source attribution, daily rotation, save/hide/play actions and accessible native controls.
+- Native Discover surface inside the existing AppKit library: responsive music cards, Radio/TV switch, source attribution, daily rotation, save/play actions, reversible local thumbs feedback, website links, memory-only station artwork and subtle quality stars and accessible native controls.
 - Deterministic history/favorites/interest ranking with diversified cold-start selection. Only existing successful-playback recents are used; no additional tracking.
 - Independent strict recommendation safety policy. Conflicting sensitive metadata from any indexed source rejects an endpoint; unknown categories are withheld. Live broadcasts remain unverifiable from metadata alone.
 - SQLite FTS5 index, bound queries, source-scoped records, conservative endpoint identity, persisted provenance and flags, cache migration, source invalidation, age/row/storage limits and corrupt-index recovery.
@@ -13,25 +13,43 @@
 
 ## Deliberate limits
 
-The product specification includes later phases, not all of which ship here. This release does not implement generic JSON directories, EPG, embeddings, cross-device sync, whole-directory snapshot crawling, complete language/country natural-language interpretation, or the iOS Discover surface. Icecast YP remains retired.
+The product specification includes later phases, not all of which ship here. This release does not implement generic JSON directories, EPG, embeddings, cross-device sync, whole-directory snapshot crawling, complete country natural-language interpretation, or the iOS Discover surface. Icecast YP remains retired.
 
 Recommendations are music-focused. Most general TV/movie/news/talk listings are withheld rather than treated as safe from incomplete metadata. Existing TV browsing remains separate and retains user settings.
 
-No automatic stream probing occurs: the existing URLSession transport does not guarantee destination binding against DNS rebinding. Deep HLS validation and rich per-endpoint playback observations remain follow-up work. Reachability is not described as proof of decodability. Temporary DNS, permission and server errors no longer cause two-strike permanent exclusion.
+General station-browser probing remains disabled. Discovery has a separate pinned transport for bounded local reachability checks. Deep HLS validation and decoder-based probing remain follow-up work. Reachability is not described as proof of decodability. Temporary DNS, permission and server errors no longer cause two-strike permanent exclusion.
 
 The index is capped at 100,000 rows and approximately 48 MiB database pages, leaving room for rollback journals and the existing 16 MiB page cache within the planned 128 MiB budget. It returns a bounded 5,000-candidate set for UI searches/recommendations, and never claims completeness. Favorites are outside the disposable index. No raw typed queries are persisted.
 
 ## Validation
 
-See `.work/discovery-tests.log`, `.work/discovery-network.log`, `.work/discovery-ai.log`, and `.work/discovery-build.log` for local results. Wide and narrow UI captures use synthetic stations in a separate `.work/discover-preview` data directory, without modifying the user's real library. No public-station playback or rights clearance is implied by fixture tests.
+See `.work/discovery-polish-tests.log`, `.work/discovery-polish-network.log`, `.work/discovery-polish-ai.log`, and `.work/discovery-polish-release.log` for local results. Wide and narrow UI captures use synthetic stations in a separate `.work/discover-preview` data directory, without modifying the user's real library. No public-station playback or rights clearance is implied by fixture tests.
 
-The three-query on-device AI smoke test verifies actual guided generation for ambient, jazz and classical. It is not the specification's larger multilingual quality evaluation. A long playback soak, VoiceOver audit, all-OS runtime matrix, comprehensive security transport tests and full source-terms audit remain release gates before broad distribution.
+The on-device AI smoke checks cover genre and explicit broadcast-language interpretation. It is not the specification's larger multilingual quality evaluation. A long playback soak, VoiceOver audit, all-OS runtime matrix, comprehensive security transport tests and full source-terms audit remain release gates before broad distribution.
 
 ## Recorded results (November 2, 2026)
 
-- 276 deterministic checks passed, including 36 discovery/health additions.
+- 304 deterministic checks passed, including discovery metadata, language preferences, artwork limits and feedback retention.
 - 31 local-server network checks passed, including zero-request local search, offline persistence and source-disable invalidation.
-- 3 actual on-device AI genre smoke checks passed.
+- 5 actual on-device AI smoke checks passed, including French deep house and Japanese jazz.
 - 50,000 synthetic listings ingested in 0.83 seconds; 100 warm name queries had 1.79 ms p95; database size 28,590,080 bytes. This is an index microbenchmark, not end-to-end UI latency or an RSS measurement.
 - Release build succeeded; bundle short version and build version are 0.9.1. FoundationModels is weak-linked, preserving the macOS 13 deployment baseline.
 - Native screenshots inspected at 1000×700 and 480×600. Compact cards use one full-width column; wide cards use two.
+
+## Discovery presentation refinement
+
+Your mix groups 72 genres and 32 broadcast languages in a native preferences sheet. Language matching uses directory metadata, with an explicit choice to include unknown languages. Feedback is a bounded local preference map, not an event stream. Downvoted candidates remain eligible in a lower shelf; safety exclusions always apply first. Recommendation scoring remains separate from presentation and source metadata.
+
+Only artwork URLs are persisted. Visible-card images use an ephemeral session and memory cache, with two concurrent loads, bounded response/image sizes, no cookies, no disk image cache and no redirects. Private destination screening is preliminary, not socket-bound DNS validation. Broken or absent artwork uses a waveform fallback. Artwork can be disabled.
+
+Discover candidate eligibility requires `RadioListing.quality >= 4` before ranking or shelf selection, including mood curation. Unknown quality is excluded. History, favorites and thumbs feedback cannot override this floor. Quality is a codec/bitrate estimate, not a successful-playback measurement.
+
+## Local availability checks
+
+`DiscoveryAvailability.swift` stores up to 5,000 endpoint-keyed check records for seven days, separate from quality and the browser dead-station list. Positive evidence gets a decaying ranking bonus for one hour; checks are reused for 15 minutes. Three failed responses at least 120 seconds apart temporarily exclude a candidate for 30 minutes. Successful playback or checks clear failures immediately; offline, restricted, unsafe or unsupported destinations remain inconclusive. Clear saved discovery data removes these records too.
+
+On macOS, the system curl transport uses an explicit public IPv4 resolution pinned with `--resolve`, preserves HTTPS hostname verification, disables proxy/config/cookie/credential use, and follows no automatic redirects. Each manually followed redirect/playlist URL must pass validation again, with at most three requests per check. At most two checks run concurrently, six recommendations per batch. Each transfer has a six-second deadline and a 48 KiB response cap; no stream bytes are written to disk. OS DNS resolution is separate from the transfer timeout. IPv6-only destinations, encrypted HLS, PLS and unsupported media responses remain unconfirmed. Basic unencrypted HLS checks require a playlist followed by segment bytes. A response is reachability evidence, not proof of decodability or uninterrupted playback.
+
+Checks run while a curated library view is open, obey background resource policy, and can be disabled under Your mix → Listening & privacy. No new app-operated cloud service or telemetry is involved. The transport is macOS-only; shared iOS code can read evidence but does not launch checks. Tests cover retry/expiry/recovery/persistence/ranking, private redirect rejection and HLS traversal; local-server tests exercise pinned transport, byte limits, redirects and timeout. Logs: `.work/availability-tests.log`, `.work/availability-network.log`, `.work/availability-release.log`.
+
+Availability verification: 384 deterministic checks and 35 local-server network checks passed. Release-mode build succeeded at `.work/AvailabilityQA.app`; the running `dist/RadioPocket.app` was left intact. These checks verify reachability behavior, not a long-running public-station playback soak.

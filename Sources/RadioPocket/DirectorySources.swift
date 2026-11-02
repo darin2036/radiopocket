@@ -206,7 +206,7 @@ actor SomaFMDirectory: DirectoryBackend {
     private struct Channels: Decodable {
         struct Channel: Decodable {
             struct Playlist: Decodable { var url: String; var format: String; var quality: String }
-            var id: String; var title: String; var genre: String?; var listeners: String?; var playlists: [Playlist]?
+            var id: String; var title: String; var genre: String?; var listeners: String?; var playlists: [Playlist]?; var image: String?; var largeimage: String?
         }
         var channels: [Channel]
     }
@@ -231,9 +231,12 @@ actor SomaFMDirectory: DirectoryBackend {
             guard let pick = lists.first(where: { $0.format == "mp3" && $0.quality == "highest" })
                     ?? lists.first(where: { $0.format == "aac" && $0.quality == "highest" }) ?? lists.first,
                   let url = try? StreamAddress.parse(pick.url) else { return nil }
-            return RadioListing(id: UUID.stable("somafm:" + channel.id).uuidString, name: String(channel.title.prefix(300)), address: url.absoluteString,
+            var listing = RadioListing(id: UUID.stable("somafm:" + channel.id).uuidString, name: String(channel.title.prefix(300)), address: url.absoluteString,
                                 tags: (channel.genre ?? "").replacingOccurrences(of: "|", with: ", "), country: "United States", countryCode: "US",
                                 codec: pick.format.uppercased(), bitrate: 0, votes: 0, clicks: Int(channel.listeners ?? "") ?? 0, hls: false, sourceName: "SomaFM")
+            listing.artworkURL = channel.largeimage ?? channel.image
+            listing.homepage = "https://somafm.com/" + channel.id + "/"
+            return listing
         }
     }
 }
@@ -273,7 +276,7 @@ actor StationListDirectory: DirectoryBackend {
     static func parse(_ text: String, base: URL, label: String, sourceID: String, maximumEntries: Int = 5000, video: Bool = false,
                       reject: ((_ title: String, _ group: String, _ address: URL) -> Bool)? = nil) -> [RadioListing] {
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        var entries: [(title: String, group: String, address: String, radio: Bool)] = []
+        var entries: [(title: String, group: String, address: String, radio: Bool, logo: String, language: String)] = []
         if lines.contains(where: { $0.lowercased() == "[playlist]" }) {
             var files: [Int: String] = [:], titles: [Int: String] = [:]
             for line in lines {
@@ -283,9 +286,9 @@ actor StationListDirectory: DirectoryBackend {
                 if key.hasPrefix("file"), let i = Int(key.dropFirst(4)) { files[i] = parts[1] }
                 else if key.hasPrefix("title"), let i = Int(key.dropFirst(5)) { titles[i] = parts[1] }
             }
-            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!, false)) }
+            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!, false, "", "")) }
         } else {
-            var title = "", group = "", playlistGroup = "", radio = false
+            var title = "", group = "", playlistGroup = "", radio = false, logo = "", language = ""
             for line in lines where !line.isEmpty {
                 if line.hasPrefix("#PLAYLIST:") {
                     playlistGroup = String(line.dropFirst(10)).trimmingCharacters(in: .whitespaces)
@@ -300,10 +303,15 @@ actor StationListDirectory: DirectoryBackend {
                     }
                     title = separator.map { String(line[line.index(after: $0)...]) } ?? ""
                     if let range = line.range(of: "group-title=\"") { group = String(line[range.upperBound...].prefix { $0 != "\"" }) } else { group = playlistGroup }
+                    func attribute(_ name: String) -> String {
+                        guard let range = line.range(of: name + "=\"", options: .caseInsensitive) else { return "" }
+                        return String(line[range.upperBound...].prefix { $0 != "\"" }.prefix(2000))
+                    }
+                    logo = attribute("tvg-logo"); language = attribute("tvg-language")
                     // Lists that mix radio into a TV playlist say so with radio="true" or tvg-type="radio".
                     let lower = line.lowercased()
                     radio = lower.contains("radio=\"true\"") || lower.contains("tvg-type=\"radio\"")
-                } else if !line.hasPrefix("#") { entries.append((title, group, line, radio)); title = ""; group = ""; radio = false }
+                } else if !line.hasPrefix("#") { entries.append((title, group, line, radio, logo, language)); title = ""; group = ""; radio = false; logo = ""; language = "" }
             }
         }
         var seen = Set<String>()
@@ -320,6 +328,8 @@ actor StationListDirectory: DirectoryBackend {
                                    address: valid.absoluteString, tags: String(entry.group.prefix(500)), country: "", countryCode: "", codec: video && !audioOnly ? "" : codec,
                                    bitrate: 0, votes: 0, clicks: 0, hls: ext == "m3u8", sourceName: label)
             row.video = video && !audioOnly
+            row.artworkURL = (try? StreamAddress.parse(entry.logo))?.absoluteString
+            row.languages = DiscoveryCatalog.languageCodes(entry.language)
             return row
         }
     }

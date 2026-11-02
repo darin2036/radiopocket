@@ -16,13 +16,15 @@ final class DiscoveryIndex {
             var id: String, name: String, address: String, tags: String, country: String, countryCode: String, codec: String, homepage: String
             var bitrate: Int, votes: Int, clicks: Int
             var hls: Bool
+            var artworkURL: String?
+            var languages: [String]?
             init(_ row: RadioListing) {
                 id = row.id; name = row.name; address = row.address; tags = row.tags; country = row.country; countryCode = row.countryCode; codec = row.codec; homepage = row.homepage
-                bitrate = row.bitrate; votes = row.votes; clicks = row.clicks; hls = row.hls
+                bitrate = row.bitrate; votes = row.votes; clicks = row.clicks; hls = row.hls; artworkURL = row.artworkURL; languages = row.languages
             }
             var row: RadioListing {
                 var row = RadioListing(id: id, name: name, address: address, tags: tags, country: country, countryCode: countryCode, codec: codec, bitrate: bitrate, votes: votes, clicks: clicks, hls: hls, sourceName: nil)
-                row.homepage = homepage; return row
+                row.homepage = homepage; row.artworkURL = artworkURL; row.languages = languages; return row
             }
         }
         var sourceID: String

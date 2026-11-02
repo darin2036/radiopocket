@@ -107,8 +107,15 @@ final class Library {
         var tvHideUnreliable: Bool?
         var discoveryInterests: [String]?
         var discoveryDismissed: [String]?
+        var discoveryFeedback: [String: Int]?
         var discoveryPersonalization: Bool?
         var discoveryAI: Bool?
+        var moodCity: MoodCity?
+        var moodWeatherPromptHandled: Bool?
+        var discoveryLanguages: [String]?
+        var discoveryIncludeUnknownLanguage: Bool?
+        var discoveryAvailabilityChecks: Bool?
+        var discoveryArtwork: Bool?
         var directoryClickReporting: Bool?
     }
     let directory: URL

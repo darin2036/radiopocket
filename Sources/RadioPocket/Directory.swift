@@ -16,6 +16,8 @@ struct RadioListing: Codable, Equatable, Identifiable {
     var directoryID: String?
     /// The station's own website (http/https only), when the directory lists one.
     var homepage = ""
+    var artworkURL: String?
+    var languages: [String]?
     /// Which directory the listing came from; display only, never stored.
     var sourceName: String?
     /// An Internet TV channel rather than a radio station.
@@ -93,7 +95,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
         self.codec = codec; self.bitrate = bitrate; self.votes = votes; self.clicks = clicks; self.hls = hls; self.directoryID = nil; self.sourceName = sourceName
     }
     private enum Keys: String, CodingKey {
-        case stationuuid, name, url, url_resolved, tags, country, countrycode, codec, bitrate, votes, clickcount, hls, homepage
+        case stationuuid, name, url, url_resolved, tags, country, countrycode, codec, bitrate, votes, clickcount, hls, homepage, favicon, language, languagecodes
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -113,7 +115,9 @@ struct RadioListing: Codable, Equatable, Identifiable {
         codec = Self.clean(string(.codec), limit: 24).uppercased()
         bitrate = max(0, number(.bitrate)); votes = max(0, number(.votes)); clicks = max(0, number(.clickcount))
         hls = number(.hls) == 1
-        homepage = Self.clean(string(.homepage), limit: 300)
+        homepage = Self.clean(string(.homepage), limit: 1000)
+        artworkURL = (try? StreamAddress.parse(string(.favicon)))?.absoluteString
+        languages = DiscoveryCatalog.languageCodes(string(.languagecodes) + "," + string(.language))
     }
     // This is an API value object, not a second on-disk station database.
     func encode(to encoder: Encoder) throws {
@@ -122,7 +126,7 @@ struct RadioListing: Codable, Equatable, Identifiable {
         try c.encode(address, forKey: .url_resolved); try c.encode(tags, forKey: .tags)
         try c.encode(country, forKey: .country); try c.encode(countryCode, forKey: .countrycode)
         try c.encode(codec, forKey: .codec); try c.encode(bitrate, forKey: .bitrate); try c.encode(votes, forKey: .votes)
-        try c.encode(clicks, forKey: .clickcount); try c.encode(hls ? 1 : 0, forKey: .hls); try c.encode(homepage, forKey: .homepage)
+        try c.encode(clicks, forKey: .clickcount); try c.encode(hls ? 1 : 0, forKey: .hls); try c.encode(homepage, forKey: .homepage); try c.encodeIfPresent(artworkURL, forKey: .favicon); try c.encode((languages ?? []).joined(separator: ","), forKey: .languagecodes)
     }
     private static func clean(_ value: String, limit: Int) -> String {
         String(String(value.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : String($0) }.joined()).trimmingCharacters(in: .whitespacesAndNewlines).prefix(limit))

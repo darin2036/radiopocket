@@ -187,6 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.syncVideo()
             if self.smokePath == nil { self.nowPlaying.update(station: self.engine.station, title: self.engine.title, status: self.engine.status) }
             if self.engine.status == .playing, let station = self.engine.station {
+                let availability = DiscoveryAvailability.shared(directory: self.library.directory)
+                availability.recordPlayback(station.address)
                 self.refreshTried.remove(station.id)
                 // A moved station that plays: keep the working address in the favorite it came from.
                 if let moved = self.addressFix, moved.address == station.address {
@@ -489,8 +491,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         standard("Redo", Selector(("redo:")), "z", [.command, .shift], to: edit)
         edit.addItem(.separator())
         for (name, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v")] { standard(name, Selector(action), key, to: edit) }
-        standard("Delete", Selector(("delete:")), to: edit)
-        standard("Select All", Selector(("selectAll:")), "a", to: edit)
+        standard("Delete", #selector(NSText.delete(_:)), to: edit)
+        standard("Select All", #selector(NSText.selectAll(_:)), "a", to: edit)
 
         let controls = add("Controls")
         command("Play", "toggle", "p", to: controls)

@@ -90,15 +90,17 @@ struct StationCache: Sendable {
     private struct Row: Codable {
         var i: String, n: String, a: String, t: String, c: String, cc: String, k: String
         var b: Int, v: Int, l: Int, h: Bool, d: String?, w: String, s: String?, m: Bool?
+        var artworkURL: String?
+        var languages: [String]?
         init(_ r: RadioListing) {
             i = r.id; n = r.name; a = r.address; t = r.tags; c = r.country; cc = r.countryCode; k = r.codec
-            b = r.bitrate; v = r.votes; l = r.clicks; h = r.hls; d = r.directoryID; w = r.homepage; s = r.sourceName; m = r.video ? true : nil
+            b = r.bitrate; v = r.votes; l = r.clicks; h = r.hls; d = r.directoryID; w = r.homepage; s = r.sourceName; m = r.video ? true : nil; artworkURL = r.artworkURL; languages = r.languages
         }
         var listing: RadioListing? {
             guard let url = try? StreamAddress.parse(a) else { return nil }
             var row = RadioListing(id: i, name: n, address: url.absoluteString, tags: t, country: c, countryCode: cc, codec: k, bitrate: b, votes: v, clicks: l, hls: h, sourceName: s)
             row.directoryID = d.flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
-            row.video = m == true
+            row.video = m == true; row.artworkURL = artworkURL; row.languages = languages
             row.homepage = (try? StreamAddress.parse(w).absoluteString) ?? ""
             return row
         }
