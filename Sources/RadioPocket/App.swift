@@ -184,8 +184,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let self else { return }
             self.view.needsDisplay = true
             self.visuals.hub.refresh()
+            self.syncVideo()
             if self.smokePath == nil { self.nowPlaying.update(station: self.engine.station, title: self.engine.title, status: self.engine.status) }
             if self.engine.status == .playing, let station = self.engine.station {
+                let availability = DiscoveryAvailability.shared(directory: self.library.directory)
+                availability.recordPlayback(station.address)
                 self.refreshTried.remove(station.id)
                 // A moved station that plays: keep the working address in the favorite it came from.
                 if let moved = self.addressFix, moved.address == station.address {
@@ -419,6 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         visuals.hub.settings = library.state.visualizer ?? VisSettings()
         visuals.hub.source = { [weak self] out, count in self?.engine.readVisSamples(out, count: count) }
         visuals.hub.hasSignal = { [weak self] in self?.engine.hasVisSignal ?? false }
+        _ = visuals.dock
         visuals.perform = { [weak self] in self?.handle($0) }
         visuals.nowPlaying = { [weak self] in
             guard let self else { return ("", "", .idle) }
@@ -487,8 +491,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         standard("Redo", Selector(("redo:")), "z", [.command, .shift], to: edit)
         edit.addItem(.separator())
         for (name, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v")] { standard(name, Selector(action), key, to: edit) }
-        standard("Delete", Selector(("delete:")), to: edit)
-        standard("Select All", Selector(("selectAll:")), "a", to: edit)
+        standard("Delete", #selector(NSText.delete(_:)), to: edit)
+        standard("Select All", #selector(NSText.selectAll(_:)), "a", to: edit)
 
         let controls = add("Controls")
         command("Play", "toggle", "p", to: controls)
@@ -510,7 +514,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             command(title, "sleep:\(minutes)", to: sleep)
             if minutes == 0 { sleep.addItem(.separator()) }
         }
-        command("Loudness Leveling", "leveling", to: controls)
 
         let view = add("View")
         for factor in [1.0, 1.5, 2.0, 3.0] {
@@ -518,11 +521,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             command("Size: \(name)×", "scale\(name)", factor == 1.5 ? "" : name, to: view)
         }
         view.addItem(.separator())
-        command("Compact Player", "shade", to: view)
         command("Always on Top", "ontop", "t", to: view)
-        view.addItem(.separator())
+        command("Compact Player", "shade", to: view)
         command("Choose Skin…", "skins", "k", to: view)
-        command("Use RadioPocket Theme", "resetSkin", to: view)
 
         let visualization = NSMenuItem(title: "Visualization", action: nil, keyEquivalent: "")
         visualization.submenu = visuals.menu(withKeys: true); menu.addItem(visualization)
@@ -580,15 +581,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "favorite": item.title = (engine.station ?? library.state.lastStation).map { library.isFavorite($0) } == true ? "Remove Favorite" : "Save Favorite…"
         case "back10", "forward10", "live": enabled = engine.canTimeShift
         case "previous", "next": enabled = !library.state.favorites.isEmpty
-        case "leveling": mark(engine.leveling)
         case "ontop": mark(window.level == .floating)
         case "shade": mark(view.shaded)
-        case "resetSkin": mark(view.skin == nil)
+        case "scale1", "scale1.5", "scale2", "scale3": mark(library.state.scale == Double(id.dropFirst(5)))
         case "discovery": mark(discovery?.window?.isVisible == true)
         case "favorites": mark(favorites.window?.isVisible == true)
         case "equalizer": mark(eqWindow.isVisible)
         case "player": mark(window.isVisible)
-        case "scale1", "scale1.5", "scale2", "scale3": mark(library.state.scale == Double(id.dropFirst(5)))
         default:
             if id.hasPrefix("sleep:") { mark(Int(id.dropFirst(6)) == sleepMinutes) }
         }
@@ -597,6 +596,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var about: AboutController?
     private var jump: JumpToStationController?
     private var info: StationInfoController?
+    private var video: VideoController?
+    /// The TV channel whose window has already been shown, so closing the window sticks until another channel starts.
+    private var videoShownFor: UUID?
     private let nowPlaying = NowPlayingController()
     let visuals = VisualizerController()
     private var visSave: DispatchWorkItem?
@@ -656,9 +658,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 eqWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: window.frame.minY))
                 eqWindow.makeKeyAndOrderFront(nil)
             }
-        case "skins", "preferences", "directories", "visprefs":
+        case "tvlibrary": makeDiscovery().showTV()
+        case "skins", "preferences", "radioprefs", "tvprefs", "visprefs":
             if preferences == nil { preferences = PreferencesController(app: self) }
-            preferences?.present(skins: id == "skins", directories: id == "directories", visualization: id == "visprefs")
+            preferences?.present(skins: id == "skins", radio: id == "radioprefs", tv: id == "tvprefs", visualization: id == "visprefs")
         case "skin":
             let panel = NSOpenPanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "wsz") ?? .data, .zip]
@@ -700,9 +703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let menu = NSMenu()
             for (title, id) in [("Open Stream…", "open"), ("Jump to Station…", "jump"), ("Save Favorite…", "favorite"), ("Station Info…", "info"), ("", ""),
                                 ("Station Library", "discovery"), ("Favorite Stations", "favorites"), ("Equalizer", "equalizer"), ("Visualization", "vis:panel"), ("Full Screen Visualization", "vis:fullscreen"), ("", ""),
-                                ("Loudness Leveling", "leveling"), ("", ""),
-                                ("Choose Skin…", "skins"), ("Import Classic Skin…", "skin"), ("Use RadioPocket Theme", "resetSkin"), ("", ""),
-                                ("Size: 1×", "scale1"), ("Size: 1.5×", "scale1.5"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
+                                ("Preferences…", "preferences")] {
                 if id.isEmpty { menu.addItem(.separator()); continue }
                 let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = id; menu.addItem(item)
@@ -752,13 +753,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if StreamProbe.isUnreachable(message) { deadStations.record(station.address, .dead) }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            if !self.refreshTried.contains(station.id), let current = await self.directoryClient.refreshed(uuid: station.id.uuidString), current.address != station.address {
+            if station.video != true, !self.refreshTried.contains(station.id), let current = await self.directoryClient.refreshed(uuid: station.id.uuidString), current.address != station.address {
                 self.refreshTried.insert(station.id)
-                let moved = Station(id: station.id, name: station.name, address: current.address)
+                let moved = Station(id: station.id, name: station.name, address: current.address, video: station.video)
                 self.addressFix = moved
                 self.play(moved); return
             }
-            let alternates = await self.directoryClient.alternates(for: station)
+            let alternates = station.video == true ? [] : await self.directoryClient.alternates(for: station)
             guard self.engine.status == .failed, self.engine.station?.id == station.id, !self.offering else { return }
             self.offerAlternatives(for: station, message: message, alternates: alternates)
         }
@@ -821,12 +822,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         view.needsDisplay = true
     }
 
+    /// Shows the video window when a TV channel starts and puts it away when radio takes over.
+    private func syncVideo() {
+        guard smokePath == nil, library != nil else { return }
+        guard let station = engine.station, station.video == true else { video?.hide(); videoShownFor = nil; return }
+        video?.retitle(station.name)
+        guard [.connecting, .playing].contains(engine.status), videoShownFor != station.id else { return }
+        videoShownFor = station.id
+        if video == nil { video = VideoController(engine: engine) }
+        video?.level = window.level
+        video?.present(title: station.name, below: window)
+    }
+
     private func play(_ station: Station) {
         info?.stationChanged()
+        videoShownFor = nil
         do { try library.update { $0.lastStation = station }; recordedStation = nil; engine.play(station) }
         catch { showError(error) }
     }
     func saveWindowLevel() {
+        video?.level = window.level
         do { try library.update { $0.alwaysOnTop = window.level == .floating } } catch { showError(error) }
     }
     private func scheduleVolumeSave() {
@@ -896,10 +911,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Opens the station lists from disk and keeps them fresh in the background; nothing happens in smoke or preview runs.
     func updateBackgroundStations() {
         guard smokePath == nil, argument("--preview") == nil else { return }
-        let client = directoryClient, sources = library.state.directories ?? [], checking = library.state.checkStations != false
+        let client = directoryClient, sources = library.state.directories ?? [], checking = library.state.checkStations != false, safety = library.state.tvSafety
         Task { await client.setChecking(checking) }
         if library.state.backgroundStations == false { Task { await client.stopBackgroundRefresh() } }
-        else { Task { await client.configure(sources); await client.startBackgroundRefresh() } }
+        else { Task { await client.configure(sources, safety: safety); await client.startBackgroundRefresh() } }
     }
     func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations(); await client.forgetDeadStations() } }
     private var housekeeping: Housekeeping?
@@ -907,6 +922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func startHousekeeping() {
         guard smokePath == nil, argument("--preview") == nil else { return }
         housekeeping = Housekeeping(directory: directoryClient)
+        housekeeping?.releaseDiscoveryMemory = { [weak self] pressure in self?.discovery?.releaseIdleMemory(underPressure: pressure) }
         housekeeping?.start()
     }
     private func makeDiscovery() -> DiscoveryController {
@@ -976,6 +992,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         } catch { showError(error) }
     }
     /// Tells an open library window that the user changed their directory list.
+    func tvFiltersChanged() { discovery?.safetyChanged(); updateBackgroundStations() }
     func directoriesChanged() { discovery?.refreshSources(); updateBackgroundStations() }
     func showError(_ error: Error) {
         let alert = NSAlert(); alert.alertStyle = .warning

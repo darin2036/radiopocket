@@ -129,6 +129,25 @@ final class PlayerWindow: NSWindow {
         return result
     }
 
+    /// Pulls the edges being dragged (`x` values for left/right, `y` values for the bottom) onto the screen edges and
+    /// the edges of neighbouring panels within `snapDistance`, so a resized window lines up with what it sits beside.
+    func snappedResize(_ rect: NSRect, left: Bool, right: Bool, bottom: Bool) -> NSRect {
+        let screen = (NSScreen.screens.first { $0.frame.intersects(rect) } ?? self.screen ?? NSScreen.main)?.visibleFrame ?? rect
+        var xs: [CGFloat] = [screen.minX, screen.maxX], ys: [CGFloat] = [screen.minY, screen.maxY]
+        for other in neighbours.map(\.frame) {
+            if rect.minY - Self.snapDistance < other.maxY && rect.maxY + Self.snapDistance > other.minY { xs += [other.minX, other.maxX] }
+            if rect.minX - Self.snapDistance < other.maxX && rect.maxX + Self.snapDistance > other.minX { ys += [other.minY, other.maxY] }
+        }
+        func pull(_ value: CGFloat, _ targets: [CGFloat]) -> CGFloat {
+            targets.filter { abs($0 - value) <= Self.snapDistance }.min { abs($0 - value) < abs($1 - value) } ?? value
+        }
+        var minX = rect.minX, maxX = rect.maxX, minY = rect.minY
+        if left { minX = min(pull(minX, xs), maxX - minSize.width) }
+        if right { maxX = max(pull(maxX, xs), minX + minSize.width) }
+        if bottom { minY = min(pull(minY, ys), rect.maxY - minSize.height) }
+        return NSRect(x: minX, y: minY, width: maxX - minX, height: rect.maxY - minY)
+    }
+
     /// Drags the window by its title strip with Winamp-style snapping. Hold Option to move freely. With
     /// `movesDockedWindows` (the player), anything docked to it moves too.
     func trackDrag(_ event: NSEvent, movesDockedWindows: Bool = false) {
@@ -159,25 +178,24 @@ class ClassicButton: NSButton {
         if window?.firstResponder === self { NSColor.darkGray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 3, dy: 3)).stroke() }
     }
 }
+/// A drop-down arrow drawn as a pixel triangle so it centres the same way in every control.
+private func dropArrow(in rect: NSRect, color: NSColor) {
+    let cx = rect.midX.rounded(), cy = rect.midY.rounded()
+    color.setFill()
+    for i in 0..<3 { NSRect(x: cx - 3 + CGFloat(i), y: cy - 1 + CGFloat(i), width: 7 - CGFloat(i) * 2, height: 1).fill() }
+}
 final class ClassicPopup: NSPopUpButton {
     override var isFlipped: Bool { true }
+    // The system bezel's alignment insets would make the drawn control larger than its constraints, so it would
+    // stand taller than a ClassicButton and crowd its neighbours.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
     override func draw(_ dirtyRect: NSRect) {
         ClassicUI.button(bounds, down: isHighlighted)
-        ClassicUI.caption(title, rect: NSRect(x: 2, y: 0, width: bounds.width - 17, height: bounds.height), color: ClassicUI.buttonText.withAlphaComponent(isEnabled ? 1 : 0.4), alignment: .left)
-        ClassicUI.caption("▾", rect: NSRect(x: bounds.width - 18, y: 0, width: 17, height: bounds.height), color: ClassicUI.buttonText)
+        let ink = ClassicUI.buttonText.withAlphaComponent(isEnabled ? 1 : 0.4)
+        ClassicUI.caption(title, rect: NSRect(x: 3, y: 0, width: bounds.width - 20, height: bounds.height), color: ink, alignment: .left)
+        dropArrow(in: NSRect(x: bounds.width - 16, y: 0, width: 12, height: bounds.height), color: ink)
     }
 }
-final class ClassicCombo: NSComboBox {
-    override var isFlipped: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-        ClassicUI.black.setFill(); bounds.fill()
-        NSColor.gray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)).stroke()
-        ClassicUI.caption(stringValue, rect: NSRect(x: 1, y: 0, width: bounds.width - 19, height: bounds.height), color: isEnabled ? ClassicUI.text : ClassicUI.dim, alignment: .left)
-        let arrow = NSRect(x: bounds.width - 18, y: 0, width: 18, height: bounds.height)
-        ClassicUI.button(arrow); ClassicUI.caption("▾", rect: arrow, color: ClassicUI.buttonText)
-    }
-}
-
 class ClassicChrome: NSView {
     var title = "MEDIA LIBRARY" { didSet { needsDisplay = true } }
     private var resizeStart: (frame: NSRect, mouse: NSPoint, edges: Edges)?
@@ -236,12 +254,14 @@ class ClassicChrome: NSView {
             }
             let corner = min(125, w / 2)
             _ = sprite(NSRect(x: 0, y: 42, width: corner, height: 14), NSRect(x: 0, y: h - 14, width: corner, height: 14))
-            // The filler's 14th row (y 85) is the sheet's cyan divider, so take 13 rows and stretch them over the 14px strip.
+            // The filler's 14th row (y 85) is the sheet's cyan divider: draw its 13 real rows 1:1 so its lines meet the
+            // corners' lines, and take the last row from the corners' own last row.
             var fx = corner
             while fx < w - corner {
                 let width = min(25, w - corner - fx)
-                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 13), NSRect(x: fx, y: h - 14, width: width, height: 14)); fx += width
+                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 13), NSRect(x: fx, y: h - 14, width: width, height: 13)); fx += width
             }
+            _ = sprite(NSRect(x: corner - 1, y: 55, width: 1, height: 1), NSRect(x: corner, y: h - 1, width: max(0, w - 2 * corner), height: 1))
             _ = sprite(NSRect(x: 125 - corner, y: 57, width: corner, height: 14), NSRect(x: w - corner, y: h - 14, width: corner, height: 14))
             let titleColor = ClassicUI.skin?.genTitleColor ?? ClassicUI.text
             ClassicUI.caption(title, rect: NSRect(x: titleStart + 22, y: 3, width: middle + 6, height: 12), color: titleColor, font: titleFont)
@@ -269,7 +289,11 @@ class ClassicChrome: NSView {
         if edges.contains(.right) { width = max(window.minSize.width, start.width + dx) }
         if edges.contains(.left) { width = max(window.minSize.width, start.width - dx); x = start.maxX - width }
         if edges.contains(.bottom) { height = max(window.minSize.height, start.height - dy) }
-        window.setFrame(NSRect(x: x, y: start.maxY - height, width: width, height: height), display: true)
+        var frame = NSRect(x: x, y: start.maxY - height, width: width, height: height)
+        if !event.modifierFlags.contains(.option), let player = window as? PlayerWindow {
+            frame = player.snappedResize(frame, left: edges.contains(.left), right: edges.contains(.right), bottom: edges.contains(.bottom))
+        }
+        window.setFrame(frame, display: true)
     }
     override func mouseUp(with event: NSEvent) { resizeStart = nil }
 }

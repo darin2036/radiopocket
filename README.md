@@ -1,6 +1,6 @@
-# RadioPocket 0.8
+# RadioPocket 0.9.2 (development)
 
-A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, large bundled station database. Station discovery offers seven built-in sources: Radio Browser, SomaFM, laut.fm, Radio Paradise, Curated Internet Radio Streams, IPRD, and Junguler Radio Playlists.
+A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, large bundled station database. Station discovery offers eight built-in sources: Radio Browser, SomaFM, laut.fm, Radio Paradise, Curated Internet Radio Streams, IPRD, Junguler Radio Playlists, and rrradio.
 
 <img src="previews/RadioPocket-preview.png" alt="RadioPocket’s compact player using the original Winamp Classic skin" width="550">
 
@@ -30,7 +30,7 @@ A small, native macOS internet-radio player inspired by classic Winamp. Swift + 
 
 <img src="previews/RadioPocket-directories.png" alt="Directory settings showing Radio Browser, SomaFM, laut.fm and IPRD" width="760">
 
-Screenshots show the current 0.8 player, equalizer, and library. Directory listings change over time.
+Screenshots show the current 0.9 player, equalizer, and library. Directory listings change over time.
 
 ## Quick start
 
@@ -50,13 +50,15 @@ If the app has already been built, just open `dist/RadioPocket.app`. Build outpu
 
 After running `./build.sh`, open `dist/RadioPocket.app`. The build is for Apple Silicon Macs running macOS 13 or later. It is locally ad-hoc signed, not notarized for public distribution.
 
+`./build.sh` also writes `dist/RadioPocket-<version>.zip` for sharing. Because the app is not notarized, macOS blocks it the first time it is opened from a download: open System Settings ▸ Privacy & Security and click **Open Anyway**, or run `xattr -cr RadioPocket.app` before opening it.
+
 - Click **+** (the eject button in imported skins), or press **⌘O**, to enter a direct HTTP/HTTPS audio URL. A broadcaster’s homepage is usually not its audio stream.
 - Optionally name the station and select **Save to Favorites**.
 - **+ FAV / ⌘D** saves or renames the current station. **⌘L** opens favorites, with Play, Add, Edit, and Remove. Double-click a station to play it.
 - Previous/next move through favorites. **Space** toggles playback. **↑ / ↓** adjust volume. Click or drag the volume bar.
 - Pause keeps the connection and buffers what the station sends (up to five minutes), so Play continues where you stopped. **← / →** (or **[ / ]**) go back or forward 10 seconds, and **L** (⌘J) jumps to live; the display shows how far behind live you are. Stop clears the elapsed listening timer and disconnects. Closing the player quits and stops audio.
-- **⌘1 / ⌘2 / ⌘3** select interface scale. Default is 550 × 232 points (2×). Drag the title strip to move the player. **⌘T** toggles always-on-top.
-- **SK / ⌘K** opens Preferences → Skins. **⌘,** opens Preferences with appearance, playback (volume, equalizer and spatial audio), and library pages. **⌘I** imports a classic `.wsz` or ZIP skin. You can also drop a skin file on the player. **View → Use RadioPocket Theme** restores RadioPocket’s own artwork.
+- **⌘1 / ⌘2 / ⌘3** select interface scale. Default is 550 × 232 points (2×). Drag the title strip to move the player. **⌘T** toggles always-on-top. Both are also in Preferences ▸ Appearance.
+- **SK / ⌘K** opens Preferences → Skins. **⌘,** opens Preferences: appearance, skins, playback (spatial audio, loudness leveling), Internet Radio, Internet TV and visualization. Every setting lives there only; the menus hold actions and windows. Import a classic `.wsz` or ZIP skin with **⌘I** or from Preferences ▸ Skins, or drop a skin file on the player. Choosing RadioPocket Original restores its own artwork.
 
 ## Opening radio links from websites
 
@@ -81,7 +83,7 @@ References: [Apple URL/document handling](https://developer.apple.com/documentat
 
 ## Station library and discovery
 
-Click **LIB** or press **⌘B** to open the classic-style station library. The compact player remains separate. Browse **Popular**, **Top Rated**, **All Stations**, or the genre tree; **Favorites** and **Recently Played** are local collections.
+Click **LIB** or press **⌘B** to open the library on **Discover**. Choose **Station browser** for the classic table. The compact player remains separate. Browse **Popular**, **Top Rated**, **All Stations**, or the genre tree; **Favorites** and **Recently Played** are local collections.
 
 - Search station names, choose or enter a genre, and filter by country, format, or minimum bitrate.
 - Sort using the dropdown or column headings. The station list is one continuous list: the next 100 directory records load automatically as you scroll toward the end, and format filtering can hide some of them.
@@ -89,20 +91,20 @@ Click **LIB** or press **⌘B** to open the classic-style station library. The c
 - Recent history contains up to 30 unique stations that actually reached playback. Failed connection attempts are not added.
 - The default format filter favors MP3/AAC/HLS. **All formats** reveals other entries, including codecs macOS may not support. Directory codec and working-status metadata can be stale.
 
-Open **Preferences → Directories** to choose from seven built-in sources or add your own M3U / PLS list or Radio Browser API server. Radio Browser, SomaFM, laut.fm, Radio Paradise, and Mike Pierce’s Curated Internet Radio Streams start enabled. IPRD and Junguler Radio Playlists are available but unchecked initially because they download larger catalogs. Saved on/off choices survive upgrades; new built-ins appear automatically. The directory list scrolls when needed.
+Open **Preferences → Directories** to choose from eight built-in sources or add your own M3U / PLS list or Radio Browser API server. Radio Browser, SomaFM, laut.fm, Radio Paradise, and Mike Pierce’s Curated Internet Radio Streams start enabled. IPRD, Junguler Radio Playlists and rrradio are available but unchecked initially because they download larger catalogs. Saved on/off choices survive upgrades; new built-ins appear automatically. The directory list scrolls when needed.
 
 [Source documentation and limits](Resources/DIRECTORY-SOURCES.md) lists the public endpoints and attribution. No API key or account is needed for these eight sources. Some catalogs omit country, codec, or bitrate metadata, so those filters can hide their listings. laut.fm filters and sorts within each provider page.
 
 The primary source remains [Radio Browser](https://www.radio-browser.info/), an open community-maintained directory, without an API key. Popularity reflects directory clicks; votes are directory votes, not live listener counts. Station availability varies. Directory errors do not interrupt current audio, and local favorites, history, and direct URLs remain usable.
 
-The library opens from a small on-disk cache of the lists people open first (Popular, Top Rated and A–Z, plus any genre or country view already browsed), so it appears instantly and works offline. Ten seconds after launch, and about every 45 minutes while the app is open, RadioPocket quietly refreshes any of those pages older than six hours: one 100-station request at a time, 1.5 seconds apart, at utility priority, then it frees any downloaded catalog. It pauses for 15 minutes on Low Power Mode, a hot Mac, a hotspot or Low Data Mode, or after two failed requests. A page shown from the cache says when it was saved; a page older than a week is only used if the directory is unreachable. Refresh always goes live. The cache is one small JSON file per page in `~/Library/Caches/RadioPocket/Stations`, capped at 300 files / 16 MB and pruned after a month, read only when a page is opened (nothing is held in memory). Typed searches are never saved. Turn it off, or clear it, in Preferences ▸ Media Library; with it off there is no directory request until the library is opened. Live requests use mirror failover, cancellation of obsolete searches, a six-page in-memory cache lasting five minutes, and a 2 MB response limit for Radio Browser. SomaFM, laut.fm and custom lists also have bounded requests; optional full-catalog feeds have separate documented caps. No artwork downloads or per-station polling. An explicit Tune In from the directory sends its standard station-click request to Radio Browser; browsing alone does not. There is no separate app analytics service.
+The library opens from a small on-disk cache of the lists people open first (Popular, Top Rated and A–Z, plus any genre or country view already browsed), so it appears instantly and works offline. Ten seconds after launch, and about every 45 minutes while the app is open, RadioPocket quietly refreshes any of those pages older than six hours: one 100-station request at a time, 1.5 seconds apart, at utility priority, then it frees any downloaded catalog. It pauses for 15 minutes on Low Power Mode, a hot Mac, a hotspot or Low Data Mode, or after two failed requests. A page shown from the cache says when it was saved; a page older than a week is only used if the directory is unreachable. Refresh always goes live. The cache is one small JSON file per page in `~/Library/Caches/RadioPocket/Stations`, capped at 300 files / 16 MB and pruned after a month, read only when a page is opened (nothing is held in memory). Typed searches are never saved. Turn it off, or clear it, in Preferences ▸ Internet Radio; with it off there is no directory request until the library is opened. Live requests use mirror failover, cancellation of obsolete searches, a six-page in-memory cache lasting five minutes, and a 2 MB response limit for Radio Browser. SomaFM, laut.fm and custom lists also have bounded requests; optional full-catalog feeds have separate documented caps. No per-station polling. Discover can fetch station-provided artwork for visible cards into memory only; disable it in Your mix. Radio Browser station-click reporting is off by default; Discover never reports clicks. There is no separate app analytics service.
 
 ## Station tools, windows and sleep
 
 - **Jump to Station** (**J** in the player, or **⇧⌘J**): type part of a station name, **↑ / ↓** to choose, **Return** to tune in. It searches your favorites and recently played stations.
 - **Station Info** (**I**, or **⇧⌘I**): the live format and sample rate, the bitrate measured from the connection, how much time-shift buffer is kept and how far behind live you are, and the leveler's gain. **Look Up Details** asks Radio Browser for the country, genre and homepage; nothing is sent until you press it.
 - **Sleep Timer** (Controls menu): stops playback after 15, 30, 45, 60, 90 or 120 minutes, fading the volume over the last 20 seconds and restoring it afterwards. The countdown shows on the station line.
-- **Loudness Leveling** (Controls menu): a slow level follower with a soft limiter that brings quiet stations up (to +10 dB) and loud ones down (to −12 dB) toward one average level. It follows the EQ, applies to every stream RadioPocket decodes itself, and is off by default. Station switches take a few seconds to settle.
+- **Loudness Leveling** (Preferences ▸ Playback): a slow level follower with a soft limiter that brings quiet stations up (to +10 dB) and loud ones down (to −12 dB) toward one average level. It follows the EQ, applies to every stream RadioPocket decodes itself, and is off by default. Station switches take a few seconds to settle.
 - **Window snapping and docking**: the player, equalizer, library and favorites snap to screen edges and to one another. The equalizer opens docked under the player, and dragging the player carries docked windows with it. Hold **Option** while dragging to move freely. Double-click a title bar to window-shade it.
 
 ## Visualizer
@@ -291,3 +293,19 @@ UI development checks: combine `--preview /absolute/player.png` with `--eq-previ
 ## License
 
 RadioPocket's own code is released under the [MIT License](LICENSE). Bundled third-party code is listed in [THIRD-PARTY.md](Resources/THIRD-PARTY.md). Classic skins keep their authors' terms; see [SKIN-CREDITS.md](Resources/SKIN-CREDITS.md).
+
+## Versioning and discovery development
+
+New releases use `major.minor.patch` (for example, `0.9.1`, `0.9.2`, then `0.10.0`). Historical release labels stay unchanged. The first header in `Resources/CHANGELOG.txt` supplies the macOS app version, bundle build version, and ZIP filename.
+
+The `feature/0.9.1-local-discovery` branch implements the first local discovery release. See the [specification](docs/Discovery-Engine-Product-Spec.md) and [implementation status](docs/Discovery-Implementation.md) for scope and verification. Icecast directory discovery remains retired.
+
+### Discover (0.9.1)
+
+Discover includes only stations with an estimated quality of four stars or higher; unknown quality is excluded. Stars estimate audio quality from codec and bitrate, not current availability. Discover curates music streams from your enabled directories using the existing on-device recent-playback list and favorites. With little usable history, it offers a varied mix across genres. **Your mix** offers 72 genre choices, 32 languages, and controls for history personalization, optional on-device AI and artwork. The overflow menu offers refresh and playlist import. Cards retain a short recommendation reason, subtle quality stars and station website links when supplied. No detailed listening log or cloud inference is added.
+
+Click **Refresh directories** to obtain more candidates. Searches normally use the saved SQLite index, including listings from ordinary browsing. Coverage is partial: this is not a complete internet catalog. On a new installation, choose interests and refresh, or import a playlist. Refreshing a specific chosen interest sends that genre to enabled directories; listening history itself stays local.
+
+Adult/sensitive metadata and unclassified categories are excluded from Discover even if the TV browser filters are disabled. This conservative music-focused filter can omit otherwise suitable stations. It cannot guarantee the live content of a broadcaster. Thumbs up raises a station’s priority; thumbs down moves it lower without hiding it. Click a selected thumb again to clear it, or use **Reset station feedback**. Votes stay on this device; previously hidden stations become lower-priority recommendations. **Clear saved discovery data** clears the local index, saved directory pages, interest choices and feedback, but keeps favorites, history and configured/imported sources. Scheduled directory refresh may subsequently repopulate metadata unless disabled in Preferences.
+
+AI requires a compatible Apple Intelligence device with its model available. It only interprets search text into music genres, broadcast languages and literal words; unsupported devices, errors, refusals and a five-second deadline fall back to literal search. It cannot browse, install sources, or start playback. Discovery makes bounded local availability checks for up to six recommended stations per batch, two at a time, while its window is open. A recent stream response raises ranking independently of quality stars. Three failures at least two minutes apart temporarily exclude a station for 30 minutes; inconclusive/offline results add no strikes. Successful checks are reused for 15 minutes, and successful playback restores eligibility. Disable checks in Your mix → Listening & privacy. Checks contact stations directly (revealing your IP); only bounded result metadata is saved locally. General station-browser probing remains disabled. Actual playback remains a user action.

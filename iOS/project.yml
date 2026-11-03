@@ -28,7 +28,13 @@ targets:
           - Changelog.swift
           - EQPresets.swift
           - Directory.swift
+          - DiscoveryCatalog.swift
+          - DiscoveryIndex.swift
+          - DiscoveryRecommendations.swift
+          - DiscoveryAvailability.swift
           - Library.swift
+          - MoodWeather.swift
+          - MoodPlanning.swift
           - Equalizer.swift
           - EQFile.swift
           - DirectorySources.swift

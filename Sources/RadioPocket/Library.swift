@@ -4,6 +4,8 @@ struct Station: Codable, Equatable, Identifiable {
     var id: UUID = UUID()
     var name: String
     var address: String
+    /// True for an Internet TV channel; nil for radio, so saved stations from before TV support decode unchanged.
+    var video: Bool?
 }
 
 enum RadioError: LocalizedError {
@@ -100,6 +102,21 @@ final class Library {
         var backgroundStations: Bool?
         /// Leaves out directory stations that no longer answer. On unless turned off.
         var checkStations: Bool?
+        /// Internet TV filters: adult channels, and geo-blocked or unidentifiable streams. Both on unless turned off.
+        var tvHideAdult: Bool?
+        var tvHideUnreliable: Bool?
+        var discoveryInterests: [String]?
+        var discoveryDismissed: [String]?
+        var discoveryFeedback: [String: Int]?
+        var discoveryPersonalization: Bool?
+        var discoveryAI: Bool?
+        var moodCity: MoodCity?
+        var moodWeatherPromptHandled: Bool?
+        var discoveryLanguages: [String]?
+        var discoveryIncludeUnknownLanguage: Bool?
+        var discoveryAvailabilityChecks: Bool?
+        var discoveryArtwork: Bool?
+        var directoryClickReporting: Bool?
     }
     let directory: URL
     private(set) var state: State

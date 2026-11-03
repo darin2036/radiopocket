@@ -40,6 +40,7 @@ final class AboutController: NSObject {
         let scroll = NSScrollView(frame: NSRect(x: 14, y: 60, width: size.width - 28, height: size.height - 74))
         scroll.hasVerticalScroller = true; scroll.borderType = .lineBorder; scroll.drawsBackground = true; scroll.backgroundColor = ClassicUI.black
         text.isEditable = false; text.isSelectable = true; text.drawsBackground = true; text.backgroundColor = ClassicUI.black
+        text.frame = NSRect(origin: .zero, size: scroll.contentSize)
         text.textContainerInset = NSSize(width: 6, height: 6)
         text.isVerticallyResizable = true; text.autoresizingMask = [.width]
         text.textContainer?.widthTracksTextView = true
@@ -65,7 +66,7 @@ final class AboutController: NSObject {
 
     private func show(_ tab: Tab) {
         selected = tab
-        for (index, button) in tabs.enumerated() { button.state = index == tab.rawValue ? .on : .off; button.alphaValue = index == tab.rawValue ? 1 : 0.6 }
+        for (index, button) in tabs.enumerated() { button.isHighlighted = index == tab.rawValue }
         let history = tab == .history
         versions.isHidden = !history
         if history { selectVersion() } else { setText(body(for: tab)) }

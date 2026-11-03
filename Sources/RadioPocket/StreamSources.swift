@@ -37,7 +37,7 @@ final class HTTPSource: NSObject, URLSessionDataDelegate, StreamSource, @uncheck
         session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
         var request = URLRequest(url: url)
         request.setValue("1", forHTTPHeaderField: "Icy-MetaData")
-        request.setValue("RadioPocket/0.8", forHTTPHeaderField: "User-Agent")
+        request.setValue("RadioPocket/0.9", forHTTPHeaderField: "User-Agent")
         session?.dataTask(with: request).resume()
     }
     func stop() { stopped = true; session?.invalidateAndCancel(); session = nil }
@@ -108,7 +108,7 @@ final class HLSSource: StreamSource, @unchecked Sendable {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         config.urlCache = nil
-        config.httpAdditionalHeaders = ["User-Agent": "RadioPocket/0.8"]
+        config.httpAdditionalHeaders = ["User-Agent": "RadioPocket/0.9"]
         session = URLSession(configuration: config)
     }
 

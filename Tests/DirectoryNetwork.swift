@@ -13,6 +13,11 @@ import Foundation
             var query = DirectoryQuery(); query.name = "network"
             let first = try await client.search(query)
             try check(first.stations.count == 100 && first.hasMore, "Directory fails over from an unavailable mirror")
+            let (beforeLocalSearch, _) = try await URLSession.shared.data(from: base.appendingPathComponent("counts"))
+            let localPage = try await client.searchSaved(query)
+            let (afterLocalSearch, _) = try await URLSession.shared.data(from: base.appendingPathComponent("counts"))
+            try check(localPage.stations.count == 100 && localPage.cached, "Local discovery searches metadata indexed from federation")
+            try check(beforeLocalSearch == afterLocalSearch, "Local search issues zero directory or click requests")
             let moved = await client.refreshed(uuid: "00000000-0000-0000-0000-00000000004d")
             try check(moved?.address.hasSuffix("moved=1") == true, "A saved station’s current address is looked up by its directory UUID")
             let unknown = await client.refreshed(uuid: "00000000-0000-0000-0000-000000000063")
@@ -66,8 +71,9 @@ import Foundation
             let counts = try JSONDecoder().decode([String: Int].self, from: after)
             try check(counts["/json/url/00000000-0000-0000-0000-000000000001"] == 1, "Explicit play reports one valid station click")
             // Saved station lists: instant from disk, stale pages refreshed quietly, offline falls back.
-            let saveDir = FileManager.default.temporaryDirectory.appendingPathComponent("radiopocket-saved-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: saveDir) }
+            let saveRoot = FileManager.default.temporaryDirectory.appendingPathComponent("radiopocket-saved-\(UUID().uuidString)")
+            let saveDir = saveRoot.appendingPathComponent("Stations")
+            defer { try? FileManager.default.removeItem(at: saveRoot) }
             let store = StationCache(directory: saveDir)
             let firstRun = RadioDirectory(baseURLs: [base], cache: store)
             var browse = DirectoryQuery(); browse.sourceID = "radio-browser"
@@ -103,6 +109,24 @@ import Foundation
             var warmed = 0
             for _ in 0..<300 where warmed < 9 { try await Task.sleep(nanoseconds: 100_000_000); warmed = (try? FileManager.default.contentsOfDirectory(atPath: saveDir.path).filter { $0.hasSuffix(".json") }.count) ?? 0 }
             try check(warmed >= 9, "Warming saves the opening views one page at a time")
+            var savedQuery = browse; savedQuery.name = "Test"
+            let localOffline = try await afterRestart.searchSaved(savedQuery)
+            try check(localOffline.stations.count == 100, "Persisted full-text metadata is searchable while directory is offline")
+            await afterRestart.configure(onlyFixture + [DirectorySource(id: "radio-browser", name: "Radio Browser", kind: .radioBrowser, enabled: false)])
+            try check(try await afterRestart.searchSaved(savedQuery).stations.isEmpty, "Disabling a source immediately removes its local search results")
+            let probeBase = URL(string: CommandLine.arguments[1])!
+            var pinned = URLComponents(url: probeBase, resolvingAgainstBaseURL: false)!
+            pinned.host = "fixture.example"
+            let probeRoot = pinned.url!
+            let audioReply = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-audio"), pinnedIPv4: "127.0.0.1")
+            try check(audioReply?.status == 200 && (audioReply?.body.count ?? 0) >= 256 && (audioReply?.body.count ?? 0) <= 49152, "Pinned transport reads bounded stream bytes from the fixture")
+            let redirectReply = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-redirect"), pinnedIPv4: "127.0.0.1")
+            try check(redirectReply?.status == 302, "Pinned transport never automatically follows redirects")
+            let emptyReply = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-empty"), pinnedIPv4: "127.0.0.1")
+            try check(emptyReply?.body.isEmpty == true, "Empty stream fixture remains empty")
+            let started = Date()
+            let stalled = DiscoveryProbe.transfer(probeRoot.appendingPathComponent("probe-stall"), pinnedIPv4: "127.0.0.1")
+            try check(stalled?.status == 599 && Date().timeIntervalSince(started) < 9, "Stalled stream transport times out without an indefinite read")
             print("\(count) network checks passed.")
         } catch {
             fputs("\(error.localizedDescription)\n", stderr); exit(1)

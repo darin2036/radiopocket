@@ -128,7 +128,7 @@ final class AudioOutput: @unchecked Sendable {
                 buffer = next; used = 0; frames = 0; descriptions.removeAll(keepingCapacity: true)
             }
             guard let current = buffer else { break }
-            packet.data.withUnsafeBytes { memcpy(current.pointee.mAudioData.advanced(by: Int(used)), $0.baseAddress!, $0.count) }
+            _ = packet.data.withUnsafeBytes { memcpy(current.pointee.mAudioData.advanced(by: Int(used)), $0.baseAddress!, $0.count) }
             if !constantRate { descriptions.append(AudioStreamPacketDescription(mStartOffset: Int64(used), mVariableFramesInPacket: variable ? packet.frames : 0, mDataByteSize: size)) }
             used += size; frames += packet.frames
             // Compressed packets are small, so flush early; PCM fills most of a buffer so eight of them hold real time.
