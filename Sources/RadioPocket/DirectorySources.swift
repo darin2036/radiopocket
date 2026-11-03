@@ -318,7 +318,7 @@ actor StationListDirectory: DirectoryBackend {
         return entries.prefix(maximumEntries).compactMap { entry in
             guard let address = URL(string: entry.address, relativeTo: base)?.absoluteURL, let valid = try? StreamAddress.parse(address.absoluteString),
                   RadioListing.isViable(name: entry.title, address: valid), reject?(entry.title, entry.group, valid) != true,
-                  seen.insert(valid.absoluteString).inserted else { return nil }
+                  seen.insert(DiscoveryIndex.matchKey(valid.absoluteString)).inserted else { return nil }
             let ext = valid.pathExtension.lowercased()
             let codec = ["mp3": "MP3", "aac": "AAC", "ogg": "OGG", "opus": "OPUS", "m3u8": "HLS"][ext] ?? ""
             let name = String(entry.title.trimmingCharacters(in: .whitespaces).prefix(300))

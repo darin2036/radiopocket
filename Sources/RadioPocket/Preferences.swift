@@ -165,7 +165,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     private var allRemovedBuiltIns: [DirectorySource] { (app.library.state.directories ?? []).filter { $0.removed == true && $0.builtIn } }
     private var removedBuiltIns: [DirectorySource] { allRemovedBuiltIns.filter { $0.isTV == showsTV } }
     private func directoriesPage(top: CGFloat) {
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 64, width: 524, height: top - 64))
+        let scroll = FittedScrollView(frame: NSRect(x: 0, y: 64, width: 524, height: top - 64))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         if directoryTable.tableColumns.isEmpty { directoryTable.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("directory"))) }
         directoryTable.tableColumns[0].width = 500
@@ -339,7 +339,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         table.headerView = nil; table.rowHeight = 24; table.intercellSpacing = NSSize(width: 0, height: 0)
         table.delegate = self; table.dataSource = self; table.allowsEmptySelection = false
         table.setAccessibilityLabel(table === sidebar ? "Preferences categories" : "Installed skins")
-        let scroll = NSScrollView(frame: frame); scroll.borderType = .bezelBorder; scroll.hasVerticalScroller = true; scroll.documentView = table
+        let scroll = FittedScrollView(frame: frame); scroll.borderType = .bezelBorder; scroll.hasVerticalScroller = true; scroll.documentView = table
         return scroll
     }
     private func label(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat = 500, height: CGFloat = 24, bold: Bool = false) {

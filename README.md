@@ -295,13 +295,13 @@ UI development checks: combine `--preview /absolute/player.png` with `--eq-previ
 
 ## License
 
-RadioPocket's own code is released under the [MIT License](LICENSE). Bundled third-party code is listed in [THIRD-PARTY.md](Resources/THIRD-PARTY.md). Classic skins keep their authors' terms; see [SKIN-CREDITS.md](Resources/SKIN-CREDITS.md).
+RadioPocket's own code is released under the [MIT License](LICENSE). Bundled third-party code is listed in [THIRD-PARTY.md](Resources/THIRD-PARTY.md). Classic skins you import keep their authors' terms.
 
 ## Versioning and discovery development
 
 New releases use `major.minor.patch` (for example, `0.9.1`, `0.9.2`, then `0.10.0`). Historical release labels stay unchanged. The first header in `Resources/CHANGELOG.txt` supplies the macOS app version, bundle build version, and ZIP filename.
 
-The `feature/0.9.1-local-discovery` branch implements the first local discovery release. See the [specification](docs/Discovery-Engine-Product-Spec.md) and [implementation status](docs/Discovery-Implementation.md) for scope and verification. Icecast directory discovery remains retired.
+Local discovery is described in the [specification](docs/Discovery-Engine-Product-Spec.md) and [implementation status](docs/Discovery-Implementation.md) for scope and verification. Icecast directory discovery remains retired.
 
 ### Discover (0.9.1)
 

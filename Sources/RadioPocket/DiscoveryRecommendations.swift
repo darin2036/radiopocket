@@ -52,11 +52,11 @@ enum DiscoveryRecommendations {
     static let minimumQuality = 4
     static func build(records: [DiscoveryIndex.Record], recent: [Station], favorites: [Station], interests: [String], dismissed: Set<String>, personalizes: Bool, video: Bool, languages: [String] = [], includeUnknownLanguage: Bool = true, requiredGenres: [String] = [], feedback: [String: Int] = [:], availability: [String: DiscoveryAvailability.Evidence] = [:], day: Int = Int(Date().timeIntervalSince1970 / 86400)) -> DiscoveryFeed {
         let now = Date()
-        let grouped = Dictionary(grouping: records, by: { DiscoveryIndex.endpointKey($0.restored.address) })
+        let grouped = Dictionary(grouping: records, by: { DiscoveryIndex.matchKey($0.restored.address) })
         // Any conflicting sensitive metadata excludes the endpoint, not just the winning listing.
         let safe = grouped.values.filter { !Task.isCancelled && $0.allSatisfy { DiscoverySafety.allows($0.restored) } }
         let known = Dictionary(uniqueKeysWithValues: safe.compactMap { group -> (String, RadioListing)? in
-            guard let first = group.first else { return nil }; return (DiscoveryIndex.endpointKey(first.restored.address), first.restored)
+            guard let first = group.first else { return nil }; return (DiscoveryIndex.matchKey(first.restored.address), first.restored)
         })
         var affinity: [String: Double] = [:]
         let explicit = interests.filter { DiscoverySafety.genres.contains($0) }
@@ -66,7 +66,7 @@ enum DiscoveryRecommendations {
         var historyMatches = 0
         if personalizes {
             for (position, station) in recent.prefix(30).enumerated() {
-                let row = known[DiscoveryIndex.endpointKey(station.address)] ?? RadioListing(station: station)
+                let row = known[DiscoveryIndex.matchKey(station.address)] ?? RadioListing(station: station)
                 guard DiscoverySafety.allows(row) else { continue }
                 let tags = DiscoverySafety.interests(row)
                 recentGenres.formUnion(tags)
@@ -75,7 +75,7 @@ enum DiscoveryRecommendations {
             }
         }
         for station in favorites {
-            let row = known[DiscoveryIndex.endpointKey(station.address)] ?? RadioListing(station: station)
+            let row = known[DiscoveryIndex.matchKey(station.address)] ?? RadioListing(station: station)
             if DiscoverySafety.allows(row) {
                 favoriteGenres.formUnion(DiscoverySafety.interests(row))
                 for tag in DiscoverySafety.interests(row) { affinity[tag, default: 0] += 3 }
@@ -84,8 +84,8 @@ enum DiscoveryRecommendations {
         let basis = !explicit.isEmpty ? "Fresh frequencies for your kind of listening" : historyMatches >= 3 ? "Inspired by your recent listening" : !affinity.isEmpty ? "A starting mix from your favorites and recent stations" : "A varied starting mix — no listening history needed"
         if affinity.isEmpty { for tag in ["ambient", "jazz", "classical", "world", "indie", "electronic"] { affinity[tag] = 1 } }
         let top = affinity.keys.sorted { affinity[$0] == affinity[$1] ? $0 < $1 : affinity[$0]! > affinity[$1]! }
-        let heard = Set((personalizes ? recent : []).map { DiscoveryIndex.endpointKey($0.address) })
-        let saved = Set(favorites.map { DiscoveryIndex.endpointKey($0.address) })
+        let heard = Set((personalizes ? recent : []).map { DiscoveryIndex.matchKey($0.address) })
+        let saved = Set(favorites.map { DiscoveryIndex.matchKey($0.address) })
         let candidates: [DiscoveryPick] = safe.compactMap { group in
             guard !Task.isCancelled else { return nil }
             guard let entry = group.max(by: { $0.fetched < $1.fetched }) else { return nil }
@@ -123,7 +123,7 @@ enum DiscoveryRecommendations {
         func shelf(_ title: String, _ subtitle: String, _ pool: [DiscoveryPick]) -> DiscoveryShelf? {
             var hosts: [String: Int] = [:], picks: [DiscoveryPick] = []
             for pick in pool {
-                let key = DiscoveryIndex.endpointKey(pick.listing.address), host = URL(string: key)?.host ?? key
+                let key = DiscoveryIndex.matchKey(pick.listing.address), host = URL(string: key)?.host ?? key
                 guard !used.contains(key), hosts[host, default: 0] < 2 else { continue }
                 used.insert(key); hosts[host, default: 0] += 1; picks.append(pick)
                 if picks.count == 6 { break }
@@ -131,7 +131,7 @@ enum DiscoveryRecommendations {
             return picks.isEmpty ? nil : DiscoveryShelf(title: title, subtitle: subtitle, picks: picks)
         }
         var shelves: [DiscoveryShelf] = []
-        if let section = shelf("Your next frequency", basis, ordered.filter { $0.feedback >= 0 && !heard.contains(DiscoveryIndex.endpointKey($0.listing.address)) && !saved.contains(DiscoveryIndex.endpointKey($0.listing.address)) }) { shelves.append(section) }
+        if let section = shelf("Your next frequency", basis, ordered.filter { $0.feedback >= 0 && !heard.contains(DiscoveryIndex.matchKey($0.listing.address)) && !saved.contains(DiscoveryIndex.matchKey($0.listing.address)) }) { shelves.append(section) }
         let unexpected = candidates.sorted { a, b in
             let av = a.availability?.boost(at: now) ?? 0, bv = b.availability?.boost(at: now) ?? 0
             if av != bv { return av > bv }
@@ -139,7 +139,7 @@ enum DiscoveryRecommendations {
             return rotationByAddress[a.listing.address]! < rotationByAddress[b.listing.address]!
         }
         if let section = shelf("Beyond your usual", "Different sounds, refreshed each day on this device", unexpected.filter { $0.feedback >= 0 && (tagsByAddress[$0.listing.address] ?? []).isDisjoint(with: Set(top.prefix(2))) }) { shelves.append(section) }
-        if let section = shelf("Worth another listen", "Familiar stations from your local library", ordered.filter { $0.feedback >= 0 && (heard.contains(DiscoveryIndex.endpointKey($0.listing.address)) || saved.contains(DiscoveryIndex.endpointKey($0.listing.address))) }) { shelves.append(section) }
+        if let section = shelf("Worth another listen", "Familiar stations from your local library", ordered.filter { $0.feedback >= 0 && (heard.contains(DiscoveryIndex.matchKey($0.listing.address)) || saved.contains(DiscoveryIndex.matchKey($0.listing.address))) }) { shelves.append(section) }
         if let section = shelf("Around the dial", "More from your enabled directories", unexpected.filter { $0.feedback >= 0 }) { shelves.append(section) }
         if let section = shelf("Further down your dial", "Lower priority from your feedback, still here to explore", ordered.filter { $0.feedback < 0 }) { shelves.append(section) }
         return DiscoveryFeed(shelves: shelves, interests: Array(top.prefix(5)), basis: basis, indexed: records.count, updated: records.map(\.fetched).max())
@@ -228,14 +228,14 @@ enum MoodCuration {
         var shelves: [DiscoveryShelf] = []
         for theme in themes {
             if Task.isCancelled { break }
-            let remaining = records.filter { !used.contains(DiscoveryIndex.endpointKey($0.restored.address)) }
+            let remaining = records.filter { !used.contains(DiscoveryIndex.matchKey($0.restored.address)) }
             let feed = DiscoveryRecommendations.build(records: remaining, recent: state.recentStations ?? [], favorites: state.favorites, interests: state.discoveryInterests ?? [], dismissed: Set(state.discoveryDismissed ?? []), personalizes: state.discoveryPersonalization != false, video: false, languages: state.discoveryLanguages ?? [], includeUnknownLanguage: state.discoveryIncludeUnknownLanguage != false, requiredGenres: theme.genres, feedback: state.discoveryFeedback ?? [:], availability: availability, day: moment.day)
-            let picks = feed.shelves.flatMap(\.picks).filter { $0.feedback >= 0 }.filter { !used.contains(DiscoveryIndex.endpointKey($0.listing.address)) }.prefix(6).map { pick -> DiscoveryPick in
+            let picks = feed.shelves.flatMap(\.picks).filter { $0.feedback >= 0 }.filter { !used.contains(DiscoveryIndex.matchKey($0.listing.address)) }.prefix(6).map { pick -> DiscoveryPick in
                 var result = pick
                 let genre = theme.genres.first { DiscoverySafety.interests(pick.listing).contains($0) } ?? "music"
                 result.reason = genre.capitalized + " for this moment"; return result
             }
-            used.formUnion(picks.map { DiscoveryIndex.endpointKey($0.listing.address) })
+            used.formUnion(picks.map { DiscoveryIndex.matchKey($0.listing.address) })
             if !picks.isEmpty { shelves.append(DiscoveryShelf(title: theme.title, subtitle: moment.label + " · From your directories", picks: picks)) }
         }
         return DiscoveryFeed(shelves: shelves, interests: state.discoveryInterests ?? [], basis: moment.label + " · Moods made on this device", indexed: records.count, updated: records.map(\.fetched).max())

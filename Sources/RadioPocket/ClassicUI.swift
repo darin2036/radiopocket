@@ -4,6 +4,8 @@ import AppKit
 enum ClassicUI {
     static let font = NSFont(name: "Tahoma", size: 11) ?? .systemFont(ofSize: 11)
     static let small = font
+    /// Station and song/artist for the shaded title bars; nothing is returned while no station is loaded.
+    static var nowPlaying: () -> String? = { nil }
     /// Colours follow the skin (GENEX.BMP / PLEDIT.TXT), as Winamp's general windows do.
     static var palette: SkinPalette { skin?.palette ?? .native }
     static var panel: NSColor { palette.window }
@@ -79,6 +81,34 @@ final class PlayerWindow: NSWindow {
     /// Resizing is handled by `ClassicChrome`, not the system mask: a `.resizable` borderless window reserves
     /// an edge strip that swallows clicks on the title-bar buttons.
     var isUserResizable = false
+
+    /// Double-clicking a panel's title bar shades it to the bar alone, as the player does; the full panel is kept aside.
+    private var shadeRestore: (content: NSView, frame: NSRect, minSize: NSSize, autosave: String)?
+    var isShaded: Bool { shadeRestore != nil }
+    func toggleShade() {
+        if let saved = shadeRestore {
+            shadeRestore = nil
+            minSize = saved.minSize
+            setFrameAutosaveName(saved.autosave)
+            // The top edge stays where the bar was left, even if it was dragged while shaded.
+            setFrame(NSRect(x: frame.minX, y: frame.maxY - saved.frame.height, width: saved.frame.width, height: saved.frame.height), display: false)
+            contentView = saved.content
+            display()
+        } else if let chrome = contentView as? ClassicChrome {
+            shadeRestore = (chrome, frame, minSize, frameAutosaveName)
+            // A shaded bar must not be remembered as the panel's size for the next launch.
+            setFrameAutosaveName("")
+            let bar = ClassicChrome(frame: NSRect(origin: .zero, size: NSSize(width: frame.width, height: ClassicChrome.barHeight)))
+            bar.title = chrome.title; bar.shadeMinimizable = styleMask.contains(.miniaturizable); bar.isShadeBar = true
+            minSize = NSSize(width: minSize.width, height: ClassicChrome.barHeight)
+            contentView = bar
+            setFrame(NSRect(x: frame.minX, y: frame.maxY - ClassicChrome.barHeight, width: frame.width, height: ClassicChrome.barHeight), display: true)
+        }
+    }
+    override func close() {
+        if isShaded { toggleShade() }
+        super.close()
+    }
 
     static let snapDistance: CGFloat = 12
     /// The windows other windows snap to: the other visible RadioPocket panels.
@@ -197,10 +227,29 @@ final class ClassicPopup: NSPopUpButton {
     }
 }
 class ClassicChrome: NSView {
+    static let barHeight: CGFloat = 20
     var title = "MEDIA LIBRARY" { didSet { needsDisplay = true } }
+    /// The stand-in a shaded window shows: just the title bar, with a mini transport and the now-playing text on it.
+    var isShadeBar = false { didSet { if isShadeBar { addShadeControls() } } }
+    var shadeMinimizable = false
+    private func addShadeControls() {
+        var x = bounds.width - 12
+        for (caption, action) in [("×", #selector(shadeClose)), ("−", #selector(shadeMinimize))] {
+            if caption == "−", !shadeMinimizable { continue }
+            let button = ClassicWindowButton(title: caption, target: self, action: action)
+            button.isBordered = false; button.frame = NSRect(x: x, y: 3, width: 9, height: 9); button.autoresizingMask = .minXMargin
+            addSubview(button); x -= 11
+        }
+        let transport = MiniTransport(frame: NSRect(x: 10, y: 4, width: MiniTransport.width, height: 12))
+        let label = MarqueeLabel(frame: NSRect(x: 54, y: 4, width: bounds.width - 54 - 30, height: 12), font: .monospacedSystemFont(ofSize: 9, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.title ?? "" }
+        label.autoresizingMask = .width
+        addSubview(transport); addSubview(label)
+    }
+    @objc private func shadeClose() { window?.close() }
+    @objc private func shadeMinimize() { window?.miniaturize(nil) }
     private var resizeStart: (frame: NSRect, mouse: NSPoint, edges: Edges)?
     private struct Edges: OptionSet { let rawValue: Int; static let left = Edges(rawValue: 1), right = Edges(rawValue: 2), bottom = Edges(rawValue: 4) }
-    private var userResizable: Bool { (window as? PlayerWindow)?.isUserResizable == true }
+    private var userResizable: Bool { !isShadeBar && (window as? PlayerWindow)?.isUserResizable == true }
     /// Left, right and bottom edges plus the bottom-right grip. The top edge is left alone so the title buttons stay clickable.
     private func edges(at p: NSPoint) -> Edges {
         guard userResizable else { return [] }
@@ -232,7 +281,7 @@ class ClassicChrome: NSView {
         let row: CGFloat = window?.isKeyWindow == false ? 21 : 0
         let titleFont = NSFont.monospacedSystemFont(ofSize: 9, weight: .bold)
         let textWidth = ceil((title as NSString).size(withAttributes: [.font: titleFont]).width) + 4
-        let middle = max(25, min(w - 150, (textWidth / 25).rounded(.up) * 25))
+        let middle = isShadeBar ? max(25, w - 150) : max(25, min(w - 150, (textWidth / 25).rounded(.up) * 25))
         let titleStart = ((w - middle) / 2 - 25).rounded(.down)
         func tile(_ sx: CGFloat, _ sy: CGFloat, _ sw: CGFloat, _ sh: CGFloat, from: CGFloat, to: CGFloat, y: CGFloat) {
             var x = from
@@ -246,13 +295,14 @@ class ClassicChrome: NSView {
             tile(104, row, 25, 20, from: titleStart + 50 + middle, to: w - 25, y: 0)
             _ = sprite(NSRect(x: 130, y: row, width: 25, height: 20), NSRect(x: w - 25, y: 0, width: 25, height: 20))
             var y: CGFloat = 20
-            while y < h - 14 {
+            while !isShadeBar, y < h - 14 {
                 let height = min(29, h - 14 - y)
                 _ = sprite(NSRect(x: 127, y: 42, width: 11, height: height), NSRect(x: 0, y: y, width: 11, height: height))
                 _ = sprite(NSRect(x: 139, y: 42, width: 8, height: height), NSRect(x: w - 8, y: y, width: 8, height: height))
                 y += height
             }
             let corner = min(125, w / 2)
+            if !isShadeBar {
             _ = sprite(NSRect(x: 0, y: 42, width: corner, height: 14), NSRect(x: 0, y: h - 14, width: corner, height: 14))
             // The filler's 14th row (y 85) is the sheet's cyan divider: draw its 13 real rows 1:1 so its lines meet the
             // corners' lines, and take the last row from the corners' own last row.
@@ -263,14 +313,17 @@ class ClassicChrome: NSView {
             }
             _ = sprite(NSRect(x: corner - 1, y: 55, width: 1, height: 1), NSRect(x: corner, y: h - 1, width: max(0, w - 2 * corner), height: 1))
             _ = sprite(NSRect(x: 125 - corner, y: 57, width: corner, height: 14), NSRect(x: w - corner, y: h - 14, width: corner, height: 14))
+            }
             let titleColor = ClassicUI.skin?.genTitleColor ?? ClassicUI.text
-            ClassicUI.caption(title, rect: NSRect(x: titleStart + 22, y: 3, width: middle + 6, height: 12), color: titleColor, font: titleFont)
+            if !isShadeBar { ClassicUI.caption(title, rect: NSRect(x: titleStart + 22, y: 3, width: middle + 6, height: 12), color: titleColor, font: titleFont) }
         } else {
             for y in [4, 7, 10, 13] { NSColor(white: 0.55, alpha: 1).setFill(); NSRect(x: 8, y: CGFloat(y), width: w - 16, height: 1).fill() }
-            let tw = min(w - 90, CGFloat(title.count * 7 + 20))
-            let label = NSRect(x: (w - tw)/2, y: 2, width: tw, height: 16)
-            ClassicUI.panel.setFill(); label.fill()
-            ClassicUI.caption(title, rect: label, color: ClassicUI.text, font: .monospacedSystemFont(ofSize: 10, weight: .bold))
+            if !isShadeBar {
+                let tw = min(w - 90, CGFloat(title.count * 7 + 20))
+                let label = NSRect(x: (w - tw)/2, y: 2, width: tw, height: 16)
+                ClassicUI.panel.setFill(); label.fill()
+                ClassicUI.caption(title, rect: label, color: ClassicUI.text, font: .monospacedSystemFont(ofSize: 10, weight: .bold))
+            }
         }
         ClassicUI.dim.setStroke()
         if userResizable { for i in 0..<3 { let p = NSBezierPath(); p.move(to: NSPoint(x: w-5-CGFloat(i*3), y: h-4)); p.line(to: NSPoint(x:w-4,y:h-5-CGFloat(i*3))); p.stroke() } }
@@ -279,7 +332,10 @@ class ClassicChrome: NSView {
         let p = convert(event.locationInWindow, from: nil)
         let hit = edges(at: p)
         if !hit.isEmpty, let window { resizeStart = (window.frame, NSEvent.mouseLocation, hit) }
-        else if p.y < 20 { (window as? PlayerWindow)?.trackDrag(event) }
+        else if p.y < Self.barHeight {
+            if event.clickCount == 2 { (window as? PlayerWindow)?.toggleShade() }
+            else { (window as? PlayerWindow)?.trackDrag(event) }
+        }
     }
     override func mouseDragged(with event: NSEvent) {
         guard let (start, point, edges) = resizeStart, let window else { return }

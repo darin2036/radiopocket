@@ -67,7 +67,7 @@ private final class LibraryNode {
 final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuItemValidation {
     private lazy var availability = DiscoveryAvailability.shared(directory: library.directory)
     private var availabilityTask: Task<Void, Never>?
-    private var curationTask: Task<(DiscoveryFeed, MoodPlanning.Context?), Never>?
+    private var curationTask: Task<(DiscoveryFeed, MoodPlanning.Context?, (key: String, plan: MoodPlan)?), Never>?
     private var availabilityTimer: Timer?
     private let library: Library
     private let directory: RadioDirectory
@@ -98,6 +98,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private var locationTask: Task<Void, Never>?
     private let moodWeather = MoodWeather()
     private var moodPlans: [String: MoodPlan] = [:]
+    /// The plan the visible moods came from. Passive reloads reuse it for the same day, time-of-day and settings so the cards stay put.
+    private var pinnedMoodPlan: (key: String, plan: MoodPlan)?
     private var lastMoodWeather: (city: MoodCity, kind: MoodWeather.Kind?)?
     private var moodSources: [DirectorySource]?
     private var recommendationFavorites: [Station] = []
@@ -273,7 +275,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         popup.widthAnchor.constraint(equalToConstant: width).isActive = true
     }
     private func scroll(_ table: NSTableView) -> NSScrollView {
-        let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false; scroll.horizontalScrollElasticity = .none
+        let scroll = FittedScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true
         scroll.borderType = .lineBorder; scroll.scrollerStyle = .legacy; scroll.backgroundColor = BrowserTheme.black; scroll.drawsBackground = true
         table.backgroundColor = BrowserTheme.black; table.rowHeight = 19; table.intercellSpacing = NSSize(width: 1, height: 0)
         table.selectionHighlightStyle = .regular
@@ -461,7 +463,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         discoverPanel.interpret = { [weak self] text in self?.interpretDiscovery(text) }
         discoverPanel.clearData = { [weak self] in
             guard let self else { return }
-            self.task?.cancel(); self.generation = UUID(); self.moodPlans.removeAll()
+            self.task?.cancel(); self.generation = UUID(); self.moodPlans.removeAll(); self.pinnedMoodPlan = nil
             self.task = Task { @MainActor [weak self, directory] in
                 let cleared = await directory.clearSavedStations()
                 guard let self else { return }
@@ -480,7 +482,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             let id = "local-" + UUID().uuidString.lowercased(), name = url.deletingPathExtension().lastPathComponent
             let rows = try LocalPlaylistDirectory.read(url: url, label: name, sourceID: id, video: discoverVideo)
             guard !rows.isEmpty else { throw RadioError.message("This file has no supported absolute HTTP/HTTPS station entries.") }
-            let unique = Dictionary(grouping: rows, by: { DiscoveryIndex.endpointKey($0.address) }).count
+            let unique = Dictionary(grouping: rows, by: { DiscoveryIndex.matchKey($0.address) }).count
             let safe = rows.filter(DiscoverySafety.allows).count
             let alert = NSAlert(); alert.messageText = "Import \(name)?"
             alert.informativeText = "\(rows.count) usable entries, \(unique) unique streams. \(safe) entries have suitable music metadata for Discover. Up to 5,000 entries are imported. Other stations remain available in the browser."
@@ -518,6 +520,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         guard scope.curated else { return }
         aiTask?.cancel(); aiTimeout?.cancel(); aiGeneration = UUID()
         curationTask?.cancel()
+        if refresh { pinnedMoodPlan = nil }
         task?.cancel(); generation = UUID(); let token = generation
         hasMore = false; loadingMore = false; setBusy(false); hasLoaded = true
         showDiscoverySurface(true); discoverPanel.setMoods(scope == .moods); discoverPanel.configure(state: library.state)
@@ -534,7 +537,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             availabilityTimer?.tolerance = 30
         }
         let availabilitySnapshot = availability.snapshot()
-        let cachedPlans = moodPlans
+        let cachedPlans = moodPlans, pinned = pinnedMoodPlan
         let cachedWeather = lastMoodWeather
         let state = library.state, video = moods ? false : discoverVideo, text = moods ? "" : discoverText
         recommendationFavorites = state.favorites; recommendationRecents = state.recentStations ?? []; recommendationSources = state.directories
@@ -548,13 +551,21 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 if refresh { failures = try await directory.refreshDiscovery(video: video, genre: state.discoveryInterests?.last ?? "") }
                 let records = try await directory.discoveryRecords(video: video, text: text)
                 try Task.checkCancellation()
-                let worker = Task.detached(priority: .userInitiated) { () -> (DiscoveryFeed, MoodPlanning.Context?) in
+                let worker = Task.detached(priority: .userInitiated) { () -> (DiscoveryFeed, MoodPlanning.Context?, (key: String, plan: MoodPlan)?) in
                     if moods {
                         let context = MoodPlanning.context(records: records, state: state, moment: moment, weather: cachedWeather?.city == state.moodCity ? cachedWeather?.kind : nil)
-                        let plan = state.discoveryAI == true ? cachedPlans[context.cacheKey] ?? MoodPlanning.fallback(context) : MoodPlanning.fallback(context)
-                        return (MoodPlanning.build(records: records, state: state, context: context, plan: plan, availability: availabilitySnapshot), context)
+                        let pinKey = [context.moment.key, state.moodCity?.name ?? "", state.discoveryAI == true ? "ai" : "", context.languages.sorted().joined(separator: ",")].joined(separator: "|")
+                        let plan: MoodPlan, settled: Bool
+                        if let pinned, pinned.key == pinKey { plan = pinned.plan; settled = true }
+                        else {
+                            let refined = state.discoveryAI == true ? cachedPlans[context.cacheKey] : nil
+                            plan = refined ?? MoodPlanning.fallback(context)
+                            // Pin only once weather and the AI plan have landed, so the first load can still settle into the final set.
+                            settled = (state.moodCity == nil || cachedWeather?.city == state.moodCity) && (state.discoveryAI != true || refined != nil)
+                        }
+                        return (MoodPlanning.build(records: records, state: state, context: context, plan: plan, availability: availabilitySnapshot), context, settled ? (pinKey, plan) : nil)
                     }
-                    return (DiscoveryRecommendations.build(records: records, recent: state.recentStations ?? [], favorites: state.favorites, interests: requiredGenres.isEmpty ? state.discoveryInterests ?? [] : requiredGenres, dismissed: Set(state.discoveryDismissed ?? []), personalizes: state.discoveryPersonalization != false, video: video, languages: requestedLanguages.isEmpty ? state.discoveryLanguages ?? [] : requestedLanguages, includeUnknownLanguage: requestedLanguages.isEmpty && state.discoveryIncludeUnknownLanguage != false, requiredGenres: requiredGenres, feedback: state.discoveryFeedback ?? [:], availability: availabilitySnapshot), nil)
+                    return (DiscoveryRecommendations.build(records: records, recent: state.recentStations ?? [], favorites: state.favorites, interests: requiredGenres.isEmpty ? state.discoveryInterests ?? [] : requiredGenres, dismissed: Set(state.discoveryDismissed ?? []), personalizes: state.discoveryPersonalization != false, video: video, languages: requestedLanguages.isEmpty ? state.discoveryLanguages ?? [] : requestedLanguages, includeUnknownLanguage: requestedLanguages.isEmpty && state.discoveryIncludeUnknownLanguage != false, requiredGenres: requiredGenres, feedback: state.discoveryFeedback ?? [:], availability: availabilitySnapshot), nil, nil)
                 }
                 self?.curationTask = worker
                 let prepared = await worker.value
@@ -562,6 +573,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 guard let self, token == self.generation else { return }
                 self.curationTask = nil
                 let feed = prepared.0
+                if moods { self.pinnedMoodPlan = prepared.2 ?? self.pinnedMoodPlan }
                 self.discoverPanel.render(feed, favorites: state.favorites)
                 let date = feed.updated.map { " · Saved " + $0.formatted(date: .abbreviated, time: .shortened) } ?? ""
                 let warning = failures.isEmpty ? "" : " · Couldn’t refresh: " + failures.joined(separator: ", ")

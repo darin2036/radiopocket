@@ -63,6 +63,16 @@ final class DiscoveryIndex {
         if (url.scheme == "https" && url.port == 443) || (url.scheme == "http" && url.port == 80) { url.port = nil }
         return url.string ?? address
     }
+    /// Looser identity for spotting the same stream listed by different directories; saved votes and availability keep using `endpointKey`.
+    static func matchKey(_ address: String) -> String {
+        guard var url = URLComponents(string: address) else { return address }
+        let secure = url.scheme?.lowercased() == "https"
+        if (secure && url.port == 443) || (!secure && url.port == 80) { url.port = nil }
+        url.scheme = "http"; url.host = url.host?.lowercased(); url.fragment = nil
+        while url.path.hasSuffix("/") { url.path.removeLast() }
+        if url.query?.isEmpty == true { url.query = nil }
+        return url.string ?? address
+    }
     func ingest(_ rows: [RadioListing], source: String, name: String, now: Date = Date()) throws {
         try execute("BEGIN IMMEDIATE")
         do {

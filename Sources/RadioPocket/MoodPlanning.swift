@@ -53,7 +53,7 @@ enum MoodPlanning {
         var cacheKey: String { prompt + "\nSources: " + sources.sorted().joined(separator: ",") }
     }
     static func context(records: [DiscoveryIndex.Record], state: Library.State, moment: MoodCuration.Moment, weather: MoodWeather.Kind?) -> Context {
-        let groups = Dictionary(grouping: records, by: { DiscoveryIndex.endpointKey($0.restored.address) })
+        let groups = Dictionary(grouping: records, by: { DiscoveryIndex.matchKey($0.restored.address) })
         var counts: [String: Int] = [:]
         var eligible: [String: RadioListing] = [:]
         for (key, group) in groups {
@@ -73,7 +73,7 @@ enum MoodPlanning {
         for genre in state.discoveryInterests ?? [] where DiscoveryCatalog.genres.contains(genre) { preferenceScores[genre, default: 0] += 20 }
         let stations = state.favorites + (state.discoveryPersonalization != false ? Array((state.recentStations ?? []).prefix(20)) : [])
         for station in stations {
-            guard let row = eligible[DiscoveryIndex.endpointKey(station.address)] else { continue }
+            guard let row = eligible[DiscoveryIndex.matchKey(station.address)] else { continue }
             for genre in DiscoverySafety.interests(row) { preferenceScores[genre, default: 0] += 1 }
         }
         let preferences = preferenceScores.keys.sorted { preferenceScores[$0] == preferenceScores[$1] ? $0 < $1 : preferenceScores[$0]! > preferenceScores[$1]! }

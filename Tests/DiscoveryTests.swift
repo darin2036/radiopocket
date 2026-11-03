@@ -26,6 +26,8 @@ func checkDiscovery(at root: URL) throws {
     try check(index.records(sources: ["one", "two"]).count == 3, "Overlapping endpoints preserve both source listings")
     try check(DiscoveryIndex.endpointKey("HTTPS://RADIO.EXAMPLE:443/live?token=a") == "https://radio.example/live?token=a", "Conservative endpoint identity normalizes host and port")
     try check(DiscoveryIndex.endpointKey("https://radio.example/live?token=a") != DiscoveryIndex.endpointKey("https://radio.example/live?token=b"), "Signed URL query strings stay distinct")
+    try check(DiscoveryIndex.matchKey("http://Radio.Example:80/live/") == DiscoveryIndex.matchKey("https://radio.example/live"), "Directories listing the same stream over http, https or with a trailing slash match")
+    try check(DiscoveryIndex.matchKey("https://radio.example/live?token=a") != DiscoveryIndex.matchKey("https://radio.example/live?token=b"), "Match identity keeps distinct query strings apart")
     try index.retainSources(["two"])
     try check(index.records(sources: ["one", "two"]).count == 1, "Removing a source removes only its provenance")
     try index.clear()

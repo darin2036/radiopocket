@@ -8,10 +8,23 @@ final class PixelButton: NSButton {
 
 final class PlayerView: NSView {
     let engine: RadioEngine
-    var skin: ClassicSkin? { didSet { ClassicUI.skin = skin; needsDisplay = true; controls.forEach { $0.needsDisplay = true } } }
+    var skin: ClassicSkin? { didSet { ClassicUI.skin = skin; needsDisplay = true; controls.forEach { $0.needsDisplay = true }; miniTransport.needsDisplay = true; miniTitle.needsDisplay = true } }
     var shaded = false { didSet {
-        controls.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }; needsDisplay = true
+        controls.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }
+        miniTransport.isHidden = !shaded; miniTitle.isHidden = !shaded
+        needsDisplay = true
     } }
+    /// The shaded bar's controls: previous / play-pause / next, and the scrolling station and song.
+    private lazy var miniTransport: MiniTransport = {
+        let view = MiniTransport(frame: NSRect(x: 19, y: 2, width: MiniTransport.width, height: 10))
+        view.colors = { [weak self] in (self?.green ?? ClassicUI.green, self?.ink ?? ClassicUI.black) }
+        view.isHidden = true; return view
+    }()
+    private lazy var miniTitle: MarqueeLabel = {
+        let view = MarqueeLabel(frame: NSRect(x: 61, y: 2, width: 179, height: 10), font: .monospacedSystemFont(ofSize: 7, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.engine.title ?? "" }
+        view.colors = { [weak self] in (self?.green ?? ClassicUI.green, self?.ink ?? ClassicUI.black) }
+        view.isHidden = true; return view
+    }()
     var action: ((String) -> Void)?
     var volumeChanged: ((Float) -> Void)?
     var balanceChanged: ((Float) -> Void)?
@@ -70,6 +83,7 @@ final class PlayerView: NSView {
             }
         }
         addToolTip(NSRect(x: 107, y: 57, width: 68, height: 15), owner: Self.volumeTip, userData: nil)
+        addSubview(miniTransport); addSubview(miniTitle)
     }
     required init?(coder: NSCoder) { fatalError() }
 

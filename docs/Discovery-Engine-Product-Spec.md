@@ -22,7 +22,7 @@ Success means a user can add a source, search its indexed stations alongside oth
 
 ## 2. Verified application baseline
 
-Inspected repository: `/Users/darinlaframboise/Development/radiopocket`. Findings are from source and documentation, not a fresh playback test or audit of every provider.
+Findings are from source and documentation, not a fresh playback test or audit of every provider.
 
 | Existing component | Present behavior | Implementation direction |
 |---|---|---|

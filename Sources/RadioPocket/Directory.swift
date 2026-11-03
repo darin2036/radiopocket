@@ -397,7 +397,7 @@ actor RadioDirectory {
         let records = try discoveryRecords(video: query.video, text: query.name, sourceID: query.sourceID)
         var seen = Set<String>()
         let rows = records.map(\.restored).filter { row in
-            guard seen.insert(DiscoveryIndex.endpointKey(row.address)).inserted else { return false }
+            guard seen.insert(DiscoveryIndex.matchKey(row.address)).inserted else { return false }
             if row.video, let url = URL(string: row.address) { return TVSafety.allows(title: row.name, group: row.tags, address: url, settings: safety) }
             return true
         }
@@ -645,7 +645,7 @@ actor RadioDirectory {
         for round in 0..<(pages.map { $0.stations.count }.max() ?? 0) {
             for page in pages where round < page.stations.count {
                 let row = page.stations[round]
-                if seen.insert(row.address).inserted { merged.append(row) }
+                if seen.insert(DiscoveryIndex.matchKey(row.address)).inserted { merged.append(row) }
             }
         }
         if query.order != "clickcount" { merged = RadioListing.ordered(merged, by: query.order, reverse: query.reverse) }

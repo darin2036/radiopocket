@@ -33,7 +33,7 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
         let content = chrome
         let close = ClassicWindowButton(title: "×", target: self, action: #selector(closePanel))
         close.frame = NSRect(x: 528, y: 3, width: 9, height: 9); close.autoresizingMask = [.minXMargin]; close.isBordered = false; close.setAccessibilityLabel("Close favorites"); content.addSubview(close)
-        let scroll = NSScrollView()
+        let scroll = FittedScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
         scroll.borderType = .lineBorder; scroll.scrollerStyle = .legacy; scroll.backgroundColor = ClassicUI.black
@@ -162,6 +162,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         favorites.edit = { [weak self] in self?.openDialog(station: $0, favoriteOnly: true) }
         favorites.report = { [weak self] in self?.showError($0) }
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
+        ClassicUI.nowPlaying = { [weak self] in
+            guard let self, let station = self.engine.station else { return nil }
+            // A connecting or failed station says so, since there is no song to show.
+            let song = ([.connecting, .failed].contains(self.engine.status) ? self.engine.detail : self.engine.title).trimmingCharacters(in: .whitespacesAndNewlines)
+            return [station.name, song == station.name ? "" : song].filter { !$0.isEmpty }.joined(separator: " — ")
+        }
+        ClassicUI.isPlaying = { [weak self] in self.map { [.playing, .connecting].contains($0.engine.status) } ?? false }
+        ClassicUI.transport = { [weak self] in self?.handle($0) }
         updateBackgroundStations()
         startHousekeeping()
         if smokePath == nil, argument("--preview") == nil { checkForUpdatesAtLaunch() }
@@ -184,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         engine.changed = { [weak self] in
             guard let self else { return }
             self.view.needsDisplay = true
+            NotificationCenter.default.post(name: ClassicUI.playbackChanged, object: nil)
             self.visuals.hub.refresh()
             self.syncVideo()
             if self.smokePath == nil { self.nowPlaying.update(station: self.engine.station, title: self.engine.title, status: self.engine.status) }
@@ -301,6 +310,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     if self.view.bounds.height != 116 { failures.append("Player restore failed") }
                     self.presetAction("shade")
                     if self.eqView.bounds.height != 14 { failures.append("EQ shade failed") }
+                    let shown = self.eqView.subviews.filter { $0 is NSControl && !$0.isHidden }
+                    for (i, control) in shown.enumerated() {
+                        if !self.eqView.bounds.contains(control.frame) { failures.append("Shaded EQ control outside bar: \(control.identifier?.rawValue ?? "?")") }
+                        for other in shown[(i + 1)...] where control.frame.intersects(other.frame) { failures.append("Shaded EQ controls overlap") }
+                    }
                     self.presetAction("shade")
                     if self.eqView.bounds.height != 116 { failures.append("EQ restore failed") }
                     try? (failures.isEmpty ? "PASS: no overlapping or out-of-bounds controls at 1×/2×/3×; player and EQ shade/restore work.\n" : failures.joined(separator: "\n")).write(toFile: audit, atomically: true, encoding: .utf8)

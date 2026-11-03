@@ -44,7 +44,6 @@ ditto Resources/Skins "$APP/Contents/Resources/Skins"
 cp Resources/CHANGELOG.txt "$APP/Contents/Resources/CHANGELOG.txt"
 cp Resources/THIRD-PARTY.md "$APP/Contents/Resources/THIRD-PARTY.md"
 cp Resources/DIRECTORY-SOURCES.md "$APP/Contents/Resources/DIRECTORY-SOURCES.md"
-cp Resources/SKIN-CREDITS.md "$APP/Contents/Resources/SKIN-CREDITS.md"
 cp Resources/RadioPocket.icns "$APP/Contents/Resources/RadioPocket.icns"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
