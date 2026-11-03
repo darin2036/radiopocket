@@ -127,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var smokePath: String? { argument("--smoke-result") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LegacyDefaults.migrate()
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didExposeNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.syncWindowLevels() }
         }
