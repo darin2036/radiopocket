@@ -56,6 +56,34 @@ do {
     try original.write(to: stateFile)
     try rejects("Report corrupt library") { _ = try Library(directory: dir) }
     try check(Data(contentsOf: stateFile) == original, "Preserve corrupt library without overwriting")
+    // Saved-data format: versioning, migration, unknown fields, bad fields, backups.
+    let formatDir = root.appendingPathComponent("format")
+    try FileManager.default.createDirectory(at: formatDir, withIntermediateDirectories: true)
+    let formatFile = formatDir.appendingPathComponent("library.json")
+    try Data(#"{"favorites":[{"id":"00000000-0000-0000-0000-0000000000aa","name":"Old","address":"https://old.example/live"}],"volume":0.5,"scale":2,"futureThing":{"a":[1,2]}}"#.utf8).write(to: formatFile)
+    let legacyLibrary = try Library(directory: formatDir)
+    try check(legacyLibrary.state.favorites.first?.name == "Old", "A pre-versioning library loads")
+    let migrated = try JSONSerialization.jsonObject(with: Data(contentsOf: formatFile)) as? [String: Any]
+    try check(migrated?["schemaVersion"] as? Int == LibraryFormat.current, "A pre-versioning library is stamped with the current version")
+    try check((try FileManager.default.contentsOfDirectory(atPath: formatDir.appendingPathComponent("Backups").path)).count == 1, "Migration backs up the original file")
+    try legacyLibrary.update { $0.volume = 0.8 }
+    let afterSave = try JSONSerialization.jsonObject(with: Data(contentsOf: formatFile)) as? [String: Any]
+    try check((afterSave?["futureThing"] as? [String: Any])?["a"] as? [Int] == [1, 2], "Unknown fields survive a save")
+    let futureDir = root.appendingPathComponent("future")
+    try FileManager.default.createDirectory(at: futureDir, withIntermediateDirectories: true)
+    try Data(#"{"schemaVersion":99,"favorites":[],"volume":0.4,"scale":2,"newerSetting":true}"#.utf8).write(to: futureDir.appendingPathComponent("library.json"))
+    let futureLibrary = try Library(directory: futureDir)
+    try futureLibrary.update { $0.volume = 0.3 }
+    let futureSaved = try JSONSerialization.jsonObject(with: Data(contentsOf: futureDir.appendingPathComponent("library.json"))) as? [String: Any]
+    try check(futureSaved?["schemaVersion"] as? Int == 99 && futureSaved?["newerSetting"] as? Bool == true, "A newer library keeps its version and fields when this build saves")
+    let badDir = root.appendingPathComponent("badfield")
+    try FileManager.default.createDirectory(at: badDir, withIntermediateDirectories: true)
+    try Data(#"{"schemaVersion":1,"favorites":[{"id":"00000000-0000-0000-0000-0000000000cc","name":"Keep","address":"https://keep.example/live"}],"volume":"loud","scale":2,"leveling":true}"#.utf8).write(to: badDir.appendingPathComponent("library.json"))
+    let badLibrary = try Library(directory: badDir)
+    try check(badLibrary.state.favorites.first?.name == "Keep" && badLibrary.state.leveling == true && badLibrary.state.volume == 0.65, "One unreadable field resets alone and the rest loads")
+    try check((try FileManager.default.contentsOfDirectory(atPath: badDir.appendingPathComponent("Backups").path)).count == 1, "A dropped field backs up the original file")
+    try check(LibraryFormat.knownKeys.isSuperset(of: ["favorites", "volume", "equalizer", "moodCity", "textScrollSpeed"]), "Every saved setting is a known library field")
+    try check(LibraryFormat.migrations.count == LibraryFormat.current && (0..<LibraryFormat.current).allSatisfy { LibraryFormat.migrations[$0] != nil }, "Every schema version has a migration")
     try rejects("Reject missing skin artwork") { _ = try ClassicSkin(archive: .init(name: "Bad", bitmaps: [:])) }
     try rejects("Reject malformed bitmap") { _ = try ClassicSkin(archive: .init(name: "Bad", bitmaps: ["main.bmp": Data("bad bitmap".utf8)])) }
     let skinDir = root.appendingPathComponent("Nested")
