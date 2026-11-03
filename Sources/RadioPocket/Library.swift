@@ -51,7 +51,7 @@ enum StreamAddress {
         guard ["m3u", "pls"].contains(url.pathExtension.lowercased()) else { return url }
         guard depth < 3 else { throw RadioError.message("Too many nested radio playlists.") }
         var request = URLRequest(url: url, timeoutInterval: 15)
-        request.setValue("RadioPocket/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.value, forHTTPHeaderField: "User-Agent")
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw RadioError.message("The playlist server returned an error.")
@@ -120,6 +120,8 @@ final class Library {
         /// Checks the source repository for a newer version at launch. On unless turned off.
         var checkForUpdates: Bool?
         var lastUpdateCheck: Date?
+        /// Player text scroll speed in points per second; 0 turns automatic scrolling off. 30 unless changed.
+        var textScrollSpeed: Double?
     }
     let directory: URL
     private(set) var state: State

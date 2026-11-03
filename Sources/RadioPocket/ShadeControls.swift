@@ -145,7 +145,7 @@ final class MarqueeLabel: NSView {
         if overflows {
             let gap: CGFloat = 40, cycle = size.width + gap
             // Hold the start of the text for a moment, then scroll at a steady pace.
-            let travelled = CGFloat(max(0, Date().timeIntervalSince(start) - 1.5)) * 30
+            let travelled = CGFloat(max(0, Date().timeIntervalSince(start) - 1.5)) * ClassicUI.scrollSpeed
             var x = area.minX - travelled.truncatingRemainder(dividingBy: cycle)
             while x < area.maxX { (value as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attributes); x += cycle }
         } else {

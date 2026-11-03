@@ -64,6 +64,11 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             size.target = self; size.action = #selector(sizeChanged(_:)); page.addSubview(size)
             let top = NSButton(checkboxWithTitle: "Keep player and equalizer on top", target: self, action: #selector(topChanged(_:)))
             top.frame = NSRect(x: 0, y: 356, width: 480, height: 24); top.state = app.window.level == .floating ? .on : .off; page.addSubview(top)
+            label("Station and song scroll speed", x: 0, y: 322, width: 200)
+            let speed = NSPopUpButton(frame: NSRect(x: 210, y: 319, width: 160, height: 28), pullsDown: false)
+            speed.addItems(withTitles: ClassicUI.scrollSpeeds.map(\.title))
+            speed.selectItem(at: ClassicUI.scrollSpeeds.firstIndex { $0.value == ClassicUI.scrollSpeed } ?? 2)
+            speed.target = self; speed.action = #selector(scrollSpeedChanged(_:)); speed.setAccessibilityLabel("Station and song scroll speed"); page.addSubview(speed)
         case 3:
             let eq = app.engine.equalizer
             label("Spatial audio", x: 0, y: 422, width: 200)
@@ -379,6 +384,11 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func closePreferences() { window?.orderOut(nil) }
     @objc private func action(_ sender: NSButton) { if let id = sender.identifier?.rawValue { app.handle(id) } }
     @objc private func sizeChanged(_ sender: NSPopUpButton) { app.handle("scale" + String(format: "%g", Self.sizes[sender.indexOfSelectedItem])) }
+    @objc private func scrollSpeedChanged(_ sender: NSPopUpButton) {
+        let value = ClassicUI.scrollSpeeds[sender.indexOfSelectedItem].value
+        do { try app.library.update { $0.textScrollSpeed = value }; ClassicUI.scrollSpeed = value }
+        catch { app.showError(error) }
+    }
     @objc private func topChanged(_ sender: NSButton) { app.window.level = sender.state == .on ? .floating : .normal; app.eqWindow.level = app.window.level; app.saveWindowLevel() }
     @objc private func updatesChanged(_ sender: NSButton) {
         do { try app.library.update { $0.checkForUpdates = sender.state == .on } }

@@ -22,15 +22,19 @@ final class DiscoveryAvailability: @unchecked Sendable {
     }
     private static let registryLock = NSLock()
     private static var stores: [URL: DiscoveryAvailability] = [:]
-    static func shared(directory: URL) -> DiscoveryAvailability {
+    static func shared(directory: URL, name: String = "discovery-availability.json") -> DiscoveryAvailability {
         registryLock.withLock {
-            if let store = stores[directory] { return store }
-            let store = DiscoveryAvailability(file: directory.appendingPathComponent("discovery-availability.json"))
-            stores[directory] = store; return store
+            let file = directory.appendingPathComponent(name)
+            if let store = stores[file] { return store }
+            let store = DiscoveryAvailability(file: file)
+            stores[file] = store; return store
         }
     }
+    /// Station website evidence lives in its own file so a dead homepage never affects the stream.
+    static func websites(directory: URL) -> DiscoveryAvailability { shared(directory: directory, name: "discovery-websites.json") }
     static let retryGap: TimeInterval = 120
     static let verifiedFor: TimeInterval = 900
+    static let deadFor: TimeInterval = 2 * 3600
     private let file: URL?
     private let lock = NSLock()
     private var values: [String: Evidence]
@@ -57,7 +61,10 @@ final class DiscoveryAvailability: @unchecked Sendable {
             if verdict != .alive, let old, now.timeIntervalSince(old.checked) < Self.retryGap { return }
             switch verdict {
             case .alive: values[key] = Evidence(checked: now, verified: now, failures: 0, excludedUntil: nil)
-            case .dead, .doubtful:
+            case .dead:
+                // A 404/410 or a web page instead of audio is definitive: hide it now and look again later.
+                values[key] = Evidence(checked: now, verified: old?.verified, failures: 3, excludedUntil: now.addingTimeInterval(Self.deadFor))
+            case .doubtful:
                 let failures = min(3, (old.flatMap { now.timeIntervalSince($0.checked) < 3600 ? $0.failures : nil } ?? 0) + 1)
                 values[key] = Evidence(checked: now, verified: old?.verified, failures: failures, excludedUntil: failures >= 3 ? now.addingTimeInterval(1800) : nil)
             case .unknown:
@@ -136,7 +143,7 @@ enum DiscoveryProbe {
         let port = url.port ?? (url.scheme == "https" ? 443 : 80)
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        process.arguments = ["-q", "--silent", "--include", "--http1.1", "--noproxy", "*", "--proto", "=http,https", "--connect-timeout", "3", "--max-time", "6", "--resolve", "\(host):\(port):\(ip)", "--user-agent", "RadioPocket/0.9.1", "--header", "Icy-MetaData: 0", "--", url.absoluteString]
+        process.arguments = ["-q", "--silent", "--include", "--http1.1", "--noproxy", "*", "--proto", "=http,https", "--connect-timeout", "3", "--max-time", "6", "--resolve", "\(host):\(port):\(ip)", "--user-agent", UserAgent.value, "--header", "Icy-MetaData: 0", "--", url.absoluteString]
         process.standardOutput = output; process.standardError = FileHandle.nullDevice; process.standardInput = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
         var data = Data()
@@ -171,6 +178,26 @@ enum DiscoveryProbe {
         guard response.body.count >= 256 else { return .unknown }
         return verdict == .alive ? .alive : verdict == .dead ? .dead : .unknown
     }
+    /// A homepage only has to answer: pages, redirects and bot-blocking (401/403/429) are fine; gone or broken is not.
+    static func siteVerdict(_ url: URL, remaining: Int = 3, fetch: (URL) -> Reply?) -> StreamVerdict {
+        guard remaining > 0, allowed(url), let response = fetch(url) else { return .unknown }
+        switch response.status {
+        case 200...299: return .alive
+        case 300...399:
+            guard let location = response.location, let next = URL(string: location, relativeTo: url)?.absoluteURL else { return .unknown }
+            return siteVerdict(next, remaining: remaining - 1, fetch: fetch)
+        case 404, 410: return .dead
+        case 401, 403, 429: return .unknown
+        case 400...599: return .doubtful
+        default: return .unknown
+        }
+    }
+    static func checkSite(_ address: String) async -> StreamVerdict {
+        if network.currentPath.status != .satisfied { try? await Task.sleep(nanoseconds: 100_000_000) }
+        guard network.currentPath.status == .satisfied, let url = StationArtwork.website(address), allowed(url), !Task.isCancelled else { return .unknown }
+        let verdict = await Task.detached(priority: .utility) { siteVerdict(url, fetch: fetch) }.value
+        return Task.isCancelled || network.currentPath.status != .satisfied ? .unknown : verdict
+    }
     private static let network: NWPathMonitor = {
         let monitor = NWPathMonitor(); monitor.start(queue: DispatchQueue(label: "RadioPocket.availability.network")); return monitor
     }()
@@ -186,25 +213,34 @@ enum DiscoveryProbe {
 actor DiscoveryAvailabilityChecks {
     static let shared = DiscoveryAvailabilityChecks()
     private var busy = false
+    /// Returns true when a check newly hid something, so callers only redraw when the screen would change.
     func refresh(_ rows: [RadioListing], store: DiscoveryAvailability) async -> Bool {
+        await run(rows.map(\.address), store: store, probe: { await DiscoveryProbe.check($0) })
+    }
+    func refreshSites(_ rows: [RadioListing], store: DiscoveryAvailability) async -> Bool {
+        await run(rows.compactMap { StationArtwork.website($0.homepage)?.absoluteString }, store: store, probe: { await DiscoveryProbe.checkSite($0) })
+    }
+    private func run(_ addresses: [String], store: DiscoveryAvailability, probe: @escaping @Sendable (String) async -> StreamVerdict) async -> Bool {
         guard !busy else { return false }
         busy = true; defer { busy = false }
         var seen = Set<String>()
-        let due = Array(rows.filter { seen.insert(DiscoveryIndex.endpointKey($0.address)).inserted && store.due($0.address) }.prefix(6))
+        let due = Array(addresses.filter { seen.insert(DiscoveryIndex.endpointKey($0)).inserted && store.due($0) }.prefix(24))
         guard !due.isEmpty else { return false }
+        let before = Set(store.snapshot().filter { $0.value.excluded(at: Date()) }.keys)
         await withTaskGroup(of: Void.self) { group in
             var iterator = due.makeIterator()
             func next() {
-                if let row = iterator.next() {
+                if let address = iterator.next() {
                     group.addTask {
-                        let result = await DiscoveryProbe.check(row.address)
-                        if !Task.isCancelled { store.record(row.address, verdict: result) }
+                        let result = await probe(address)
+                        if !Task.isCancelled { store.record(address, verdict: result) }
                     }
                 }
             }
-            next(); next()
+            next(); next(); next(); next()
             while await group.next() != nil { if !Task.isCancelled { next() } }
         }
-        return !Task.isCancelled
+        guard !Task.isCancelled else { return false }
+        return !Set(store.snapshot().filter { $0.value.excluded(at: Date()) }.keys).isSubset(of: before)
     }
 }

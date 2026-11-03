@@ -149,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.delegate = self
         configureVisualizer()
         window.level = library.state.alwaysOnTop == true ? .floating : .normal
+        ClassicUI.scrollSpeed = library.state.textScrollSpeed ?? 30
         scale(library.state.scale, save: false)
         window.center()
         window.setFrameAutosaveName("RadioPocket.Player")

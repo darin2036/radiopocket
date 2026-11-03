@@ -7,7 +7,7 @@ A small, native macOS internet-radio player inspired by classic Winamp. Swift + 
 ## At a glance
 
 - Direct internet radio streams, station discovery, favorites, and recent history.
-- Winamp Classic 2.91 bundled, RadioPocket’s own theme, and import for any classic `.wsz` skin.
+- RadioPocket’s own theme, and import for any classic `.wsz` skin.
 - Ten-band equalizer, preamp, all 18 classic presets, and EQF import/export.
 - Browser handoff through radio playlists and `radiopocket://` links.
 - Native macOS app, about 3.2 MB on disk, with no browser runtime or package dependencies.

@@ -14,6 +14,9 @@ enum ClassicUI {
     static var text: NSColor { palette.text }
     static var dim: NSColor { palette.label }
     static var selection: NSColor { palette.selection }
+    /// Speed of scrolling station and song text, in points per second; 0 is off.
+    static var scrollSpeed: Double = 30
+    static let scrollSpeeds: [(title: String, value: Double)] = [("Off", 0), ("Slow", 15), ("Normal", 30), ("Fast", 60)]
     static var skin: ClassicSkin? { didSet {
         let old = oldValue?.palette ?? .native, new = palette
         for window in NSApp.windows { if let content = window.contentView { recolor(content, from: old, to: new) } }

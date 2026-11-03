@@ -184,6 +184,9 @@ final class DiscoverPanel: NSView {
     var browse: (() -> Void)?
     var play: ((RadioListing) -> Void)?
     var favorite: ((RadioListing) -> Void)?
+    /// Set by the controller: true when a station's homepage is known to be gone, so no dead link is offered.
+    var websiteHidden: ((String) -> Bool)?
+    func redraw() { if let feed = currentFeed { render(feed, favorites: currentFavorites) } }
     var feedbackChanged: ((RadioListing, Int) -> Void)?
     var preferencesChanged: ((DiscoveryPreferences) -> Void)?
     var preference: ((String?) -> Void)?
@@ -377,7 +380,7 @@ final class DiscoverPanel: NSView {
         clearShelves()
         if feed.shelves.isEmpty {
             addShelfView(text(showingMoods ? "A mood is waiting for its stations" : "A fresh dial awaits", size: 22, color: .white, weight: .semibold))
-            addShelfView(text("Discover includes stations rated four stars or higher. Choose genres and languages in Your mix, then refresh stations from the ••• menu, or open the full station browser.", size: 13, color: .secondaryLabelColor))
+            addShelfView(text("Stations rated four stars or higher, tuned by Your mix.", size: 13, color: .secondaryLabelColor))
         }
         if showingMoods, !feed.moodGroups.isEmpty {
             renderMoodBrowser(feed)
@@ -487,7 +490,7 @@ final class DiscoverPanel: NSView {
             return button
         }
         var actions: [NSView] = [playButton, saveButton, NSView(), thumb(1), thumb(-1)]
-        if let website = StationArtwork.website(row.homepage) {
+        if let website = StationArtwork.website(row.homepage), websiteHidden?(website.absoluteString) != true {
             actions.append(icon("safari", label: "Open " + row.name + " website", tip: website.host ?? "Station website", tint: .systemTeal) { NSWorkspace.shared.open(website) })
         }
         append(horizontal(actions), height: 24)

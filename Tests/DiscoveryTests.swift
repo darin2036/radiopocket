@@ -54,6 +54,12 @@ func checkDiscovery(at root: URL) throws {
     let qualityFeed = DiscoveryRecommendations.build(records: qualityRecords, recent: qualityRows.map(\.station), favorites: qualityRows.map(\.station), interests: ["jazz"], dismissed: [], personalizes: true, video: false, feedback: Dictionary(uniqueKeysWithValues: qualityRows.map { ("url:" + DiscoveryIndex.endpointKey($0.address), 1) }))
     let qualityPicks = qualityFeed.shelves.flatMap(\.picks)
     try check(Set(qualityPicks.map { $0.listing.quality }) == Set([4, 5]), "Discovery includes four and five stars, excluding unknown and lower quality even with favorites and positive feedback")
+    var tvRows = [listing("Evening Movies", "Movies;General", "https://tv1.example/live.m3u8"), listing("Cartoon Hour", "Kids;Animation", "https://tv2.example/live.m3u8"), listing("Cartoon Hour FR", "Kids;Animation", "https://tv3.example/live.m3u8"), listing("Mystery Channel", "", "https://tv4.example/live.m3u8")]
+    for i in tvRows.indices { tvRows[i].video = true; tvRows[i].bitrate = 0; tvRows[i].codec = ""; tvRows[i].languages = i == 3 ? nil : [i == 2 ? "fr" : "en"] }
+    try index.ingest(tvRows, source: "tv", name: "TV")
+    let tvRecords = try index.records(sources: ["tv"])
+    let tvNames = Set(DiscoveryRecommendations.build(records: tvRecords, recent: [], favorites: [], interests: ["kids"], dismissed: [], personalizes: false, video: true, languages: ["en"], includeUnknownLanguage: false).shelves.flatMap(\.picks).map(\.listing.name))
+    try check(tvNames == Set(["Evening Movies", "Cartoon Hour"]) && DiscoveryCatalog.languageHints("Iqra Bangla") == ["bn"] && DiscoveryCatalog.foreignScript("تلفزيون", wanted: ["en"]) && !DiscoveryCatalog.foreignScript("Canal Uno", wanted: ["en"]), "TV discovery matches categories and language, rules out other languages, and keeps channels with no language")
     let lowRecords = qualityRecords.filter { $0.restored.quality < 4 }
     let lowFeed = DiscoveryRecommendations.build(records: lowRecords, recent: [], favorites: [], interests: [], dismissed: [], personalizes: false, video: false)
     try check(lowFeed.shelves.isEmpty, "Cold-start discovery never relaxes the quality floor to fill empty shelves")
@@ -93,6 +99,12 @@ func checkDiscovery(at root: URL) throws {
     try check(DiscoveryCatalog.genres.count >= 60 && DiscoveryCatalog.languages.count >= 30, "Discovery offers broad genre and language vocabularies")
     try check(DiscoveryCatalog.matches("lofi, deep-house, hip-hop, drum & bass").isSuperset(of: ["lo-fi", "deep house", "hip hop", "drum and bass"]), "Genre aliases and multiword styles normalize consistently")
     try check(!DiscoveryCatalog.matches("rockabilly").contains("rock"), "Genre matching does not match arbitrary substrings")
+    try check(DiscoveryCatalog.tvMatches("Movies;General Evening films").contains("movies") && DiscoveryCatalog.tvMatches("Kids cartoons").isSuperset(of: ["kids", "animation"]), "TV categories match channel group names")
+    try check(DiscoveryCatalog.systemLanguages(["nb-NO", "fr-CA", "xx", "en-US", "fr-FR"]) == ["no", "fr", "en"], "Mac languages map to Discover language codes in order")
+
+    let vibe = DiscoveryCatalog.interpretVibes("Something with High BPM")
+    try check(vibe.genres.contains("techno") && vibe.genres.contains("house") && vibe.remainder.isEmpty, "Descriptive searches like high BPM map to electronic genres")
+    try check(DiscoveryCatalog.interpretVibes("bbc world").genres.isEmpty && DiscoveryCatalog.interpretVibes("bbc world").remainder == "bbc world", "Plain station-name searches stay literal")
     try check(Set(DiscoveryCatalog.languageCodes("fre,eng,Deutsch,espanol")) == Set(["fr", "en", "de", "es"]), "Directory language names and ISO variants normalize to shared codes")
     var detailed = listing("Deep House Radio", "deep house", "https://radio.example/house", id: UUID().uuidString)
     detailed.homepage = "https://radio.example/"; detailed.artworkURL = "https://radio.example/logo.png"; detailed.languages = ["en", "fr"]
@@ -250,17 +262,20 @@ func checkDiscovery(at root: URL) throws {
     let availabilityFile = root.appendingPathComponent("availability.json")
     let availability = DiscoveryAvailability(file: availabilityFile)
     let address = rows[0].address, key = DiscoveryIndex.endpointKey(address), now = Date()
-    availability.record(address, verdict: .dead, now: now)
-    try check(availability.snapshot(now: now)[key]?.excluded(at: now) == false, "A single availability failure never excludes a station")
-    availability.record(address, verdict: .dead, now: now.addingTimeInterval(1))
+    availability.record(address, verdict: .doubtful, now: now)
+    try check(availability.snapshot(now: now)[key]?.excluded(at: now) == false, "A single doubtful failure never excludes a station")
+    availability.record(address, verdict: .doubtful, now: now.addingTimeInterval(1))
     try check(availability.snapshot(now: now)[key]?.failures == 1, "Repeated immediate checks cannot multiply failure strikes")
     availability.record(address, verdict: .doubtful, now: now.addingTimeInterval(120))
     try check(availability.snapshot(now: now)[key]?.excluded(at: now.addingTimeInterval(120)) == false, "Second spaced failure remains eligible for another retry")
-    availability.record(address, verdict: .dead, now: now.addingTimeInterval(240))
+    availability.record(address, verdict: .doubtful, now: now.addingTimeInterval(240))
     let failed = availability.snapshot(now: now)[key]!
     try check(failed.excluded(at: now.addingTimeInterval(240)) && !failed.excluded(at: now.addingTimeInterval(2040)), "Three spaced failures cause only a temporary 30-minute exclusion")
     try check(DiscoveryAvailability(file: availabilityFile).snapshot(now: now)[key] == failed, "Availability evidence persists locally across launches")
     availability.record(address, verdict: .alive, now: now.addingTimeInterval(241))
+    let goneAddress = rows[2].address, goneKey = DiscoveryIndex.endpointKey(goneAddress)
+    availability.record(goneAddress, verdict: .dead, now: now)
+    try check(availability.snapshot(now: now)[goneKey]?.excluded(at: now) == true && availability.snapshot(now: now)[goneKey]?.excluded(at: now.addingTimeInterval(DiscoveryAvailability.deadFor + 1)) == false, "A definitive dead link is hidden at once, then retried later")
     let verified = availability.snapshot(now: now)[key]!
     try check(verified.failures == 0 && !verified.excluded(at: now) && verified.boost(at: now.addingTimeInterval(242)) > 0, "Successful response immediately recovers a station and boosts recent verification")
     try check(verified.boost(at: now.addingTimeInterval(4000)) == 0, "Old verification loses its ranking boost")
@@ -275,6 +290,10 @@ func checkDiscovery(at root: URL) throws {
     let audio = DiscoveryProbe.Reply(status: 200, type: "audio/mpeg", location: nil, body: Data(repeating: 1, count: 512))
     let publicURL = URL(string: "https://radio.example/live")!
     try check(DiscoveryProbe.evaluate(publicURL, fetch: { _ in audio }) == .alive, "Availability requires a successful response with stream bytes")
+    func site(_ status: Int, _ location: String? = nil) -> DiscoveryProbe.Reply { .init(status: status, type: "text/html", location: location, body: Data()) }
+    try check(DiscoveryProbe.siteVerdict(publicURL, fetch: { _ in site(200) }) == .alive && DiscoveryProbe.siteVerdict(publicURL, fetch: { _ in site(403) }) == .unknown, "A homepage that answers, or blocks bots, is not treated as dead")
+    try check(DiscoveryProbe.siteVerdict(publicURL, fetch: { _ in site(404) }) == .dead && DiscoveryProbe.siteVerdict(publicURL, fetch: { _ in site(503) }) == .doubtful, "A missing homepage is dead and a server error is doubtful")
+    try check(DiscoveryProbe.siteVerdict(publicURL, fetch: { $0.path == "/new" ? site(200) : site(301, "/new") }) == .alive && DiscoveryProbe.siteVerdict(publicURL, fetch: { $0.path == "/new" ? site(410) : site(302, "/new") }) == .dead, "Homepage checks follow redirects to the final answer")
     try check(DiscoveryProbe.evaluate(publicURL, fetch: { _ in .init(status: 200, type: "audio/mpeg", location: nil, body: Data()) }) == .unknown, "Empty audio headers do not verify availability")
     var contacted: [String] = []
     let redirect = DiscoveryProbe.evaluate(publicURL) { url in

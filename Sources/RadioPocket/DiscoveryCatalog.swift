@@ -38,6 +38,59 @@ enum DiscoveryCatalog {
         }
         return found
     }
+    /// Descriptive wording (tempo, mood, activity) that implies genres, so searches work without AI or when it is unavailable.
+    private static let vibes: [(phrases: [String], genres: [String])] = [
+        (["high bpm", "fast tempo", "fast paced", "high tempo", "upbeat", "high energy", "energetic", "fast", "club", "rave", "workout", "gym", "running", "pump up", "hype"], ["techno", "house", "drum and bass", "trance", "dance", "electro", "dubstep"]),
+        (["edm", "electronica", "beats"], ["electronic", "house", "techno", "trance", "dance"]),
+        (["low bpm", "slow tempo", "slow", "relaxing", "relax", "calm", "mellow", "sleep", "unwind", "soothing", "peaceful"], ["ambient", "chill", "downtempo", "new age", "meditation", "piano"]),
+        (["study", "studying", "focus", "concentrate", "concentration", "work music", "background"], ["lo-fi", "ambient", "instrumental", "classical", "piano"]),
+        (["party", "dance floor", "dancing"], ["dance", "house", "disco", "pop", "electro"]),
+        (["romantic", "dinner", "cocktail", "date night"], ["jazz", "bossa nova", "lounge", "soul", "smooth jazz"]),
+        (["heavy", "aggressive", "loud"], ["metal", "punk", "rock"]),
+        (["happy", "sunny", "feel good", "summer"], ["reggae", "pop", "funk", "indie pop", "latin"]),
+        (["sad", "melancholy", "moody", "rainy"], ["folk", "blues", "indie", "piano", "acoustic"]),
+        (["throwback", "nostalgic", "retro"], ["oldies", "disco", "80s", "70s", "90s"])
+    ]
+    private static let fillers: Set<String> = ["music", "station", "stations", "radio", "song", "songs", "some", "something", "with", "for", "and", "a", "an", "the", "me", "i", "want", "play", "like", "to", "listen", "that", "is", "of", "in", "good", "stuff", "sounds"]
+    /// Genres implied by descriptive words, plus whatever text is left over for literal matching.
+    static func interpretVibes(_ text: String) -> (genres: [String], remainder: String) {
+        var padded = " " + words(text) + " "
+        var found: [String] = []
+        for vibe in vibes {
+            for phrase in vibe.phrases where padded.contains(" " + phrase + " ") {
+                padded = padded.replacingOccurrences(of: " " + phrase + " ", with: " ")
+                for genre in vibe.genres where !found.contains(genre) { found.append(genre) }
+            }
+        }
+        guard !found.isEmpty else { return ([], text) }
+        let rest = padded.split(separator: " ").map(String.init).filter { !fillers.contains($0) }
+        return (found, rest.joined(separator: " "))
+    }
+    /// Internet TV categories, with the wording channel lists use for each. TV Discover matches these instead of music genres.
+    private static let tvTopics: [(name: String, phrases: [String])] = [
+        ("animation", ["animation", "animated", "anime", "cartoon", "cartoons"]),
+        ("classic", ["classic", "classics", "retro", "vintage"]),
+        ("comedy", ["comedy", "comedies", "sitcom", "sitcoms", "stand up", "humor"]),
+        ("cooking", ["cooking", "chef", "food", "recipes", "kitchen"]),
+        ("culture", ["culture", "cultural", "arts", "history"]),
+        ("documentary", ["documentary", "documentaries", "nature", "science", "wildlife"]),
+        ("drama", ["drama", "dramas", "telenovela", "soap"]),
+        ("education", ["education", "educational", "learning", "school"]),
+        ("entertainment", ["entertainment", "variety", "reality", "celebrity"]),
+        ("family", ["family"]),
+        ("kids", ["kids", "kid", "children", "childrens", "junior", "preschool"]),
+        ("lifestyle", ["lifestyle", "fashion", "garden", "wellness", "beauty", "health"]),
+        ("movies", ["movie", "movies", "film", "films", "cinema"]),
+        ("music videos", ["music", "concert", "concerts", "mtv"]),
+        ("series", ["series", "shows", "episodes"]),
+        ("sports", ["sport", "sports", "football", "soccer", "basketball", "baseball", "hockey", "tennis", "golf", "racing", "cricket", "rugby"]),
+        ("travel", ["travel", "adventure", "tourism"])
+    ]
+    static let tvCategories = tvTopics.map(\.name)
+    static func tvMatches(_ text: String) -> Set<String> {
+        let padded = " " + words(text) + " "
+        return Set(tvTopics.filter { topic in topic.phrases.contains { padded.contains(" " + $0 + " ") } }.map(\.name))
+    }
     struct Language {
         var code: String; var name: String; var aliases: [String]
     }
@@ -48,7 +101,7 @@ enum DiscoveryCatalog {
         .init(code: "nl", name: "Dutch", aliases: ["nld", "dut"]), .init(code: "ar", name: "Arabic", aliases: ["ara"]),
         .init(code: "zh", name: "Chinese", aliases: ["zho", "chi", "mandarin", "cantonese"]), .init(code: "ja", name: "Japanese", aliases: ["jpn"]),
         .init(code: "ko", name: "Korean", aliases: ["kor"]), .init(code: "hi", name: "Hindi", aliases: ["hin"]),
-        .init(code: "bn", name: "Bengali", aliases: ["ben"]), .init(code: "ur", name: "Urdu", aliases: ["urd"]),
+        .init(code: "bn", name: "Bengali", aliases: ["ben", "bangla"]), .init(code: "ur", name: "Urdu", aliases: ["urd"]),
         .init(code: "ru", name: "Russian", aliases: ["rus"]), .init(code: "uk", name: "Ukrainian", aliases: ["ukr"]),
         .init(code: "pl", name: "Polish", aliases: ["pol"]), .init(code: "cs", name: "Czech", aliases: ["ces", "cze"]),
         .init(code: "el", name: "Greek", aliases: ["ell", "gre"]), .init(code: "tr", name: "Turkish", aliases: ["tur"]),
@@ -62,6 +115,27 @@ enum DiscoveryCatalog {
     static func languageCodes(_ text: String) -> [String] {
         let tokens = Set(text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).map { StationSearch.fold($0) })
         return languages.filter { !tokens.isDisjoint(with: Set([$0.code, $0.name.lowercased()] + $0.aliases)) }.map(\.code)
+    }
+    /// Languages a channel name or tags state outright ("Bangla", "Espanol"), for lists that publish no language field.
+    static func languageHints(_ text: String) -> Set<String> {
+        let tokens = Set(words(text).split(separator: " ").map(String.init))
+        return Set(languages.filter { language in !tokens.isDisjoint(with: Set([language.name.lowercased()] + language.aliases.filter { $0.count >= 5 })) }.map(\.code))
+    }
+    private static let nonLatinLanguages: Set<String> = ["ar", "zh", "ja", "ko", "hi", "bn", "ur", "ru", "uk", "el", "he", "th", "ta"]
+    /// True when a name is written in a script none of the wanted languages use. Only judged when every wanted language is Latin-script.
+    static func foreignScript(_ text: String, wanted: [String]) -> Bool {
+        guard !wanted.isEmpty, wanted.allSatisfy({ !nonLatinLanguages.contains($0) }) else { return false }
+        return text.unicodeScalars.contains { $0.properties.isAlphabetic && (0x0370...0x1DFF ~= $0.value || 0x3040...0xA4CF ~= $0.value || 0xAC00...0xD7AF ~= $0.value || 0xFB1D...0xFEFF ~= $0.value) }
+    }
+    /// The Mac's preferred languages, in order, limited to the languages Discover knows.
+    static func systemLanguages(_ identifiers: [String] = Locale.preferredLanguages) -> [String] {
+        var codes: [String] = []
+        for identifier in identifiers {
+            var code = Locale(identifier: identifier).language.languageCode?.identifier ?? ""
+            if code == "nb" || code == "nn" { code = "no" }
+            if languages.contains(where: { $0.code == code }), !codes.contains(code) { codes.append(code) }
+        }
+        return codes
     }
     static func languageName(_ code: String) -> String { languages.first { $0.code == code }?.name ?? code }
 }
@@ -78,7 +152,7 @@ struct DiscoveryPreferences {
     var weatherPromptHandled = false
     init(state: Library.State) {
         moodCity = state.moodCity; weatherPromptHandled = state.moodWeatherPromptHandled == true
-        genres = (state.discoveryInterests ?? []).filter(DiscoveryCatalog.genres.contains)
+        genres = (state.discoveryInterests ?? []).filter { DiscoveryCatalog.genres.contains($0) || DiscoveryCatalog.tvCategories.contains($0) }
         languages = (state.discoveryLanguages ?? []).filter { code in DiscoveryCatalog.languages.contains { $0.code == code } }
         includeUnknownLanguage = state.discoveryIncludeUnknownLanguage != false
         checkAvailability = state.discoveryAvailabilityChecks != false
