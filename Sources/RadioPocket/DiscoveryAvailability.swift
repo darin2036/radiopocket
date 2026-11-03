@@ -35,13 +35,14 @@ final class DiscoveryAvailability: @unchecked Sendable {
     static let retryGap: TimeInterval = 120
     static let verifiedFor: TimeInterval = 900
     static let deadFor: TimeInterval = 2 * 3600
+    static let fileVersion = 1
     private let file: URL?
     private let lock = NSLock()
     private var values: [String: Evidence]
     init(file: URL?) {
         self.file = file
         if let file, let data = try? Data(contentsOf: file), data.count <= 2_000_000,
-           let decoded = try? JSONDecoder().decode([String: Evidence].self, from: data) { values = decoded }
+           let decoded = CacheFile.read([String: Evidence].self, from: data, version: Self.fileVersion) { values = decoded }
         else { values = [:] }
     }
     func snapshot(now: Date = Date()) -> [String: Evidence] {
@@ -73,7 +74,7 @@ final class DiscoveryAvailability: @unchecked Sendable {
             }
             values = values.filter { now.timeIntervalSince($0.value.checked) < 7 * 86400 }
             if values.count > 5000 { values = Dictionary(uniqueKeysWithValues: values.sorted { $0.value.checked > $1.value.checked }.prefix(5000).map { ($0.key, $0.value) }) }
-            if let file, let data = try? JSONEncoder().encode(values) {
+            if let file, let data = CacheFile.encode(values, version: Self.fileVersion) {
                 try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? data.write(to: file, options: .atomic)
             }

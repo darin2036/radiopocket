@@ -82,6 +82,12 @@ do {
     let badLibrary = try Library(directory: badDir)
     try check(badLibrary.state.favorites.first?.name == "Keep" && badLibrary.state.leveling == true && badLibrary.state.volume == 0.65, "One unreadable field resets alone and the rest loads")
     try check((try FileManager.default.contentsOfDirectory(atPath: badDir.appendingPathComponent("Backups").path)).count == 1, "A dropped field backs up the original file")
+    let versionedCache = try CacheFile.encode(["a": 1], version: 1) ?? { throw RadioError.message("encode") }()
+    try check(CacheFile.read([String: Int].self, from: versionedCache, version: 1) == ["a": 1], "Versioned caches round-trip")
+    try check(CacheFile.read([String: Int].self, from: versionedCache, version: 2) == nil, "A cache from another version is ignored")
+    try check(CacheFile.read([String: Int].self, from: Data(#"{"a":2}"#.utf8), version: 1) == ["a": 2], "Unversioned caches saved by older builds still load")
+    let oldSkin = try JSONDecoder().decode(ClassicSkin.Archive.self, from: Data(#"{"name":"Old","bitmaps":{}}"#.utf8))
+    try check(oldSkin.schema == nil && ClassicSkin.Archive(name: "New", bitmaps: [:]).schema == 1, "Saved skins from before versioning still decode")
     try check(LibraryFormat.knownKeys.isSuperset(of: ["favorites", "volume", "equalizer", "moodCity", "textScrollSpeed"]), "Every saved setting is a known library field")
     try check(LibraryFormat.migrations.count == LibraryFormat.current && (0..<LibraryFormat.current).allSatisfy { LibraryFormat.migrations[$0] != nil }, "Every schema version has a migration")
     try rejects("Reject missing skin artwork") { _ = try ClassicSkin(archive: .init(name: "Bad", bitmaps: [:])) }

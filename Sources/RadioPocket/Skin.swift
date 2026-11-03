@@ -16,7 +16,8 @@ final class ClassicSkin {
         return skin
     }()
     private var isFallback = false
-    struct Archive: Codable { var name: String; var bitmaps: [String: Data] }
+    /// `schema` is the saved-file version; files saved before it existed decode with nil.
+    struct Archive: Codable { var name: String; var bitmaps: [String: Data]; var schema: Int? = 1 }
     let archive: Archive
     private var sheets: [String: CGImage] = [:]
     private var sprites: [String: PlatformImage] = [:]

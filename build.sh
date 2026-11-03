@@ -75,6 +75,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <dict><key>UTTypeIdentifier</key><string>public.pls-playlist</string><key>UTTypeDescription</key><string>PLS Radio Playlist</string><key>UTTypeConformsTo</key><array><string>public.text</string></array><key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><string>pls</string><key>public.mime-type</key><string>audio/x-scpls</string></dict></dict>
 </array>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+<key>LSArchitecturePriority</key><array><string>arm64</string></array>
+<key>NSHumanReadableCopyright</key><string>Copyright © 2026 Darin LaFramboise. MIT License.</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSLocationUsageDescription</key><string>Find your nearby city for weather-inspired Moods. RadioPocket saves an approximate area and uses it to request weather from Open-Meteo. Location is requested only when you choose Use my location.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>Find your nearby city for weather-inspired Moods when you choose Use my location.</string>
