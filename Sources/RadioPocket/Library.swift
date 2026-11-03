@@ -117,6 +117,9 @@ final class Library {
         var discoveryAvailabilityChecks: Bool?
         var discoveryArtwork: Bool?
         var directoryClickReporting: Bool?
+        /// Checks the source repository for a newer version at launch. On unless turned off.
+        var checkForUpdates: Bool?
+        var lastUpdateCheck: Date?
     }
     let directory: URL
     private(set) var state: State

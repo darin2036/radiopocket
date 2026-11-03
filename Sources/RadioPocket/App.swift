@@ -164,6 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
         updateBackgroundStations()
         startHousekeeping()
+        if smokePath == nil, argument("--preview") == nil { checkForUpdatesAtLaunch() }
         view.action = { [weak self] in self?.handle($0) }
         view.volumeChanged = { [weak self] value in
             guard let self else { return }
@@ -462,6 +463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         let app = add("RadioPocket")
         standard("About RadioPocket", #selector(aboutApp), target: self, to: app)
+        command("Check for Updates…", "updates", to: app)
         app.addItem(.separator())
         command("Preferences…", "preferences", ",", to: app)
         app.addItem(.separator())
@@ -542,6 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let help = add("Help")
         command("Keyboard Shortcuts", "help:shortcuts", to: help)
         command("Version History", "help:history", to: help)
+        command("Check for Updates…", "updates", to: help)
 
         NSApp.mainMenu = menu
         NSApp.helpMenu = help
@@ -618,6 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 NSPasteboard.general.setString(url.absoluteString, forType: .string)
             } catch { showError(error) }
         case "open": openDialog()
+        case "updates": checkForUpdates(userInitiated: true)
         case "play":
             if engine.station != nil { engine.resume() }
             else if let last = library.state.lastStation { play(last) }
@@ -680,7 +684,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if jump == nil { jump = JumpToStationController(library: library); jump?.play = { [weak self] in self?.play($0) } }
             jump?.present(over: window)
         case "info":
-            if info == nil { info = StationInfoController(engine: engine, directory: directoryClient) }
+            if info == nil { info = StationInfoController(engine: engine, directory: directoryClient, library: library) }
             info?.present(over: window)
         case "leveling":
             engine.leveling.toggle()
@@ -933,7 +937,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         browser.openStream = { [weak self] in self?.openDialog() }
         browser.inspect = { [weak self] entry in
             guard let self else { return }
-            if self.info == nil { self.info = StationInfoController(engine: self.engine, directory: self.directoryClient) }
+            if self.info == nil { self.info = StationInfoController(engine: self.engine, directory: self.directoryClient, library: self.library) }
             self.info?.present(inspecting: entry, over: self.discovery?.window)
         }
         browser.report = { [weak self] in self?.showError($0) }
@@ -994,6 +998,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Tells an open library window that the user changed their directory list.
     func tvFiltersChanged() { discovery?.safetyChanged(); updateBackgroundStations() }
     func directoriesChanged() { discovery?.refreshSources(); updateBackgroundStations() }
+    private var updateTask: Task<Void, Never>?
+    private func checkForUpdatesAtLaunch() {
+        guard library.state.checkForUpdates != false, UpdateCheck.shouldCheckAtLaunch(last: library.state.lastUpdateCheck) else { return }
+        checkForUpdates(userInitiated: false)
+    }
+    /// Launch checks stay silent unless a newer version exists; a check the user asked for always answers.
+    func checkForUpdates(userInitiated: Bool) {
+        guard updateTask == nil else { return }
+        let installed = AboutController.version
+        updateTask = Task { @MainActor [weak self] in
+            defer { self?.updateTask = nil }
+            do {
+                let outcome = try await UpdateCheck.fetch(installed: installed)
+                guard let self, !Task.isCancelled else { return }
+                try? self.library.update { $0.lastUpdateCheck = Date() }
+                switch outcome {
+                case .available(let release): self.offerUpdate(release, installed: installed)
+                case .current:
+                    guard userInitiated else { return }
+                    let alert = NSAlert(); alert.messageText = "RadioPocket is up to date"
+                    alert.informativeText = "Version \(installed) is the newest version."
+                    alert.runModal()
+                }
+            } catch {
+                if userInitiated { self?.showError(error) }
+            }
+        }
+    }
+    private func offerUpdate(_ release: Release, installed: String) {
+        let alert = NSAlert(); alert.messageText = "RadioPocket \(release.version) is available"
+        let notes = release.sections.flatMap(\.items).prefix(6).map { "• " + $0 }.joined(separator: "\n")
+        alert.informativeText = "You have version \(installed)." + (notes.isEmpty ? "" : "\n\n" + notes)
+        alert.addButton(withTitle: "View on GitHub"); alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(UpdateCheck.repository) }
+    }
     func showError(_ error: Error) {
         let alert = NSAlert(); alert.alertStyle = .warning
         alert.messageText = "RadioPocket"; alert.informativeText = error.localizedDescription

@@ -101,6 +101,9 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         case 6: visualizationPage()
         default:
             button("Open a stream…", "open", x: 0, y: 418)
+            button("Check for updates…", "updates", x: 200, y: 418)
+            let updates = NSButton(checkboxWithTitle: "Check for updates when RadioPocket opens", target: self, action: #selector(updatesChanged(_:)))
+            updates.frame = NSRect(x: 0, y: 384, width: 480, height: 24); updates.state = app.library.state.checkForUpdates == false ? .off : .on; page.addSubview(updates)
         }
     }
     /// One row per visualization option, each a popup that writes straight to the shared settings.
@@ -377,6 +380,10 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func action(_ sender: NSButton) { if let id = sender.identifier?.rawValue { app.handle(id) } }
     @objc private func sizeChanged(_ sender: NSPopUpButton) { app.handle("scale" + String(format: "%g", Self.sizes[sender.indexOfSelectedItem])) }
     @objc private func topChanged(_ sender: NSButton) { app.window.level = sender.state == .on ? .floating : .normal; app.eqWindow.level = app.window.level; app.saveWindowLevel() }
+    @objc private func updatesChanged(_ sender: NSButton) {
+        do { try app.library.update { $0.checkForUpdates = sender.state == .on } }
+        catch { app.showError(error) }
+    }
     @objc private func freshChanged(_ sender: NSButton) {
         do { try app.library.update { $0.backgroundStations = sender.state == .on }; app.updateBackgroundStations() }
         catch { app.showError(error) }
