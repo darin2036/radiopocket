@@ -1,4 +1,4 @@
-# RadioPocket 0.9.1 (development)
+# RadioPocket 0.9.2 (development)
 
 A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, large bundled station database. Station discovery offers eight built-in sources: Radio Browser, SomaFM, laut.fm, Radio Paradise, Curated Internet Radio Streams, IPRD, Junguler Radio Playlists, and rrradio.
 

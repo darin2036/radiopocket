@@ -1,3 +1,7 @@
+RadioPocket 0.9.2
+* Added: Moods suggests stations for your activities, time of day, and optional local weather
+* Fixed: Library panes no longer scroll sideways unnecessarily
+
 RadioPocket 0.9.1
 * Fixed: Smoother library transitions while recommendations load
 * Changed: Suggestions stay steady while you browse
