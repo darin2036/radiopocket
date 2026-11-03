@@ -147,17 +147,15 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         window.appearance = NSAppearance(named: .darkAqua)
         super.init(window: window)
         window.delegate = self
-        // Shaded, the library shows its section (a menu of the same tree) and how many stations it lists.
+        // Shaded, the library becomes a quick channel changer: the current station, and a menu of the favorites.
         window.shadeContent = { [weak self] chrome in
-            let label = MarqueeLabel(frame: NSRect(x: 10, y: 4, width: chrome.bounds.width - 40, height: 12), font: .monospacedSystemFont(ofSize: 9, weight: .medium)) { [weak self] in
-                guard let self else { return "" }
-                return self.scope.curated || self.rows.isEmpty ? self.scope.title : "\(self.scope.title) · \(self.rows.count)"
+            let label = MarqueeLabel(frame: NSRect(x: 6, y: 2, width: min(260, chrome.bounds.width * 0.65), height: 10), font: .monospacedSystemFont(ofSize: 8, weight: .medium)) {
+                ClassicUI.nowPlaying() ?? "FAVORITES"
             }
-            label.showsChevron = true; label.autoresizingMask = .width; label.setAccessibilityLabel("Library section")
+            label.showsChevron = true; label.setAccessibilityLabel("Favorite stations")
             label.onClick = { [weak self, weak label] in
                 guard let self, let label else { return }
-                self.updateSectionMenu()
-                self.sectionMenu.menu?.popUp(positioning: nil, at: NSPoint(x: 0, y: label.frame.maxY + 2), in: chrome)
+                self.favoritesMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: label.frame.maxY + 2), in: chrome)
             }
             chrome.addSubview(label)
         }
@@ -203,6 +201,18 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             sidebar.selectRowIndexes([row], byExtendingSelection: false)
         }
     }
+    private func favoritesMenu() -> NSMenu {
+        let menu = NSMenu()
+        let current = ClassicUI.nowPlaying()
+        for station in library.state.favorites {
+            let item = NSMenuItem(title: station.name, action: #selector(playFavorite(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = station
+            item.state = current?.hasPrefix(station.name) == true ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+    @objc private func playFavorite(_ sender: NSMenuItem) { if let station = sender.representedObject as? Station { play?(station) } }
     func windowDidResize(_ notification: Notification) { adaptLayout() }
     /// Compact windows shed the genre sidebar, then the filter row; the table keeps its columns proportional to its width.
     private func adaptLayout() {

@@ -107,11 +107,11 @@ final class PlayerWindow: NSWindow {
             // A shaded bar must not be remembered as the panel's size for the next launch.
             setFrameAutosaveName("")
             let width = Self.nestedShadeWidth() ?? frame.width
-            let bar = ClassicChrome(frame: NSRect(origin: .zero, size: NSSize(width: width, height: ClassicChrome.barHeight)))
+            let bar = ClassicChrome(frame: NSRect(origin: .zero, size: NSSize(width: width, height: ClassicChrome.shadeHeight)))
             bar.title = chrome.title; bar.shadeMinimizable = styleMask.contains(.miniaturizable); bar.shadeContent = shadeContent; bar.isShadeBar = true
-            minSize = NSSize(width: min(minSize.width, width), height: ClassicChrome.barHeight)
+            minSize = NSSize(width: min(minSize.width, width), height: ClassicChrome.shadeHeight)
             contentView = bar
-            setFrame(NSRect(x: frame.minX, y: frame.maxY - ClassicChrome.barHeight, width: width, height: ClassicChrome.barHeight), display: true)
+            setFrame(NSRect(x: frame.minX, y: frame.maxY - ClassicChrome.shadeHeight, width: width, height: ClassicChrome.shadeHeight), display: true)
         }
     }
     override func close() {
@@ -237,6 +237,8 @@ final class ClassicPopup: NSPopUpButton {
 }
 class ClassicChrome: NSView {
     static let barHeight: CGFloat = 20
+    /// A shaded bar matches the player's and equalizer's 14-point title bar.
+    static let shadeHeight: CGFloat = 14
     var title = "MEDIA LIBRARY" { didSet { needsDisplay = true } }
     /// The stand-in a shaded window shows: just the title bar, with a mini transport and the now-playing text on it.
     var isShadeBar = false { didSet { if isShadeBar { addShadeControls() } } }
@@ -251,8 +253,8 @@ class ClassicChrome: NSView {
             addSubview(button); x -= 11
         }
         if let shadeContent { shadeContent(self); return }
-        let transport = MiniTransport(frame: NSRect(x: 10, y: 4, width: MiniTransport.width, height: 12))
-        let label = MarqueeLabel(frame: NSRect(x: 54, y: 4, width: bounds.width - 54 - 30, height: 12), font: .monospacedSystemFont(ofSize: 9, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.title ?? "" }
+        let transport = MiniTransport(frame: NSRect(x: 6, y: 2, width: MiniTransport.width, height: 10))
+        let label = MarqueeLabel(frame: NSRect(x: 50, y: 2, width: bounds.width - 50 - 30, height: 10), font: .monospacedSystemFont(ofSize: 8, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.title ?? "" }
         label.autoresizingMask = .width
         addSubview(transport); addSubview(label)
     }
@@ -284,6 +286,17 @@ class ClassicChrome: NSView {
         ClassicUI.panel.setFill(); bounds.fill()
         NSColor.gray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1)).stroke()
         let h = bounds.height, w = bounds.width
+        if isShadeBar, let sheet = ClassicUI.skin {
+            // The player's own shaded title bar: its two end caps with the stripes tiled between them.
+            func piece(_ sx: CGFloat, _ width: CGFloat, to x: CGFloat) -> Bool {
+                guard let image = sheet.sprite("titlebar.bmp", NSRect(x: sx, y: window?.isKeyWindow == false ? 42 : 29, width: width, height: 14)) else { return false }
+                image.draw(in: NSRect(x: x, y: 0, width: width, height: 14), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue]); return true
+            }
+            let cap: CGFloat = 25
+            var x = cap, ok = piece(27, cap, to: 0)
+            while ok, x < w - cap { ok = piece(27 + cap, min(25, w - cap - x), to: x); x += 25 }
+            if ok, piece(27 + 275 - cap, cap, to: w - cap) { return }
+        }
         func sprite(_ source: NSRect, _ target: NSRect) -> Bool {
             guard let image = ClassicUI.skin?.sprite("gen.bmp", source) else { return false }
             image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue]); return true
