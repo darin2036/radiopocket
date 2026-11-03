@@ -3,6 +3,7 @@ RadioPocket 0.10.0
 * Added: The shaded equalizer keeps the on/off switch and preset menu
 * Fixed: Moods keep the same cards when the library refreshes on its own
 * Fixed: Stations listed by several directories or playlists are merged even when the address differs by http/https or a trailing slash
+* Added: A narrow library shows a section menu in place of the hidden sidebar
 
 RadioPocket 0.9.3
 * Changed: Compact Discover station cards with genre-themed artwork

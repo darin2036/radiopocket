@@ -128,6 +128,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private var nodes: [LibraryNode] = []
     private var sideWidth: NSLayoutConstraint!, sideGap: NSLayoutConstraint!
     private var tableGap: NSLayoutConstraint!
+    private var navInset: [NSLayoutConstraint] = []
+    private let sectionMenu = NSPopUpButton(frame: .zero, pullsDown: true)
     private var narrowHidden: [NSView] = []
     private weak var sideScrollView: NSView?
     private var lastTableViewportWidth: CGFloat = -1
@@ -192,10 +194,42 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         guard let root = window?.contentView, sideWidth != nil else { return }
         let showSide = root.bounds.width >= 700
         sideWidth.constant = showSide ? 145 : 0; sideGap.constant = showSide ? 9 : 0; sideScrollView?.isHidden = !showSide
+        // Without the sidebar the current section becomes a menu of the same tree, so navigation stays visible.
+        sectionMenu.isHidden = showSide; heading.isHidden = !showSide
+        navInset.forEach { $0.constant = showSide ? 0 : 28 }
+        if !showSide { updateSectionMenu() }
         let mainWidth = root.bounds.width - 24 - (showSide ? 154 : 0)
         let showFilters = mainWidth >= 580 && root.bounds.height >= 380
         narrowHidden.forEach { $0.isHidden = !showFilters }
         layoutColumns(width: mainWidth)
+    }
+    private func updateSectionMenu() {
+        sectionMenu.menu?.items.first?.title = scope.title
+        sectionMenu.setAccessibilityLabel("Library section: \(scope.title.capitalized)")
+    }
+    private func buildSectionMenu() {
+        let menu = NSMenu(); menu.autoenablesItems = false
+        menu.addItem(withTitle: scope.title, action: nil, keyEquivalent: "")
+        func fill(_ nodes: [LibraryNode], into menu: NSMenu) {
+            for node in nodes {
+                if let scope = node.scope {
+                    let item = NSMenuItem(title: node.title, action: #selector(sectionPicked(_:)), keyEquivalent: ""); item.target = self; item.representedObject = scope
+                    menu.addItem(item)
+                } else if node.title == node.title.uppercased() {
+                    if menu.items.count > 1 { menu.addItem(.separator()) }
+                    menu.addItem(withTitle: node.title, action: nil, keyEquivalent: "").isEnabled = false
+                    fill(node.children, into: menu)
+                } else {
+                    let item = NSMenuItem(title: node.title, action: nil, keyEquivalent: ""); let sub = NSMenu(title: node.title); sub.autoenablesItems = false
+                    fill(node.children, into: sub); item.submenu = sub; menu.addItem(item)
+                }
+            }
+        }
+        fill(nodes, into: menu)
+        sectionMenu.menu = menu
+    }
+    @objc private func sectionPicked(_ sender: NSMenuItem) {
+        if let target = sender.representedObject as? LibraryScope { selectScope(target) }
     }
     private func layoutColumns(width: CGFloat) {
         // Fit the columns to the clip view itself: the border, the legacy scroller and the 1pt cell spacing
@@ -368,9 +402,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             label.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
             label.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         }
+        let titleTop = titleRow.topAnchor.constraint(equalTo: main.topAnchor)
         tableGap = tableScroll.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 7)
         NSLayoutConstraint.activate([
-            titleRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), titleRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), titleRow.topAnchor.constraint(equalTo: main.topAnchor), titleRow.heightAnchor.constraint(equalToConstant: 22),
+            titleRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), titleRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), titleTop, titleRow.heightAnchor.constraint(equalToConstant: 22),
             searchRow.leadingAnchor.constraint(equalTo: main.leadingAnchor), searchRow.trailingAnchor.constraint(equalTo: main.trailingAnchor), searchRow.topAnchor.constraint(equalTo: titleRow.bottomAnchor, constant: 6),
             tableScroll.leadingAnchor.constraint(equalTo: main.leadingAnchor), tableScroll.trailingAnchor.constraint(equalTo: main.trailingAnchor), tableGap!,
             // Buttons on the left, the two selection lines beside them, vertically centred on the buttons.
@@ -391,7 +426,13 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         order.selectItem(at: 3); suppressSort = true; table.sortDescriptors = [NSSortDescriptor(key: "quality", ascending: false)]; suppressSort = false
         browserViews = main.subviews
         add(discoverPanel, to: main)
-        NSLayoutConstraint.activate([discoverPanel.leadingAnchor.constraint(equalTo: main.leadingAnchor), discoverPanel.trailingAnchor.constraint(equalTo: main.trailingAnchor), discoverPanel.topAnchor.constraint(equalTo: main.topAnchor), discoverPanel.bottomAnchor.constraint(equalTo: main.bottomAnchor)])
+        let panelTop = discoverPanel.topAnchor.constraint(equalTo: main.topAnchor)
+        NSLayoutConstraint.activate([discoverPanel.leadingAnchor.constraint(equalTo: main.leadingAnchor), discoverPanel.trailingAnchor.constraint(equalTo: main.trailingAnchor), panelTop, discoverPanel.bottomAnchor.constraint(equalTo: main.bottomAnchor)])
+        // Outside browserViews so it stays visible on Discover and Moods, which hide the station list.
+        sectionMenu.font = BrowserTheme.small; sectionMenu.bezelStyle = .smallSquare; sectionMenu.isBordered = true
+        buildSectionMenu(); add(sectionMenu, to: main)
+        NSLayoutConstraint.activate([sectionMenu.leadingAnchor.constraint(equalTo: main.leadingAnchor), sectionMenu.topAnchor.constraint(equalTo: main.topAnchor), sectionMenu.heightAnchor.constraint(equalToConstant: 22), sectionMenu.widthAnchor.constraint(equalToConstant: 190)])
+        navInset = [panelTop, titleTop]
         wireDiscover()
         captureQuery()
         adaptLayout()
@@ -903,6 +944,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !suppressSelection, let node = sidebar.item(atRow: sidebar.selectedRow) as? LibraryNode, let scope = node.scope else { return }
         self.scope = scope
+        updateSectionMenu()
         if !scope.curated {
             availabilityTask?.cancel(); curationTask?.cancel(); aiTask?.cancel(); aiTimeout?.cancel()
             discoverPanel.releaseContent()
