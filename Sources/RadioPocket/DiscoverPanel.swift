@@ -128,7 +128,8 @@ private final class DiscoveryStationCard: NSView {
         if titleField?.font?.pointSize != fontSize { titleField?.font = .systemFont(ofSize: fontSize, weight: .semibold) }
         let titleSize: CGFloat = tight ? 34 : 39
         if titleHeight?.constant != titleSize { titleHeight?.constant = titleSize }
-        content.spacing = tight ? 5 : 7
+        let spacing: CGFloat = tight ? 5 : 7
+        if content.spacing != spacing { content.spacing = spacing }
         super.layout()
     }
 }
@@ -147,8 +148,15 @@ final class DiscoverPanel: NSView {
     private let weatherLabel = NSTextField(wrappingLabelWithString: "Set up weather in Your mix → Weather")
     private var selectedMood: String?
     var isBrowsingMood: Bool { showingMoods && selectedMood != nil }
+    private var loadingSpinner: NSProgressIndicator?
     private var currentFeed: DiscoveryFeed?
     private var currentFavorites: [Station] = []
+    var recommendedStations: [RadioListing] { currentFeed?.shelves.flatMap(\.picks).map(\.listing) ?? [] }
+    func updateFavorites(_ favorites: [Station]) {
+        guard currentFavorites != favorites, let feed = currentFeed else { return }
+        // Repaint saved controls using the same ordered snapshot, without recomputing recommendations.
+        render(feed, favorites: favorites)
+    }
     var refresh: (() -> Void)?
     var importPlaylist: (() -> Void)?
     var browse: (() -> Void)?
@@ -178,6 +186,7 @@ final class DiscoverPanel: NSView {
     private let search = NSSearchField()
     private var cardRows: [NSStackView] = []
     private var compactWidths: [NSLayoutConstraint] = []
+    private var lastLayoutGeometry = NSSize.zero
     private var refreshItem: NSMenuItem!
     private var selectedVideo = false
     private var querySummary: String?
@@ -256,7 +265,10 @@ final class DiscoverPanel: NSView {
         if busy { summary.stringValue = "Finding more stations for your mix…" } else { updateSummary() }
     }
     func setMoods(_ enabled: Bool) {
-        if showingMoods != enabled { selectedMood = nil; scroll.contentView.scroll(to: .zero) }
+        if showingMoods != enabled {
+            selectedMood = nil; currentFeed = nil; clearShelves()
+            scroll.contentView.scroll(to: .zero)
+        }
         if showingMoods != enabled { moodsPopover?.close() }
         status.isHidden = enabled && !moodsStatusVisible
         discoveryFootnote.isHidden = enabled; howMoodsRow.isHidden = !enabled
@@ -299,12 +311,48 @@ final class DiscoverPanel: NSView {
         controller.apply = { [weak self] value in self?.preferencesChanged?(value) }
         preferencesController = controller; controller.present(on: window, weather: weather)
     }
+    func releaseContent() {
+        clearShelves(); currentFeed = nil; currentFavorites = []; selectedMood = nil
+        moodsPopover?.close(); moodsPopover = nil
+    }
+    private func clearShelves() {
+        loadingSpinner?.stopAnimation(nil); loadingSpinner = nil
+        for view in shelves.arrangedSubviews { shelves.removeArrangedSubview(view); view.removeFromSuperview() }
+        cardRows = []; compactWidths = []
+    }
+    func beginLoading() {
+        // Keep an existing feed steady during background refreshes, but never reuse another surface's cards.
+        guard currentFeed == nil else { return }
+        clearShelves()
+        let row = NSStackView(); row.orientation = .horizontal; row.spacing = 12; row.alignment = .centerY
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let icon = NSImageView(image: NSImage(systemSymbolName: "waveform", accessibilityDescription: nil) ?? NSImage())
+            icon.contentTintColor = .systemTeal; icon.widthAnchor.constraint(equalToConstant: 24).isActive = true
+            row.addArrangedSubview(icon)
+        } else {
+            let spinner = NSProgressIndicator(); spinner.style = .spinning; spinner.controlSize = .small
+            spinner.isIndeterminate = true; spinner.setAccessibilityLabel("Loading")
+            spinner.widthAnchor.constraint(equalToConstant: 24).isActive = true
+            spinner.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            row.addArrangedSubview(spinner); loadingSpinner = spinner; spinner.startAnimation(nil)
+        }
+        row.addArrangedSubview(text(showingMoods ? "Finding your mood…" : "Finding your next frequency…", size: 16, color: .secondaryLabelColor))
+        row.addArrangedSubview(NSView())
+        row.heightAnchor.constraint(equalToConstant: 120).isActive = true
+        addShelfView(row); needsLayout = true
+    }
+    func loadingFailed() {
+        guard currentFeed == nil else { return }
+        clearShelves()
+        addShelfView(text(showingMoods ? "Moods couldn’t load" : "Discovery couldn’t load", size: 16, color: .secondaryLabelColor))
+        addShelfView(text("Try Refresh stations from the ••• menu.", size: 13, color: .secondaryLabelColor))
+        needsLayout = true
+    }
     func render(_ feed: DiscoveryFeed, favorites: [Station]) {
         currentFeed = feed; currentFavorites = favorites
         if let selectedMood, !feed.moodGroups.contains(where: { $0.title == selectedMood }) { self.selectedMood = nil }
         updateSummary()
-        for view in shelves.arrangedSubviews { shelves.removeArrangedSubview(view); view.removeFromSuperview() }
-        cardRows = []; compactWidths = []
+        clearShelves()
         if feed.shelves.isEmpty {
             addShelfView(text(showingMoods ? "A mood is waiting for its stations" : "A fresh dial awaits", size: 22, color: .white, weight: .semibold))
             addShelfView(text("Discover includes stations rated four stars or higher. Choose genres and languages in Your mix, then refresh stations from the ••• menu, or open the full station browser.", size: 13, color: .secondaryLabelColor))
@@ -438,18 +486,27 @@ final class DiscoverPanel: NSView {
     private var compactCards: Bool { bounds.width < (showingMoods && selectedMood == nil ? 420 : 540) }
     override func layout() {
         super.layout()
-        for grid in shelves.arrangedSubviews.compactMap({ $0 as? MoodCardGrid }) { grid.needsLayout = true }
+        let geometry = NSSize(width: bounds.width, height: scroll.contentView.bounds.height)
+        let geometryChanged = geometry != lastLayoutGeometry
+        lastLayoutGeometry = geometry
+        if geometryChanged {
+            for grid in shelves.arrangedSubviews.compactMap({ $0 as? MoodCardGrid }) { grid.needsLayout = true }
+        }
         let compact = compactCards
         if showingMoods {
             let titleSize: CGFloat = bounds.width < 420 ? 19 : bounds.width < 600 ? 23 : 28
             if pageTitle.font?.pointSize != titleSize { pageTitle.font = .systemFont(ofSize: titleSize, weight: .bold) }
         } else if pageTitle.font?.pointSize != 28 { pageTitle.font = .systemFont(ofSize: 28, weight: .bold) }
-        weatherRow.orientation = compact ? .vertical : .horizontal
-        weatherRow.alignment = compact ? .leading : .centerY
+        let orientation: NSUserInterfaceLayoutOrientation = compact ? .vertical : .horizontal
+        let weatherAlignment: NSLayoutConstraint.Attribute = compact ? .leading : .centerY
+        if weatherRow.orientation != orientation { weatherRow.orientation = orientation }
+        if weatherRow.alignment != weatherAlignment { weatherRow.alignment = weatherAlignment }
         for width in compactWidths where width.isActive != compact { width.isActive = compact }
         for row in cardRows {
-            row.orientation = compact ? .vertical : .horizontal; row.alignment = compact ? .leading : .top
-            for card in row.arrangedSubviews { card.needsLayout = true }
+            let alignment: NSLayoutConstraint.Attribute = compact ? .leading : .top
+            if row.orientation != orientation { row.orientation = orientation }
+            if row.alignment != alignment { row.alignment = alignment }
+            if geometryChanged { for card in row.arrangedSubviews { card.needsLayout = true } }
         }
     }
     private func showMoodsExplainer() {

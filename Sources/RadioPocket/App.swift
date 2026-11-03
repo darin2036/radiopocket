@@ -922,6 +922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func startHousekeeping() {
         guard smokePath == nil, argument("--preview") == nil else { return }
         housekeeping = Housekeeping(directory: directoryClient)
+        housekeeping?.releaseDiscoveryMemory = { [weak self] pressure in self?.discovery?.releaseIdleMemory(underPressure: pressure) }
         housekeeping?.start()
     }
     private func makeDiscovery() -> DiscoveryController {

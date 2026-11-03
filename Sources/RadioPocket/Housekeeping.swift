@@ -6,6 +6,7 @@ import Darwin
 final class Housekeeping {
     /// How long RadioPocket sits hidden or behind other apps before it tidies up.
     static let backgroundDelay: TimeInterval = 90
+    var releaseDiscoveryMemory: ((Bool) -> Void)?
     private let directory: RadioDirectory
     private var pressure: DispatchSourceMemoryPressure?
     private var pending: DispatchWorkItem?
@@ -48,6 +49,8 @@ final class Housekeeping {
     /// Frees the downloaded station lists held in memory (all of them under pressure, otherwise only the idle ones),
     /// then asks malloc to return the pages that freed to the system. The saved lists on disk are not touched.
     func tidy(everything: Bool) {
+        StationArtwork.clearMemory()
+        releaseDiscoveryMemory?(everything)
         let directory = directory
         Task(priority: .utility) {
             await directory.releaseMemory(everything: everything)

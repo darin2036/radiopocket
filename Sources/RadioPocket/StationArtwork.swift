@@ -17,7 +17,7 @@ enum StationArtwork {
     }
     private static let gate = Gate()
     private static let images: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>(); cache.countLimit = 48; cache.totalCostLimit = 12 * 1_048_576; return cache
+        let cache = NSCache<NSString, NSImage>(); cache.countLimit = 16; cache.totalCostLimit = 4 * 1_048_576; return cache
     }()
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral

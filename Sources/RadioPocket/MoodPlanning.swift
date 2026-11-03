@@ -57,7 +57,8 @@ enum MoodPlanning {
         var counts: [String: Int] = [:]
         var eligible: [String: RadioListing] = [:]
         for (key, group) in groups {
-            guard group.allSatisfy({ DiscoverySafety.allows($0.restored) }), let row = group.sorted(by: { $0.fetched > $1.fetched }).first?.restored,
+            if Task.isCancelled { break }
+            guard group.allSatisfy({ DiscoverySafety.allows($0.restored) }), let row = group.max(by: { $0.fetched < $1.fetched })?.restored,
                   !row.video, row.quality >= DiscoveryRecommendations.minimumQuality,
                   DiscoveryFeedback.vote(for: row, in: state.discoveryFeedback ?? [:], legacy: Set(state.discoveryDismissed ?? [])) >= 0 else { continue }
             let languages = Set(group.flatMap { $0.restored.languages ?? [] })
@@ -153,6 +154,7 @@ enum MoodPlanning {
     static func build(records: [DiscoveryIndex.Record], state: Library.State, context: Context, plan: MoodPlan, availability: [String: DiscoveryAvailability.Evidence] = [:]) -> DiscoveryFeed {
         var groups: [MoodGroup] = []
         for activity in plan.activities {
+            if Task.isCancelled { break }
             // Resolve each mood independently: suitable stations may fit several moods.
             let themes = activity.collections.map { MoodCuration.Theme(title: $0.title, genres: $0.genres) }
             let feed = MoodCuration.build(records: records, state: state, moment: context.moment, themes: themes, availability: availability)

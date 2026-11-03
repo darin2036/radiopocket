@@ -10,7 +10,7 @@ final class MoodCard: NSButton {
     private var stationCount: String { "\(count) " + (count == 1 ? unit : unit + "s") }
     private let symbol: String
     private let tint: NSColor
-    var compact = false { didSet { needsDisplay = true } }
+    var compact = false { didSet { if compact != oldValue { needsDisplay = true } } }
     init(title: String, count: Int, unit: String = "station", artwork: String? = nil, caption: String? = nil) {
         name = title; self.count = count; self.unit = unit; self.caption = caption
         let lower = artwork ?? title.lowercased()
@@ -124,7 +124,8 @@ final class MoodCardGrid: NSView {
         if gridHeight.constant != height { gridHeight.constant = height }
         for (index, card) in cards.enumerated() {
             card.compact = tight
-            card.frame = NSRect(x: CGFloat(index % columns) * (cardWidth + gap), y: CGFloat(index / columns) * (cardHeight + gap), width: cardWidth, height: cardHeight)
+            let frame = NSRect(x: CGFloat(index % columns) * (cardWidth + gap), y: CGFloat(index / columns) * (cardHeight + gap), width: cardWidth, height: cardHeight)
+            if card.frame != frame { card.frame = frame }
         }
     }
 }

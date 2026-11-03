@@ -17,10 +17,25 @@ enum DiscoveryCatalog {
     static func words(_ value: String) -> String {
         StationSearch.fold(value).components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
     }
+    // Normalize the fixed vocabulary once, rather than ~90 times for each station comparison.
+    private static let genrePhrases: [String: Set<String>] = {
+        var result: [String: Set<String>] = [:]
+        for genre in genres { result[words(genre), default: []].insert(genre) }
+        for (alias, genre) in aliases { result[words(alias), default: []].insert(genre) }
+        return result
+    }()
+    private static let longestPhrase = genrePhrases.keys.map { $0.split(separator: " ").count }.max() ?? 1
     static func matches(_ text: String) -> Set<String> {
-        let haystack = " " + words(text) + " "
-        var found = Set(genres.filter { haystack.contains(" " + words($0) + " ") })
-        for (alias, genre) in aliases where haystack.contains(" " + words(alias) + " ") { found.insert(genre) }
+        let tokens = words(text).split(separator: " ")
+        var found = Set<String>()
+        for start in tokens.indices {
+            var phrase = ""
+            for end in start..<min(tokens.count, start + longestPhrase) {
+                if end > start { phrase += " " }
+                phrase += tokens[end]
+                if let matches = genrePhrases[phrase] { found.formUnion(matches) }
+            }
+        }
         return found
     }
     struct Language {

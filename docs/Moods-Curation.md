@@ -58,3 +58,11 @@ Location permission waits are bounded, including the initial authorization wait.
 Mood cards use a compact 148-point height with 18-point semibold titles and 12-point action text. The home grid keeps two columns down to a 420-point panel width, then stacks. Stable title-based vector backdrops vary between waves, diagonal ribbons, record grooves, confetti and hills. Station-card responsive layout remains unchanged.
 
 The mood grid uses one shared column width, including an incomplete final row, and reflows between one and three columns. Tight or short viewports use 108-point cards, smaller icons, 15-point titles and 8-point gutters. Regular cards retain 148-point height and 16–18-point titles. The page greeting responds to panel width at 19, 23 and 28 points.
+
+## Loading transitions
+
+Switching between Discover and Moods clears the prior surface synchronously. Initial loading uses a native indeterminate indicator (a static waveform with Reduce Motion); existing feeds remain visible during background refreshes. Empty results and errors stop the indicator. Mood context, ranking, weather-based rebuilding and AI-plan resolution run off the main actor, with generation checks before rendering; Moods skips the unused Discover ranking pass. `./test-discovery-ui.sh` exercises the native view transitions and loader cleanup.
+
+## Stable browsing session
+
+Once rendered, the Moods collections and station order remain fixed until an explicit refresh, preference/source change, or a new visit. Time-of-day timers no longer rebuild an open Moods view. Availability checks continue saving evidence without reranking it, and late weather/AI results are cached for the next load. Playback history does not reload Moods; favorite buttons repaint from the same feed. Bringing an already-visible library window forward preserves the session.

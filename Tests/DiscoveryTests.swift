@@ -301,4 +301,13 @@ func checkDiscovery(at root: URL) throws {
     availability.clear()
     try check(availability.snapshot().isEmpty && !FileManager.default.fileExists(atPath: availabilityFile.path), "Clearing discovery deletes availability evidence")
 
+    func referenceGenres(_ text: String) -> Set<String> {
+        let haystack = " " + DiscoveryCatalog.words(text) + " "
+        var result = Set(DiscoveryCatalog.genres.filter { haystack.contains(" " + DiscoveryCatalog.words($0) + " ") })
+        for (alias, genre) in DiscoveryCatalog.aliases where haystack.contains(" " + DiscoveryCatalog.words(alias) + " ") { result.insert(genre) }
+        return result
+    }
+    let genreSamples = DiscoveryCatalog.genres + Array(DiscoveryCatalog.aliases.keys) + ["rockabilly", "deep-house / drum & bass", "JAZZ café, neo soul", "hip-hop & indie pop", "", "smooth jazz classic rock"]
+    try check(genreSamples.allSatisfy { DiscoveryCatalog.matches($0) == referenceGenres($0) }, "Optimized genre lookup preserves vocabulary, aliases, phrase boundaries and accent normalization")
+
 }

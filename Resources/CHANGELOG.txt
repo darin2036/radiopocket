@@ -1,4 +1,8 @@
 RadioPocket 0.9.1
+* Fixed: Smoother library transitions while recommendations load
+* Changed: Suggestions stay steady while you browse
+* Changed: Faster recommendations with less processing
+* Changed: Lighter background activity and better memory cleanup
 * Added: Discover helps you find more stations you’ll enjoy
 * Added: Personalize your mix with genres and preferred languages
 * Added: Richer station cards with artwork and website links where available
