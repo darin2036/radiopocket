@@ -1,6 +1,7 @@
 RadioPocket 0.9.3
 * Changed: Compact Discover station cards with genre-themed artwork
 * Added: Add or remove a favorite from Station Info
+* Added: Check for updates from the app menu, Help menu or Preferences, and optionally at launch
 
 RadioPocket 0.9.2
 * Added: Moods suggests stations for your activities, time of day, and optional local weather
