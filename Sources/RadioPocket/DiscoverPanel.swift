@@ -13,6 +13,22 @@ private final class DiscoveryAction: NSButton {
     @objc private func invoke() { perform?() }
 }
 private final class FrequencyArtwork: NSView {
+    private struct Style { var hue: CGFloat; var symbol: String; var pattern: Int }
+    private static func style(for genre: String) -> Style {
+        let g = genre.lowercased()
+        func has(_ words: [String]) -> Bool { words.contains { g.contains($0) } }
+        if has(["jazz", "blues", "soul", "swing", "bebop", "funk", "r&b"]) { return Style(hue: 0.08, symbol: "music.quarternote.3", pattern: 1) }
+        if has(["rock", "metal", "punk", "alternative", "indie", "post"]) { return Style(hue: 0.98, symbol: "guitars.fill", pattern: 2) }
+        if has(["folk", "country", "americana", "bluegrass", "acoustic"]) { return Style(hue: 0.11, symbol: "leaf.fill", pattern: 3) }
+        if has(["house", "techno", "trance", "electro", "dance", "disco", "drum", "dubstep", "synthwave", "breakbeat"]) { return Style(hue: 0.78, symbol: "waveform", pattern: 4) }
+        if has(["ambient", "chill", "downtempo", "lo-fi", "lounge", "meditation", "new age", "instrumental", "piano"]) { return Style(hue: 0.50, symbol: "moon.stars.fill", pattern: 0) }
+        if has(["classical", "baroque", "opera", "soundtrack"]) { return Style(hue: 0.62, symbol: "pianokeys", pattern: 3) }
+        if has(["hip hop", "rap"]) { return Style(hue: 0.13, symbol: "mic.fill", pattern: 2) }
+        if has(["world", "reggae", "dub", "ska", "afro", "latin", "salsa", "bossa", "samba", "flamenco", "celtic", "bollywood", "k-pop", "j-pop"]) { return Style(hue: 0.33, symbol: "globe.europe.africa.fill", pattern: 1) }
+        if has(["pop", "oldies", "60s", "70s", "80s", "90s", "00s"]) { return Style(hue: 0.90, symbol: "sparkles", pattern: 4) }
+        if has(["news", "talk", "sport"]) { return Style(hue: 0.58, symbol: "mic.fill", pattern: 0) }
+        return Style(hue: 0.52, symbol: "dot.radiowaves.left.and.right", pattern: 0)
+    }
     let genre: String
     private let artworkURL: String?
     private var stationImage: NSImage?
@@ -31,22 +47,43 @@ private final class FrequencyArtwork: NSView {
                 guard !Task.isCancelled else { return }; self?.stationImage = image; self?.needsDisplay = true
             }
         }
-        let hash = genre.utf8.reduce(0) { ($0 + Int($1)) % 360 }
-        let color = NSColor(calibratedHue: CGFloat(hash) / 360, saturation: 0.65, brightness: 0.72, alpha: 1)
-        NSGradient(starting: color.withAlphaComponent(0.65), ending: NSColor(calibratedWhite: 0.08, alpha: 1))?.draw(in: bounds, angle: 20)
-        let path = NSBezierPath(); path.lineWidth = 2
-        for x in stride(from: CGFloat(0), through: bounds.width, by: 3) {
-            let y = bounds.midY + sin(x / 15 + CGFloat(hash)) * 14 + cos(x / 7) * 5
-            if x == 0 { path.move(to: NSPoint(x: x, y: y)) } else { path.line(to: NSPoint(x: x, y: y)) }
+        let style = Self.style(for: genre)
+        let color = NSColor(calibratedHue: style.hue, saturation: 0.62, brightness: 0.70, alpha: 1)
+        NSGradient(starting: color, ending: color.blended(withFraction: 0.72, of: NSColor(calibratedWhite: 0.05, alpha: 1))!)?.draw(in: bounds, angle: 300)
+        let faint = NSColor.white.withAlphaComponent(stationImage == nil ? 0.16 : 0.08)
+        faint.setStroke(); faint.setFill()
+        let w = bounds.width, h = bounds.height
+        switch style.pattern {
+        case 1: // ribbons
+            for x in stride(from: CGFloat(-h), through: w, by: 12) { let r = NSBezierPath(); r.move(to: NSPoint(x: x, y: 0)); r.line(to: NSPoint(x: x + 5, y: 0)); r.line(to: NSPoint(x: x + 5 + h, y: h)); r.line(to: NSPoint(x: x + h, y: h)); r.close(); r.fill() }
+        case 2: // equalizer bars
+            for (i, x) in stride(from: CGFloat(4), to: w - 3, by: 8).enumerated() { let bar = abs(sin(CGFloat(i) * 1.7 + 1)) * h * 0.55 + h * 0.15; NSBezierPath(roundedRect: NSRect(x: x, y: 0, width: 5, height: bar), xRadius: 2, yRadius: 2).fill() }
+        case 3: // record grooves
+            for r in stride(from: CGFloat(8), through: max(w, h) * 1.1, by: 9) { let ring = NSBezierPath(ovalIn: NSRect(x: w - r, y: h - r, width: r * 2, height: r * 2)); ring.lineWidth = 2; ring.stroke() }
+        case 4: // dots
+            for x in stride(from: CGFloat(6), to: w, by: 11) { for y in stride(from: CGFloat(6), to: h, by: 11) { NSBezierPath(ovalIn: NSRect(x: x, y: y, width: 3.5, height: 3.5)).fill() } }
+        default: // waves
+            for k in 0..<4 {
+                let path = NSBezierPath(); path.lineWidth = 2
+                for x in stride(from: CGFloat(0), through: w, by: 2) {
+                    let y = h * (0.2 + 0.2 * CGFloat(k)) + sin(x / 9 + CGFloat(k)) * 5
+                    if x == 0 { path.move(to: NSPoint(x: x, y: y)) } else { path.line(to: NSPoint(x: x, y: y)) }
+                }
+                path.stroke()
+            }
         }
-        color.blended(withFraction: 0.5, of: .white)!.withAlphaComponent(stationImage == nil ? 0.7 : 0.18).setStroke(); path.stroke()
         if let stationImage {
-            let side = min(bounds.height - 20, 96)
+            let side = min(w, h) - 4
             let badge = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
-            NSColor(calibratedWhite: 0.98, alpha: 1).setFill(); NSBezierPath(roundedRect: badge, xRadius: 12, yRadius: 12).fill()
-            let inset = badge.insetBy(dx: 6, dy: 6), size = stationImage.size
+            NSColor(calibratedWhite: 0.98, alpha: 1).setFill(); NSBezierPath(roundedRect: badge, xRadius: 8, yRadius: 8).fill()
+            let inset = badge.insetBy(dx: 4, dy: 4), size = stationImage.size
             let scale = min(inset.width / max(1, size.width), inset.height / max(1, size.height))
             stationImage.draw(in: NSRect(x: inset.midX - size.width * scale / 2, y: inset.midY - size.height * scale / 2, width: size.width * scale, height: size.height * scale))
+        } else if let icon = NSImage(systemSymbolName: style.symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: min(w, h) * 0.42, weight: .medium)) {
+            let tinted = NSImage(size: icon.size, flipped: false) { area in
+                icon.draw(in: area); NSColor.white.withAlphaComponent(0.92).setFill(); area.fill(using: .sourceAtop); return true
+            }
+            tinted.draw(in: NSRect(x: bounds.midX - icon.size.width / 2, y: bounds.midY - icon.size.height / 2, width: icon.size.width, height: icon.size.height))
         }
     }
 }
@@ -102,36 +139,21 @@ private final class DiscoveryReasonScrollView: NSScrollView {
     }
 }
 
-/// Explicit content insets keep the artwork inside the card even at compact sizes.
+/// Compact station card: small artwork beside the name, one reason line, then actions.
 private final class DiscoveryStationCard: NSView {
     let content = NSStackView()
-    var artworkHeight: NSLayoutConstraint?
-    var titleHeight: NSLayoutConstraint?
-    var titleField: NSTextField?
     override init(frame: NSRect) {
         super.init(frame: frame)
-        content.orientation = .vertical; content.alignment = .leading; content.spacing = 7
+        content.orientation = .vertical; content.alignment = .leading; content.spacing = 8
         content.translatesAutoresizingMaskIntoConstraints = false; addSubview(content)
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
-    override func layout() {
-        let tight = bounds.width < 280 || (enclosingScrollView.map { $0.contentView.bounds.height < 450 } ?? false)
-        let imageSize: CGFloat = tight ? 44 : 64
-        if artworkHeight?.constant != imageSize { artworkHeight?.constant = imageSize }
-        let fontSize: CGFloat = tight ? 14 : 16
-        if titleField?.font?.pointSize != fontSize { titleField?.font = .systemFont(ofSize: fontSize, weight: .semibold) }
-        let titleSize: CGFloat = tight ? 34 : 39
-        if titleHeight?.constant != titleSize { titleHeight?.constant = titleSize }
-        let spacing: CGFloat = tight ? 5 : 7
-        if content.spacing != spacing { content.spacing = spacing }
-        super.layout()
-    }
 }
 
 /// Presentation-only discovery surface; metadata, preference persistence and ranking are owned separately.
@@ -428,59 +450,47 @@ final class DiscoverPanel: NSView {
             if let height { view.heightAnchor.constraint(equalToConstant: height).isActive = true }
         }
         let genre = DiscoverySafety.interests(row).sorted().first ?? "music"
-        let artwork = FrequencyArtwork(genre, artworkURL: preferences.showArtwork ? row.artworkURL : nil); artwork.wantsLayer = true; artwork.layer?.cornerRadius = 8; artwork.layer?.masksToBounds = true; card.artworkHeight = artwork.heightAnchor.constraint(equalToConstant: 64); card.artworkHeight?.isActive = true; append(artwork)
-        append(text(genre.uppercased() + (row.video ? "  /  TV" : "  /  RADIO"), size: 10, color: .systemTeal, weight: .semibold), height: 12)
-        let title = text(row.name, size: 16, color: .white, weight: .semibold); title.maximumNumberOfLines = 2; title.toolTip = row.name; append(title)
-        card.titleField = title; card.titleHeight = title.heightAnchor.constraint(equalToConstant: 39); card.titleHeight?.isActive = true
-        let reasonScroll = DiscoveryReasonScrollView()
-        reasonScroll.drawsBackground = false; reasonScroll.borderType = .noBorder
-        reasonScroll.hasVerticalScroller = true; reasonScroll.autohidesScrollers = true
-        reasonScroll.scrollerStyle = .overlay
-        let reason = NSTextView(frame: NSRect(x: 0, y: 0, width: 1, height: 48))
-        reason.string = pick.reason; reason.font = .systemFont(ofSize: 12)
-        reason.textColor = .secondaryLabelColor; reason.drawsBackground = false
-        reason.isEditable = false; reason.isSelectable = true
-        reason.textContainerInset = .zero; reason.textContainer?.lineFragmentPadding = 0
-        reason.isVerticallyResizable = true; reason.isHorizontallyResizable = false
-        reason.autoresizingMask = [.width]; reason.textContainer?.widthTracksTextView = true
-        reason.textContainer?.containerSize = NSSize(width: 1, height: CGFloat.greatestFiniteMagnitude)
+        let artwork = FrequencyArtwork(genre, artworkURL: preferences.showArtwork ? row.artworkURL : nil)
+        artwork.wantsLayer = true; artwork.layer?.cornerRadius = 8; artwork.layer?.masksToBounds = true
+        artwork.translatesAutoresizingMaskIntoConstraints = false
+        artwork.widthAnchor.constraint(equalToConstant: 52).isActive = true; artwork.heightAnchor.constraint(equalToConstant: 52).isActive = true
+        let title = text(row.name, size: 14, color: .white, weight: .semibold); title.maximumNumberOfLines = 2; title.toolTip = row.name
+        let details = [genre.capitalized, row.country].filter { !$0.isEmpty }.joined(separator: " · ")
+        let meta = text(details, size: 11, color: .secondaryLabelColor); meta.maximumNumberOfLines = 1; meta.lineBreakMode = .byTruncatingTail
+        meta.toolTip = [details, (row.languages ?? []).map(DiscoveryCatalog.languageName).joined(separator: ", "), row.quality > 0 ? "Estimated stream quality: \(row.quality) of 5" : nil, pick.availability?.label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        let labels = NSStackView(views: [title, meta]); labels.orientation = .vertical; labels.alignment = .leading; labels.spacing = 2
+        let header = horizontal([artwork, labels]); header.alignment = .centerY; header.spacing = 10
+        append(header)
+        let reason = text(pick.reason, size: 11, color: .secondaryLabelColor)
+        reason.maximumNumberOfLines = 1; reason.lineBreakMode = .byTruncatingTail; reason.toolTip = pick.reason
         reason.setAccessibilityLabel("Why this station")
-        reasonScroll.documentView = reason
-        append(reasonScroll, height: 30)
-        let details = [row.country, (row.languages ?? []).map(DiscoveryCatalog.languageName).joined(separator: ", ")].filter { !$0.isEmpty }.joined(separator: " · ")
-        let quality = text(row.quality > 0 ? row.qualityStars : "☆ ☆ ☆ ☆ ☆", size: 10, color: .secondaryLabelColor)
-        quality.toolTip = row.quality > 0 ? "Estimated stream quality: \(row.quality) of 5" : "Stream quality not published"
-        quality.setAccessibilityLabel(quality.toolTip)
-        quality.setContentHuggingPriority(.required, for: .horizontal)
-        let country = text(details, size: 11, color: .secondaryLabelColor)
-        country.maximumNumberOfLines = 1; country.lineBreakMode = .byTruncatingTail; country.toolTip = details
-        append(horizontal([country, NSView(), quality]), height: 14)
-        let availability = text(pick.availability?.label ?? "Availability not checked", size: 10, color: .secondaryLabelColor)
-        availability.toolTip = "Local stream response check; separate from audio quality and not a guarantee of playback."
-        append(availability, height: 14)
+        append(reason, height: 14)
         let playButton = DiscoveryAction("Play") { [weak self] in self?.play?(row) }
         playButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil); playButton.imagePosition = .imageLeading; playButton.bezelColor = .systemTeal
         let saveButton = DiscoveryAction(saved ? "Saved" : "Save") { [weak self] in self?.favorite?(row) }
         saveButton.image = NSImage(systemSymbolName: saved ? "heart.fill" : "heart", accessibilityDescription: nil); saveButton.imagePosition = .imageLeading
-        func thumb(_ value: Int) -> NSButton {
-            let title = value > 0 ? "Recommend more like " + row.name : "Lower the priority of " + row.name
-            let button = DiscoveryAction(title) { [weak self] in self?.feedbackChanged?(row, value) }
-            button.image = NSImage(systemSymbolName: (value > 0 ? "hand.thumbsup" : "hand.thumbsdown") + (pick.feedback == value ? ".fill" : ""), accessibilityDescription: nil)
-            button.imagePosition = .imageOnly; button.isBordered = false; button.contentTintColor = pick.feedback == value ? .systemTeal : .secondaryLabelColor
-            button.toolTip = (value > 0 ? "More like this station" : "Less often — keeps this station available") + (pick.feedback == value ? " · Click again to clear" : "")
-            button.setAccessibilityValue(pick.feedback == value ? "Selected" : "Not selected")
+        func icon(_ symbol: String, label: String, tip: String, tint: NSColor, _ run: @escaping () -> Void) -> NSButton {
+            let button = DiscoveryAction(label, action: run)
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            button.imagePosition = .imageOnly; button.isBordered = false; button.contentTintColor = tint
+            button.toolTip = tip
             button.widthAnchor.constraint(equalToConstant: 26).isActive = true
             return button
         }
-        append(horizontal([playButton, saveButton, NSView(), thumb(1), thumb(-1)]), height: 24)
-        if let website = StationArtwork.website(row.homepage) {
-            let link = DiscoveryAction("Station website ↗") { NSWorkspace.shared.open(website) }
-            link.isBordered = false; link.contentTintColor = .systemTeal; link.alignment = .left
-            link.toolTip = website.host; link.setAccessibilityLabel("Open " + row.name + " website")
-            append(link, height: 20)
-        } else {
-            append(NSView(), height: 20)
+        func thumb(_ value: Int) -> NSButton {
+            let selected = pick.feedback == value
+            let button = icon((value > 0 ? "hand.thumbsup" : "hand.thumbsdown") + (selected ? ".fill" : ""),
+                              label: value > 0 ? "Recommend more like " + row.name : "Lower the priority of " + row.name,
+                              tip: (value > 0 ? "More like this station" : "Less often — keeps this station available") + (selected ? " · Click again to clear" : ""),
+                              tint: selected ? .systemTeal : .secondaryLabelColor) { [weak self] in self?.feedbackChanged?(row, value) }
+            button.setAccessibilityValue(selected ? "Selected" : "Not selected")
+            return button
         }
+        var actions: [NSView] = [playButton, saveButton, NSView(), thumb(1), thumb(-1)]
+        if let website = StationArtwork.website(row.homepage) {
+            actions.append(icon("safari", label: "Open " + row.name + " website", tip: website.host ?? "Station website", tint: .systemTeal) { NSWorkspace.shared.open(website) })
+        }
+        append(horizontal(actions), height: 24)
         return card
     }
     private var compactCards: Bool { bounds.width < (showingMoods && selectedMood == nil ? 420 : 540) }

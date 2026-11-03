@@ -5,6 +5,7 @@ import AppKit
 final class StationInfoController: NSWindowController {
     private let engine: RadioEngine
     private let directory: RadioDirectory
+    private let library: Library
     private var rows: [(String, NSTextField)] = []
     private var timer: Timer?
     private var listing: RadioListing?
@@ -12,16 +13,17 @@ final class StationInfoController: NSWindowController {
     private var lookupTask: Task<Void, Never>?
     private let lookup = ClassicButton(title: "Look Up Details", target: nil, action: nil)
     private let homepage = ClassicButton(title: "Open Homepage", target: nil, action: nil)
+    private let favorite = ClassicButton(title: "Add to Favorites", target: nil, action: nil)
     private static let labels = ["Station", "Stream", "Now playing", "Status", "Format", "Bitrate", "Buffer", "Leveling", "Country", "Genre", "Directory",
                                   "HTTP", "Content type", "Server", "ICY", "First bytes", "Final URL"]
     /// A library row being inspected instead of the station that is playing.
     private var inspected: RadioListing?
     private var probe: StreamReply.Result?
     private var probeTask: Task<Void, Never>?
-    private static let height = CGFloat(30 + labels.count * 22 + 70)
+    private static let height = CGFloat(30 + labels.count * 22 + 101)
 
-    init(engine: RadioEngine, directory: RadioDirectory) {
-        self.engine = engine; self.directory = directory
+    init(engine: RadioEngine, directory: RadioDirectory, library: Library) {
+        self.engine = engine; self.directory = directory; self.library = library
         let window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: Self.height), styleMask: [.borderless], backing: .buffered, defer: false)
         window.title = "Station Info"
         window.isReleasedWhenClosed = false; window.hasShadow = true; window.appearance = NSAppearance(named: .darkAqua)
@@ -38,14 +40,18 @@ final class StationInfoController: NSWindowController {
             value.frame = NSRect(x: 100, y: CGFloat(30 + i * 22) + 2, width: 346, height: 18); root.addSubview(value)
             rows.append((name, value))
         }
-        for (button, title, selector, x) in [(lookup, "Look Up Details", #selector(lookUp), 14.0), (homepage, "Open Homepage", #selector(openHomepage), 134.0)] {
+        // Two rows of equal buttons on a three-column grid.
+        let columns = [14.0, 163.0, 312.0]
+        let grid: [(ClassicButton, String, Selector, Int, Int)] = [
+            (favorite, "Add to Favorites", #selector(toggleFavorite), 0, 0), (lookup, "Look Up Details", #selector(lookUp), 1, 0),
+            (homepage, "Open Homepage", #selector(openHomepage), 2, 0),
+            (ClassicButton(title: "Copy URL", target: nil, action: nil), "Copy URL", #selector(copyURL), 0, 1),
+            (ClassicButton(title: "Close", target: nil, action: nil), "Close", #selector(dismiss), 2, 1)]
+        for (button, title, selector, column, row) in grid {
             button.title = title; button.target = self; button.action = selector; button.isBordered = false
-            button.frame = NSRect(x: x, y: Self.height - 46, width: 112, height: 23); root.addSubview(button)
+            if title == "Close" { button.keyEquivalent = "\u{1b}" }
+            button.frame = NSRect(x: columns[column], y: Self.height - 77 + CGFloat(row) * 31, width: 134, height: 23); root.addSubview(button)
         }
-        let copy = ClassicButton(title: "Copy URL", target: self, action: #selector(copyURL))
-        copy.isBordered = false; copy.frame = NSRect(x: 254, y: Self.height - 46, width: 82, height: 23); root.addSubview(copy)
-        let done = ClassicButton(title: "Close", target: self, action: #selector(dismiss))
-        done.isBordered = false; done.keyEquivalent = "\u{1b}"; done.frame = NSRect(x: 364, y: Self.height - 46, width: 82, height: 23); root.addSubview(done)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -113,7 +119,11 @@ final class StationInfoController: NSWindowController {
         set("Final URL", reply?.finalURL ?? "—")
         lookup.isEnabled = station != nil && lookupTask == nil && inspected == nil
         homepage.isEnabled = homepageURL != nil
-        lookup.needsDisplay = true; homepage.needsDisplay = true
+        if let station {
+            favorite.title = library.isFavorite(station) ? "Remove Favorite" : "Add to Favorites"
+            favorite.isEnabled = true
+        } else { favorite.title = "Add to Favorites"; favorite.isEnabled = false }
+        lookup.needsDisplay = true; homepage.needsDisplay = true; favorite.needsDisplay = true
     }
     private var homepageURL: URL? {
         guard let text = listing?.homepage, let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
@@ -130,6 +140,12 @@ final class StationInfoController: NSWindowController {
             self.lookupMessage = found == nil ? "Not listed in Radio Browser, or it can’t be reached right now." : nil
             self.refresh()
         }
+    }
+    @objc private func toggleFavorite() {
+        guard let station = inspected?.station ?? engine.station else { return }
+        do { if library.isFavorite(station) { try library.removeFavorite(station) } else { try library.save(station) } }
+        catch { NSApp.presentError(error) }
+        refresh()
     }
     @objc private func openHomepage() { if let url = homepageURL { NSWorkspace.shared.open(url) } }
     @objc private func copyURL() {

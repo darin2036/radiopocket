@@ -680,7 +680,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if jump == nil { jump = JumpToStationController(library: library); jump?.play = { [weak self] in self?.play($0) } }
             jump?.present(over: window)
         case "info":
-            if info == nil { info = StationInfoController(engine: engine, directory: directoryClient) }
+            if info == nil { info = StationInfoController(engine: engine, directory: directoryClient, library: library) }
             info?.present(over: window)
         case "leveling":
             engine.leveling.toggle()
@@ -933,7 +933,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         browser.openStream = { [weak self] in self?.openDialog() }
         browser.inspect = { [weak self] entry in
             guard let self else { return }
-            if self.info == nil { self.info = StationInfoController(engine: self.engine, directory: self.directoryClient) }
+            if self.info == nil { self.info = StationInfoController(engine: self.engine, directory: self.directoryClient, library: self.library) }
             self.info?.present(inspecting: entry, over: self.discovery?.window)
         }
         browser.report = { [weak self] in self?.showError($0) }
