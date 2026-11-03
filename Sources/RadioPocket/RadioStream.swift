@@ -7,6 +7,8 @@ import CEQ
 final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     /// Failure messages starting with this marker can never succeed on retry (unsupported codec, bad layout).
     static let permanentMarker = "\u{1}"
+    /// Failure messages starting with this marker mean every User-Agent was refused; the engine tries AVPlayer next.
+    static let fallbackMarker = "RP-FALLBACK:"
     let dsp = rp_eq_create()!
     var playing: (() -> Void)?
     var failed: ((String) -> Void)?
@@ -18,6 +20,10 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     private var demuxer: Demuxer?
     private var address: URL?
     private var stopped = false
+    private var agents: [String?] = []
+    private var agentAttempt = 0
+    private var learned = false
+    private var sniffDepth = 0
     private var announced = false
     private var baselineDelay = 0.0
     private(set) var isPaused = false
@@ -65,32 +71,60 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
 
     func start(_ url: URL) {
         address = url
+        agents = UserAgent.ladder(for: url.host)
+        agentAttempt = 0; learned = false
         if ["m3u8", "m3u"].contains(url.pathExtension.lowercased()) { startHLS(url) } else { startHTTP(url) }
     }
 
+    /// Remembers which User-Agent got audio from this host, so the next connection starts with it.
+    private func noteSuccess() {
+        lock.lock(); let first = !learned; learned = true; lock.unlock()
+        if first { UserAgent.remember(agents[agentAttempt], for: address?.host) }
+    }
+
+    /// The server turned this request away. Tries the next User-Agent, and when none are left reports `fallbackMarker`.
+    private func reject(_ message: String, retry: @escaping () -> Void) {
+        lock.lock(); let done = stopped, canRetry = agentAttempt + 1 < agents.count
+        if canRetry && !done { agentAttempt += 1 }
+        lock.unlock()
+        guard !done else { return }
+        if canRetry { retry() } else { sinkFailure(Self.fallbackMarker + message) }
+    }
+
     private func startHTTP(_ url: URL) {
-        let http = HTTPSource(url: url)
+        let http = HTTPSource(url: url, userAgent: agents[agentAttempt])
         http.onResponse = { [weak self, weak http] type in
-            guard let self, let http, type.contains("mpegurl") else { return }
-            http.stop(); self.startHLS(url)       // a playlist behind a non-.m3u8 address
+            guard let self, let http, type.hasPrefix("application/"), type.contains("mpegurl") else { return }
+            http.stop(); self.startHLS(url)       // an HLS playlist behind a non-.m3u8 address
         }
         http.onData = { [weak self] data in self?.receive(data, from: url) }
         http.onTitle = { [weak self] title in self?.sinkTitle(title) }
         http.onFailure = { [weak self] message in self?.sinkFailure(message) }
+        http.onRejected = { [weak self, weak http] message in
+            http?.stop()
+            self?.reject(message) { self?.startHTTP(url) }
+        }
         lock.lock(); source = http; lock.unlock()
         http.start()
     }
 
     private func startHLS(_ url: URL) {
-        let hls = HLSSource(url: url)
+        let hls = HLSSource(url: url, userAgent: agents[agentAttempt])
         hls.onAudio = { [weak self] data in
             guard let self else { return }
+            self.noteSuccess()
             self.count(data)
             if self.demuxer == nil { self.demuxer = FileStreamDemuxer(sink: self) }
             self.demuxer?.feed(data)
         }
         hls.onTitle = { [weak self] title in self?.sinkTitle(title) }
-        hls.onFailure = { [weak self] message in self?.sinkFailure(message) }
+        hls.onFailure = { [weak self, weak hls] message in
+            guard let self else { return }
+            if message == HLSSource.statusError, self.bytesReceived == 0 {
+                hls?.stop()
+                self.reject(message) { self.startHLS(url) }
+            } else { self.sinkFailure(message) }
+        }
         lock.lock(); source = hls; lock.unlock()
         hls.start()
     }
@@ -100,11 +134,37 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
         count(data)
         if demuxer == nil {
             if data.starts(with: Data("OggS".utf8)) { demuxer = OggDemuxer(sink: self) }
-            else if data.starts(with: Data("#EXTM3U".utf8)) {
-                source?.stop(); startHLS(url); return
-            } else { demuxer = FileStreamDemuxer(sink: self) }
+            else if let text = Self.textBody(data) {
+                source?.stop()
+                if text.lowercased().hasPrefix("<!doctype html") || text.lowercased().hasPrefix("<html") {
+                    reject("The station returned a web page instead of audio.") { [weak self] in self?.startHTTP(url) }
+                } else { followPlaylist(text, at: url) }
+                return
+            } else { noteSuccess(); demuxer = FileStreamDemuxer(sink: self) }
         }
         demuxer?.feed(data)
+    }
+
+    /// The text of a first chunk that is a playlist (M3U, PLS, ASX, XSPF) or a web page rather than audio.
+    private static func textBody(_ data: Data) -> String? {
+        let head = String(decoding: data.prefix(32), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}"))).lowercased()
+        guard ["#extm3u", "[playlist]", "<asx", "<?xml", "<playlist", "<!doctype html", "<html"].contains(where: head.hasPrefix) else { return nil }
+        return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
+    }
+
+    /// A station address that answered with a playlist: plays the stream it names.
+    private func followPlaylist(_ text: String, at url: URL) {
+        sniffDepth += 1
+        guard sniffDepth <= 3, let entry = try? StreamAddress.playlistEntry(text, base: url) else {
+            sinkFailure("This playlist has no supported HTTP audio stream."); return
+        }
+        if entry == url { startHLS(url); return }
+        Task { [weak self] in
+            do {
+                let target = try await StreamAddress.resolve(entry)
+                self?.start(target)
+            } catch { self?.sinkFailure((error as? RadioError)?.errorDescription ?? error.localizedDescription) }
+        }
     }
 
     func pause() {

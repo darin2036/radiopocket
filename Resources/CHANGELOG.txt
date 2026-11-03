@@ -1,4 +1,5 @@
 RadioPocket 0.10.0
+* Fixed: Streams that refuse RadioPocket, serve ASX/XSPF or extensionless playlists, or answer with a web page now play, falling back to a browser identity and then AVPlayer
 * Added: Double-click a panel's title bar to shade it; shaded panels have play/pause, previous and next, and scroll the station and song
 * Added: The shaded equalizer keeps the on/off switch and preset menu
 * Changed: Discover card reasons name a related favorite or recent station, and on-device AI can write a specific reason for each card

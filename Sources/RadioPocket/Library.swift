@@ -30,7 +30,11 @@ enum StreamAddress {
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         if lines.contains(where: { $0.hasPrefix("#EXT-X-") }) { return base }
         let candidates: [String]
-        if lines.contains(where: { $0.lowercased() == "[playlist]" }) {
+        if text.range(of: "<asx", options: .caseInsensitive) != nil {
+            candidates = capture("href\\s*=\\s*[\"']([^\"']+)[\"']", in: text)
+        } else if text.range(of: "<location>", options: .caseInsensitive) != nil {
+            candidates = capture("<location>\\s*([^<]+?)\\s*</location>", in: text)
+        } else if lines.contains(where: { $0.lowercased() == "[playlist]" }) {
             candidates = lines.compactMap { line -> (Int, String)? in
                 let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
                 guard parts.count == 2, parts[0].lowercased().hasPrefix("file"),
@@ -47,15 +51,27 @@ enum StreamAddress {
         throw RadioError.message("This playlist has no supported HTTP audio stream.")
     }
 
-    static func resolve(_ url: URL, depth: Int = 0) async throws -> URL {
-        guard ["m3u", "pls"].contains(url.pathExtension.lowercased()) else { return url }
-        guard depth < 3 else { throw RadioError.message("Too many nested radio playlists.") }
-        var request = URLRequest(url: url, timeoutInterval: 15)
-        request.setValue(UserAgent.value, forHTTPHeaderField: "User-Agent")
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw RadioError.message("The playlist server returned an error.")
+    private static func capture(_ pattern: String, in text: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.matches(in: text, range: range).compactMap { match in
+            Range(match.range(at: 1), in: text).map { String(text[$0]).replacingOccurrences(of: "&amp;", with: "&") }
         }
+    }
+
+    static func resolve(_ url: URL, depth: Int = 0) async throws -> URL {
+        guard ["m3u", "pls", "asx", "xspf"].contains(url.pathExtension.lowercased()) else { return url }
+        guard depth < 3 else { throw RadioError.message("Too many nested radio playlists.") }
+        let agents = UserAgent.ladder(for: url.host)
+        var fetched: (URLSession.AsyncBytes, URLResponse)?
+        for (index, agent) in agents.enumerated() {
+            var request = URLRequest(url: url, timeoutInterval: 15)
+            if let agent { request.setValue(agent, forHTTPHeaderField: "User-Agent") }
+            let attempt = try await URLSession.shared.bytes(for: request)
+            if let http = attempt.1 as? HTTPURLResponse, (200...299).contains(http.statusCode) { fetched = attempt; break }
+            if index == agents.count - 1 { break }
+        }
+        guard let (bytes, response) = fetched else { throw RadioError.message("The playlist server returned an error.") }
         var data = Data()
         for try await byte in bytes {
             try Task.checkCancellation()
