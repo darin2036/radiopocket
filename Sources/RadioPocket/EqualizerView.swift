@@ -48,7 +48,7 @@ final class EqualizerView: NSView {
     var skin: ClassicSkin? { didSet { sliders.forEach { $0.skin = skin; $0.needsDisplay = true }; refresh() } }
     var shaded = false { didSet {
         sliders.forEach { $0.isHidden = shaded }; buttons.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }
-        miniToggle.isHidden = !shaded; miniPreset.isHidden = !shaded
+        miniToggle.isHidden = !shaded; miniPreset.isHidden = !shaded; miniSpectrum.isHidden = !shaded
         needsDisplay = true
     } }
     /// The shaded bar keeps just the essentials: the on/off switch, and the current preset as a menu.
@@ -67,11 +67,16 @@ final class EqualizerView: NSView {
         button.isHidden = true; return button
     }()
     private lazy var miniPreset: MarqueeLabel = {
-        let label = MarqueeLabel(frame: NSRect(x: 36, y: 2, width: 210, height: 10), font: .monospacedSystemFont(ofSize: 7, weight: .medium)) { [weak self] in self?.equalizer.settings.preset ?? "" }
+        let label = MarqueeLabel(frame: NSRect(x: 36, y: 2, width: 126, height: 10), font: .monospacedSystemFont(ofSize: 7, weight: .medium)) { [weak self] in self?.equalizer.settings.preset ?? "" }
         label.showsChevron = true; label.setAccessibilityLabel("Equalizer preset")
         label.onClick = { [weak self] in self?.presetMenu() }
         label.isHidden = true; return label
     }()
+    /// A live spectrum beside the preset, so the shaded bar shows something no other panel's does.
+    private let miniSpectrum: MiniSpectrum = {
+        let view = MiniSpectrum(frame: NSRect(x: 166, y: 2, width: 79, height: 10)); view.isHidden = true; return view
+    }()
+    func attach(visualizer hub: VisualizerHub) { miniSpectrum.attach(to: hub) }
     var action: ((String) -> Void)?
     private var sliders: [EQSlider] = []
     private var buttons: [PixelButton] = []
@@ -96,7 +101,7 @@ final class EqualizerView: NSView {
         addButton("presets", "Choose equalizer preset", NSRect(x: 217, y: 18, width: 44, height: 12))
         addButton("shade", "Toggle compact equalizer title bar", NSRect(x: 254, y: 3, width: 9, height: 9))
         addButton("close", "Hide equalizer", NSRect(x: 264, y: 3, width: 9, height: 9))
-        addSubview(miniToggle); addSubview(miniPreset)
+        addSubview(miniToggle); addSubview(miniPreset); addSubview(miniSpectrum)
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }

@@ -127,6 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var smokePath: String? { argument("--smoke-result") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didExposeNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.syncWindowLevels() }
+        }
         do {
             library = try Library(directory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
         } catch {
@@ -225,6 +228,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.smokePath != nil, self.engine.status == .failed { self.finishSmoke(success: false) }
         }
         eqView = EqualizerView(equalizer: engine.equalizer)
+        eqView.attach(visualizer: visuals.hub)
+        PlayerWindow.nestedShadeWidth = { [weak self] in self?.window.frame.width }
         eqWindow = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 232), styleMask: [.borderless], backing: .buffered, defer: false)
         eqWindow.title = "RadioPocket Equalizer"
         eqWindow.level = window.level
@@ -859,7 +864,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         do { try library.update { $0.lastStation = station }; recordedStation = nil; engine.play(station) }
         catch { showError(error) }
     }
+    /// Gives every ordinary RadioPocket window (library, visualizer, info, …) the player's level, so
+    /// "always on top" covers all panels. Windows already above it (Preferences, full-screen video) are left alone.
+    func syncWindowLevels() {
+        let level = window.level
+        for w in NSApp.windows where w !== window && (w.level == .normal || w.level == .floating) && w.level != level
+            && (w.isVisible || w.isMiniaturized) && !(w is NSPanel && w.styleMask.contains(.nonactivatingPanel)) {
+            w.level = level
+        }
+    }
     func saveWindowLevel() {
+        syncWindowLevels()
         video?.level = window.level
         do { try library.update { $0.alwaysOnTop = window.level == .floating } } catch { showError(error) }
     }

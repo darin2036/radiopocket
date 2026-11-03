@@ -147,6 +147,20 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         window.appearance = NSAppearance(named: .darkAqua)
         super.init(window: window)
         window.delegate = self
+        // Shaded, the library shows its section (a menu of the same tree) and how many stations it lists.
+        window.shadeContent = { [weak self] chrome in
+            let label = MarqueeLabel(frame: NSRect(x: 10, y: 4, width: chrome.bounds.width - 40, height: 12), font: .monospacedSystemFont(ofSize: 9, weight: .medium)) { [weak self] in
+                guard let self else { return "" }
+                return self.scope.curated || self.rows.isEmpty ? self.scope.title : "\(self.scope.title) · \(self.rows.count)"
+            }
+            label.showsChevron = true; label.autoresizingMask = .width; label.setAccessibilityLabel("Library section")
+            label.onClick = { [weak self, weak label] in
+                guard let self, let label else { return }
+                self.updateSectionMenu()
+                self.sectionMenu.menu?.popUp(positioning: nil, at: NSPoint(x: 0, y: label.frame.maxY + 2), in: chrome)
+            }
+            chrome.addSubview(label)
+        }
         window.contentView = LibraryChrome(frame: NSRect(x: 0, y: 0, width: 860, height: 500))
         build()
         window.center(); window.setFrameAutosaveName("RadioPocket.Discovery")
@@ -192,7 +206,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     func windowDidResize(_ notification: Notification) { adaptLayout() }
     /// Compact windows shed the genre sidebar, then the filter row; the table keeps its columns proportional to its width.
     private func adaptLayout() {
-        guard let root = window?.contentView, sideWidth != nil else { return }
+        guard let root = window?.contentView, sideWidth != nil, (window as? PlayerWindow)?.isShaded != true else { return }
         let showSide = root.bounds.width >= 700
         sideWidth.constant = showSide ? 145 : 0; sideGap.constant = showSide ? 9 : 0; sideScrollView?.isHidden = !showSide
         // Without the sidebar the current section becomes a menu of the same tree, so navigation stays visible.

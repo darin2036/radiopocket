@@ -27,6 +27,8 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         window.title = "RadioPocket Preferences"
         window.appearance = NSAppearance(named: .aqua)
         window.isReleasedWhenClosed = false
+        // Above the player, equalizer and always-on-top panels, and the full-screen video window.
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         super.init(window: window)
         window.contentView = PreferencesBackground(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
         guard let root = window.contentView else { return }

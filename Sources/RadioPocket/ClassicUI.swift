@@ -87,6 +87,10 @@ final class PlayerWindow: NSWindow {
 
     /// Double-clicking a panel's title bar shades it to the bar alone, as the player does; the full panel is kept aside.
     private var shadeRestore: (content: NSView, frame: NSRect, minSize: NSSize, autosave: String)?
+    /// Width every shaded panel takes, so the bars stack under the player and equalizer at the same width.
+    static var nestedShadeWidth: () -> CGFloat? = { nil }
+    /// What this panel shows on its shaded bar in place of the playback controls; the close and minimize buttons stay.
+    var shadeContent: ((ClassicChrome) -> Void)?
     var isShaded: Bool { shadeRestore != nil }
     func toggleShade() {
         if let saved = shadeRestore {
@@ -97,15 +101,17 @@ final class PlayerWindow: NSWindow {
             setFrame(NSRect(x: frame.minX, y: frame.maxY - saved.frame.height, width: saved.frame.width, height: saved.frame.height), display: false)
             contentView = saved.content
             display()
+            delegate?.windowDidResize?(Notification(name: NSWindow.didResizeNotification, object: self))
         } else if let chrome = contentView as? ClassicChrome {
             shadeRestore = (chrome, frame, minSize, frameAutosaveName)
             // A shaded bar must not be remembered as the panel's size for the next launch.
             setFrameAutosaveName("")
-            let bar = ClassicChrome(frame: NSRect(origin: .zero, size: NSSize(width: frame.width, height: ClassicChrome.barHeight)))
-            bar.title = chrome.title; bar.shadeMinimizable = styleMask.contains(.miniaturizable); bar.isShadeBar = true
-            minSize = NSSize(width: minSize.width, height: ClassicChrome.barHeight)
+            let width = Self.nestedShadeWidth() ?? frame.width
+            let bar = ClassicChrome(frame: NSRect(origin: .zero, size: NSSize(width: width, height: ClassicChrome.barHeight)))
+            bar.title = chrome.title; bar.shadeMinimizable = styleMask.contains(.miniaturizable); bar.shadeContent = shadeContent; bar.isShadeBar = true
+            minSize = NSSize(width: min(minSize.width, width), height: ClassicChrome.barHeight)
             contentView = bar
-            setFrame(NSRect(x: frame.minX, y: frame.maxY - ClassicChrome.barHeight, width: frame.width, height: ClassicChrome.barHeight), display: true)
+            setFrame(NSRect(x: frame.minX, y: frame.maxY - ClassicChrome.barHeight, width: width, height: ClassicChrome.barHeight), display: true)
         }
     }
     override func close() {
@@ -235,6 +241,7 @@ class ClassicChrome: NSView {
     /// The stand-in a shaded window shows: just the title bar, with a mini transport and the now-playing text on it.
     var isShadeBar = false { didSet { if isShadeBar { addShadeControls() } } }
     var shadeMinimizable = false
+    var shadeContent: ((ClassicChrome) -> Void)?
     private func addShadeControls() {
         var x = bounds.width - 12
         for (caption, action) in [("×", #selector(shadeClose)), ("−", #selector(shadeMinimize))] {
@@ -243,6 +250,7 @@ class ClassicChrome: NSView {
             button.isBordered = false; button.frame = NSRect(x: x, y: 3, width: 9, height: 9); button.autoresizingMask = .minXMargin
             addSubview(button); x -= 11
         }
+        if let shadeContent { shadeContent(self); return }
         let transport = MiniTransport(frame: NSRect(x: 10, y: 4, width: MiniTransport.width, height: 12))
         let label = MarqueeLabel(frame: NSRect(x: 54, y: 4, width: bounds.width - 54 - 30, height: 12), font: .monospacedSystemFont(ofSize: 9, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.title ?? "" }
         label.autoresizingMask = .width

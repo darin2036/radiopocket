@@ -89,7 +89,7 @@ enum DiscoveryRecommendations {
                 for tag in DiscoverySafety.interests(row) { affinity[tag, default: 0] += 3 }
             }
         }
-        let basis = !explicit.isEmpty ? "Fresh frequencies for your kind of listening" : historyMatches >= 3 ? "Inspired by your recent listening" : !affinity.isEmpty ? "A starting mix from your favorites and recent stations" : "A varied starting mix — no listening history needed"
+        let basis = video ? tvBasis(explicit: explicit, watched: historyMatches, hasTaste: !affinity.isEmpty, day: day) : !explicit.isEmpty ? "Fresh frequencies for your kind of listening" : historyMatches >= 3 ? "Inspired by your recent listening" : !affinity.isEmpty ? "A starting mix from your favorites and recent stations" : "A varied starting mix — no listening history needed"
         if affinity.isEmpty { for tag in video ? ["movies", "documentary", "series", "comedy", "family"] : ["ambient", "jazz", "classical", "world", "indie", "electronic"] { affinity[tag] = 1 } }
         let top = affinity.keys.sorted { affinity[$0] == affinity[$1] ? $0 < $1 : affinity[$0]! > affinity[$1]! }
         let heard = Set((personalizes ? recent : []).map { DiscoveryIndex.matchKey($0.address) })
@@ -150,7 +150,7 @@ enum DiscoveryRecommendations {
             return picks.isEmpty ? nil : DiscoveryShelf(title: title, subtitle: subtitle, picks: picks)
         }
         var shelves: [DiscoveryShelf] = []
-        if let section = shelf("Your next frequency", basis, ordered.filter { $0.feedback >= 0 && !heard.contains(DiscoveryIndex.matchKey($0.listing.address)) && !saved.contains(DiscoveryIndex.matchKey($0.listing.address)) }) { shelves.append(section) }
+        if let section = shelf(video ? "Your next channel" : "Your next frequency", basis, ordered.filter { $0.feedback >= 0 && !heard.contains(DiscoveryIndex.matchKey($0.listing.address)) && !saved.contains(DiscoveryIndex.matchKey($0.listing.address)) }) { shelves.append(section) }
         let unexpected = candidates.sorted { a, b in
             let av = a.availability?.boost(at: now) ?? 0, bv = b.availability?.boost(at: now) ?? 0
             if av != bv { return av > bv }
@@ -164,6 +164,17 @@ enum DiscoveryRecommendations {
         return DiscoveryFeed(shelves: shelves, interests: Array(top.prefix(5)), basis: basis, indexed: records.count, updated: records.map(\.fetched).max())
     }
     /// Explain the actual ranking signals without inventing programming or listening habits.
+    /// The line under TV Discover's headline; it rotates daily so it doesn't read the same every visit.
+    static func tvBasis(explicit: [String], watched: Int, hasTaste: Bool, day: Int) -> String {
+        let pick = { (options: [String]) in options[abs(day) % options.count] }
+        if !explicit.isEmpty {
+            let topics = explicit.prefix(2).map(\.capitalized).joined(separator: " and ")
+            return pick(["Lined up for your love of " + topics, "Your remote, but with better taste in " + topics, "Tuned to your " + topics + " mood"])
+        }
+        if watched >= 3 { return pick(["Your remote has been busy, so here's what to queue next", "Same couch, fresh channels", "Picked up where your last channel surf left off"]) }
+        if hasTaste { return pick(["Cut from the same cloth as your saved channels", "Channels that look a lot like your favorites", "If you liked those, you'll want these"]) }
+        return pick(["A fresh channel guide, no viewing history required", "Hand the remote over: here's something new", "Pull up the couch, the guide's wide open"])
+    }
     static func recommendationReason(for row: RadioListing, rankedGenres: [String], explicit: Set<String>, recent: Set<String>, favorites: Set<String>, vote: Int, recentNames: [String: String] = [:], favoriteNames: [String: String] = [:]) -> String {
         if vote > 0 { return "You gave this station a thumbs up" }
         if vote < 0 { return "Shown less often because of your thumbs down" }

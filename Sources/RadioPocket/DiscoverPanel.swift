@@ -297,7 +297,7 @@ final class DiscoverPanel: NSView {
         if showingMoods != enabled { moodsPopover?.close() }
         status.isHidden = enabled && !moodsStatusVisible
         discoveryFootnote.isHidden = enabled; howMoodsRow.isHidden = !enabled
-        showingMoods = enabled; pageTitle.stringValue = enabled ? "Moods" : "Your next frequency"
+        showingMoods = enabled; pageTitle.stringValue = enabled ? "Moods" : discoverTitle
         searchRow.isHidden = enabled; weatherRow.isHidden = !enabled
         weatherIntro.isHidden = !enabled || preferences.weatherPromptHandled || preferences.moodCity != nil
         updateSummary()
@@ -327,7 +327,7 @@ final class DiscoverPanel: NSView {
             summary.toolTip = summary.stringValue; return
         }
         if let querySummary { summary.stringValue = querySummary; summary.toolTip = querySummary; return }
-        summary.stringValue = currentFeed?.basis ?? "Fresh frequencies for your kind of listening"
+        summary.stringValue = currentFeed?.basis ?? (selectedVideo ? "A fresh channel guide, no viewing history required" : "Fresh frequencies for your kind of listening")
         summary.toolTip = summary.stringValue
     }
     func openPreferences(weather: Bool = false) {
@@ -388,7 +388,7 @@ final class DiscoverPanel: NSView {
             return
         }
         for shelf in feed.shelves where !showingMoods || shelf.title == selectedMood {
-            if showingMoods || shelf.title != "Your next frequency" {
+            if showingMoods || shelf.title != "Your next frequency" && shelf.title != "Your next channel" {
                 addShelfView(DiscoverySectionHeader(title: shelf.title, subtitle: shelf.subtitle))
             }
             for offset in stride(from: 0, to: shelf.picks.count, by: 2) {
@@ -556,7 +556,12 @@ final class DiscoverPanel: NSView {
     }
     @objc private func openDiscover() { collectionRequested?(false) }
     @objc private func openMoods() { collectionRequested?(true) }
-    @objc private func changeMedia(_ sender: NSSegmentedControl) { selectedVideo = sender.selectedSegment == 1; mediaChanged?(selectedVideo) }
+    private var discoverTitle: String { selectedVideo ? "Your next channel" : "Your next frequency" }
+    @objc private func changeMedia(_ sender: NSSegmentedControl) {
+        selectedVideo = sender.selectedSegment == 1
+        if !showingMoods { pageTitle.stringValue = discoverTitle }
+        mediaChanged?(selectedVideo)
+    }
     @objc private func refreshStations() { refresh?() }
     @objc private func showBrowser() { browse?() }
     @objc private func importStations() { importPlaylist?() }
