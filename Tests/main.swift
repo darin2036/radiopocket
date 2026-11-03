@@ -82,6 +82,8 @@ do {
     let badLibrary = try Library(directory: badDir)
     try check(badLibrary.state.favorites.first?.name == "Keep" && badLibrary.state.leveling == true && badLibrary.state.volume == 0.65, "One unreadable field resets alone and the rest loads")
     try check((try FileManager.default.contentsOfDirectory(atPath: badDir.appendingPathComponent("Backups").path)).count == 1, "A dropped field backs up the original file")
+    let reportURL = ProblemReport.url(version: "0.10.0", system: "Version 26.0").absoluteString
+    try check(reportURL.hasPrefix("https://github.com/darin2036/radiopocket/issues/new?body=") && reportURL.contains("0.10.0") && !reportURL.contains("http%3A") , "Report a Problem prefills versions and no station address")
     let versionedCache = try CacheFile.encode(["a": 1], version: 1) ?? { throw RadioError.message("encode") }()
     try check(CacheFile.read([String: Int].self, from: versionedCache, version: 1) == ["a": 1], "Versioned caches round-trip")
     try check(CacheFile.read([String: Int].self, from: versionedCache, version: 2) == nil, "A cache from another version is ignored")

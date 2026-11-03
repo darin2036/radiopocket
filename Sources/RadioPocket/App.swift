@@ -566,6 +566,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         command("Keyboard Shortcuts", "help:shortcuts", to: help)
         command("Version History", "help:history", to: help)
         command("Check for Updates…", "updates", to: help)
+        help.addItem(.separator())
+        command("Report a Problem…", "help:report", to: help)
 
         NSApp.mainMenu = menu
         NSApp.helpMenu = help
@@ -643,6 +645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             } catch { showError(error) }
         case "open": openDialog()
         case "updates": checkForUpdates(userInitiated: true)
+        case "help:report": NSWorkspace.shared.open(ProblemReport.url(version: AboutController.version))
         case "play":
             if engine.station != nil { engine.resume() }
             else if let last = library.state.lastStation { play(last) }

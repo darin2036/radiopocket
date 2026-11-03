@@ -50,3 +50,31 @@ enum UpdateCheck {
         return outcome
     }
 }
+
+/// Opens a prefilled GitHub issue. Only the app and macOS versions are included; the station address
+/// is left out because it can carry a private token and issues are public.
+enum ProblemReport {
+    static func url(version: String, system: String = ProcessInfo.processInfo.operatingSystemVersionString) -> URL {
+        #if arch(arm64)
+        let chip = "Apple Silicon"
+        #else
+        let chip = "Intel"
+        #endif
+        let body = """
+        **What happened**
+
+
+        **What you expected**
+
+
+        **Station name or link, if it matters**
+
+
+        ---
+        RadioPocket \(version) · macOS \(system) · \(chip)
+        """
+        var components = URLComponents(url: UpdateCheck.repository.appendingPathComponent("issues/new"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "body", value: body)]
+        return components.url!
+    }
+}

@@ -1,4 +1,5 @@
 RadioPocket 0.10.0
+* Added: Help ▸ Report a Problem opens a prefilled issue on GitHub
 * Fixed: Streams that refuse RadioPocket, serve ASX/XSPF or extensionless playlists, or answer with a web page now play, falling back to a browser identity and then AVPlayer
 * Added: Double-click a panel's title bar to shade it; shaded panels have play/pause, previous and next, and scroll the station and song
 * Added: The shaded equalizer keeps the on/off switch and preset menu
