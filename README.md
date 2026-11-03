@@ -37,10 +37,13 @@ Screenshots show the current 0.9 player, equalizer, and library. Directory listi
 Requires **macOS 13 or later**. The included local build targets **Apple Silicon**.
 
 ```sh
-# Build from source with Apple’s command-line developer tools.
+git clone https://github.com/darin2036/radiopocket.git && cd radiopocket
+xcode-select --install   # once, if you have no Swift toolchain yet
 ./build.sh
 open dist/RadioPocket.app
 ```
+
+`./build.sh` checks your toolchain and tells you what is missing. With only the command-line tools it builds everything except the on-device AI (Discover and Moods then use their non-AI fallbacks). If full Xcode is installed, the script uses it automatically for that build, so AI is included.
 
 If the app has already been built, just open `dist/RadioPocket.app`. Build output is ignored by Git, so a fresh clone needs the build step. Use **LIB / ⌘B** to discover a station, or **⌘O** to enter a stream URL. Use **EQ / ⌘E** for the equalizer and **SK / ⌘K** for skins.
 
@@ -200,7 +203,7 @@ The release app is about 3.2 MB on disk, excluding OS-provided frameworks and us
 
 ## Build and test
 
-Requires macOS and the Apple command-line developer tools. No full Xcode installation or downloaded Swift packages are needed.
+Requires macOS and the Apple command-line developer tools (`xcode-select --install`). No downloaded Swift packages are needed. Full Xcode is optional: it adds the on-device AI features, and `./build.sh` picks it up from `/Applications/Xcode.app` even if it is not the selected toolchain. To select it system-wide, run `sudo xcode-select -s /Applications/Xcode.app`.
 
 ```sh
 ./test.sh

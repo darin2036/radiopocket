@@ -16,7 +16,27 @@ ensure_app_is_stopped() {
     done < <(pgrep -x RadioPocket || true)
 }
 ensure_app_is_stopped
-swift build -c release
+# Preflight: a Swift toolchain is required (Command Line Tools are enough).
+if ! xcrun --find swift >/dev/null 2>&1; then
+    print -u2 "No Swift toolchain found. Install the Apple command-line tools with: xcode-select --install"
+    exit 1
+fi
+# On-device AI uses FoundationModels macros, whose plugin ships only with full Xcode.
+# If Xcode is installed but not selected, use it for this build without changing system settings.
+fm_plugin() { print -r -- "$(xcrun --sdk macosx --show-sdk-platform-path 2>/dev/null)/Developer/usr/lib/swift/host/plugins/libFoundationModelsMacros.dylib"; }
+if [ ! -f "$(fm_plugin)" ] && [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
+    if DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift --version >/dev/null 2>&1; then
+        export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+        print "Using /Applications/Xcode.app for this build."
+    fi
+fi
+SWIFT_FLAGS=()
+if [ ! -f "$(fm_plugin)" ]; then
+    print "Full Xcode not available: building without on-device AI (Discover and Moods use their non-AI fallbacks)."
+    print "To include it, install Xcode and run: sudo xcode-select -s /Applications/Xcode.app"
+    SWIFT_FLAGS=(-Xswiftc -DRADIOPOCKET_NO_FM_MACROS)
+fi
+swift build -c release "${SWIFT_FLAGS[@]}"
 ensure_app_is_stopped
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/RadioPocket "$APP/Contents/MacOS/RadioPocket"

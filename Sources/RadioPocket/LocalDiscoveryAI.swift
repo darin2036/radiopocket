@@ -1,5 +1,5 @@
 import Foundation
-#if canImport(FoundationModels)
+#if canImport(FoundationModels) && !RADIOPOCKET_NO_FM_MACROS
 import FoundationModels
 
 @available(macOS 26.0, iOS 26.0, *)
@@ -14,7 +14,7 @@ private struct DiscoveryIntent {
 }
 #endif
 
-#if canImport(FoundationModels)
+#if canImport(FoundationModels) && !RADIOPOCKET_NO_FM_MACROS
 @available(macOS 26.0, iOS 26.0, *)
 @Generable
 private struct GeneratedMoodCollection {
@@ -48,7 +48,7 @@ private struct GeneratedMoodPlan {
 /// The only model binding in the app is SystemLanguageModel.default, the on-device model.
 enum LocalDiscoveryAI {
     static func curate(context: MoodPlanning.Context) async throws -> MoodPlan {
-        #if canImport(FoundationModels)
+        #if canImport(FoundationModels) && !RADIOPOCKET_NO_FM_MACROS
         if #available(macOS 26.0, iOS 26.0, *), SystemLanguageModel.default.availability == .available {
             let instructions = """
             You are a personal radio music concierge. Propose three distinct listening moods or activities, each with two evocative station collections, for the supplied moment.
@@ -76,7 +76,7 @@ enum LocalDiscoveryAI {
     }
     struct Intent { var genres: [String]; var languages: [String]; var keywords: String }
     static func interpret(_ text: String, preferredGenres: [String] = [], preferredLanguages: [String] = []) async throws -> Intent {
-        #if canImport(FoundationModels)
+        #if canImport(FoundationModels) && !RADIOPOCKET_NO_FM_MACROS
         if #available(macOS 26.0, iOS 26.0, *) {
             guard SystemLanguageModel.default.availability == .available else {
                 throw RadioError.message("On-device AI isn’t available. Searching your words instead.")
