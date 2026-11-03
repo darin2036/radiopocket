@@ -44,7 +44,7 @@ final class DiscoverPreferencesController: NSWindowController, NSTabViewDelegate
         }
     }
     private func scrolling(_ stack: NSStackView) -> NSScrollView {
-        let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = false
+        let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.horizontalScrollElasticity = .none; scroll.autohidesScrollers = true; scroll.drawsBackground = false
         for view in stack.arrangedSubviews { view.translatesAutoresizingMaskIntoConstraints = false; view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true }
         stack.translatesAutoresizingMaskIntoConstraints = false; stack.edgeInsets = NSEdgeInsets(top: 16, left: 12, bottom: 16, right: 12); scroll.documentView = stack
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor), stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor), stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)])

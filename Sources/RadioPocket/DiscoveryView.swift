@@ -128,6 +128,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private var tableGap: NSLayoutConstraint!
     private var narrowHidden: [NSView] = []
     private weak var sideScrollView: NSView?
+    private var lastTableViewportWidth: CGFloat = -1
     /// Column share of the table width and the narrowest width each stays readable at; the least important drop out first.
     private let columnLayout: [(id: String, share: CGFloat, minimum: CGFloat, hideBelow: CGFloat)] = [
         ("name", 0.36, 90, 0), ("tags", 0.22, 60, 520), ("country", 0.14, 50, 440), ("codec", 0.11, 44, 0), ("quality", 0.10, 52, 0), ("votes", 0.09, 40, 360)]
@@ -272,7 +273,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         popup.widthAnchor.constraint(equalToConstant: width).isActive = true
     }
     private func scroll(_ table: NSTableView) -> NSScrollView {
-        let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
+        let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false; scroll.horizontalScrollElasticity = .none
         scroll.borderType = .lineBorder; scroll.scrollerStyle = .legacy; scroll.backgroundColor = BrowserTheme.black; scroll.drawsBackground = true
         table.backgroundColor = BrowserTheme.black; table.rowHeight = 19; table.intercellSpacing = NSSize(width: 1, height: 0)
         table.selectionHighlightStyle = .regular
@@ -300,9 +301,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         let sideColumn = NSTableColumn(identifier: .init("section")); sideColumn.width = 145
         sidebar.addTableColumn(sideColumn); sidebar.outlineTableColumn = sideColumn; sidebar.headerView = nil
         sidebar.style = .plain; sidebar.floatsGroupRows = false
+        sidebar.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         sidebar.indentationPerLevel = 9; sidebar.delegate = self; sidebar.dataSource = self; sidebar.rowHeight = 19
         sidebar.setAccessibilityLabel("Radio library categories")
-        let sideScroll = scroll(sidebar); sideScroll.hasHorizontalScroller = false
+        let sideScroll = scroll(sidebar)
         add(sideScroll, to: root); sideScrollView = sideScroll
         let main = NSView(); add(main, to: root)
         sideWidth = sideScroll.widthAnchor.constraint(equalToConstant: 145); sideGap = main.leadingAnchor.constraint(equalTo: sideScroll.trailingAnchor, constant: 9)
@@ -341,7 +343,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             table.addTableColumn(c)
         }
         table.columnAutoresizingStyle = .noColumnAutoresizing
-        let tableScroll = scroll(table); tableScroll.hasHorizontalScroller = false; add(tableScroll, to: main)
+        let tableScroll = scroll(table); add(tableScroll, to: main)
         // One continuous list: the next page of stations is fetched as the list is scrolled toward its end.
         tableScroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: tableScroll.contentView)
@@ -747,7 +749,13 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         guard let node = sidebar.item(atRow: sidebar.clickedRow) as? LibraryNode, node.scope == nil, !node.children.isEmpty, sidebar.level(forItem: node) > 0 else { return }
         if sidebar.isItemExpanded(node) { sidebar.collapseItem(node) } else { sidebar.expandItem(node) }
     }
-    @objc private func listScrolled() { loadMoreIfNeeded() }
+    @objc private func listScrolled() {
+        if let clip = table.enclosingScrollView?.contentView, clip.bounds.width != lastTableViewportWidth {
+            lastTableViewportWidth = clip.bounds.width
+            layoutColumns(width: clip.bounds.width)
+        }
+        loadMoreIfNeeded()
+    }
     private func loadLocal(preservingSelection: Bool = false) {
         let selectedID = preservingSelection ? selected?.id : nil
         task?.cancel(); generation = UUID(); setBusy(false); hasMore = false; loadingMore = false; hasLoaded = true
