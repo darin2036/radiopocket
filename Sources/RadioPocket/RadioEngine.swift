@@ -216,7 +216,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     }
 
     private func installAVPlayer(_ url: URL, token: UUID) {
-        let item = AVPlayerItem(url: url)
+        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": UserAgent.value]]))
         item.preferredForwardBufferDuration = 3
         let metadata = AVPlayerItemMetadataOutput(identifiers: nil)
         metadata.setDelegate(self, queue: .main)

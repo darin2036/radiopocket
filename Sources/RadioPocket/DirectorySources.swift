@@ -178,7 +178,7 @@ enum DirectoryFetch {
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.timeoutIntervalForRequest = 12; config.timeoutIntervalForResource = 25
-        config.httpAdditionalHeaders = ["User-Agent": "RadioPocket/0.9"]
+        config.httpAdditionalHeaders = ["User-Agent": UserAgent.value]
         return URLSession(configuration: config)
     }()
     static func data(_ url: URL, limit: Int = 2_097_152) async throws -> Data {

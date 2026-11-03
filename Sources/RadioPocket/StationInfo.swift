@@ -170,7 +170,7 @@ enum StreamReply {
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url)
         request.setValue("1", forHTTPHeaderField: "Icy-MetaData")
-        request.setValue("RadioPocket/0.9", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.value, forHTTPHeaderField: "User-Agent")
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {

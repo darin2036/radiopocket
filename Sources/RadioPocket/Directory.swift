@@ -221,7 +221,7 @@ actor RadioBrowserDirectory: DirectoryBackend {
         config.urlCache = nil
         config.timeoutIntervalForRequest = 12
         config.timeoutIntervalForResource = 25
-        config.httpAdditionalHeaders = ["User-Agent": "RadioPocket/0.3", "Accept": "application/json"]
+        config.httpAdditionalHeaders = ["User-Agent": UserAgent.value, "Accept": "application/json"]
         session = URLSession(configuration: config)
     }
 
