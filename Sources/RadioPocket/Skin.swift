@@ -1,9 +1,9 @@
-import AppKit
+import Foundation
 import ImageIO
 
 /// Reads only known bitmap entries into bounded memory. Never extracts archive paths to disk.
 final class ClassicSkin {
-    static let supported = ["main.bmp", "cbuttons.bmp", "titlebar.bmp", "text.bmp", "numbers.bmp", "volume.bmp", "balance.bmp", "eqmain.bmp", "gen.bmp", "shufrep.bmp", "nums_ex.bmp", "playpaus.bmp", "monoster.bmp", "genex.bmp"]
+    static let supported = ["main.bmp", "cbuttons.bmp", "titlebar.bmp", "text.bmp", "numbers.bmp", "volume.bmp", "balance.bmp", "eqmain.bmp", "gen.bmp", "shufrep.bmp", "nums_ex.bmp", "playpaus.bmp", "monoster.bmp", "genex.bmp", "pledit.bmp"]
     static let visColorFile = "viscolor.txt"
     static let playlistColorFile = "pledit.txt"
     /// Winamp draws any bitmap a skin leaves out from its default skin. NUMS_EX is the exception: without it, NUMBERS is used.
@@ -19,7 +19,7 @@ final class ClassicSkin {
     struct Archive: Codable { var name: String; var bitmaps: [String: Data] }
     let archive: Archive
     private var sheets: [String: CGImage] = [:]
-    private var sprites: [String: NSImage] = [:]
+    private var sprites: [String: PlatformImage] = [:]
     var name: String { archive.name }
 
     init(archive: Archive) throws {
@@ -42,9 +42,8 @@ final class ClassicSkin {
     static func load(_ url: URL) throws -> ClassicSkin {
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size < 33_554_432 else { throw RadioError.message("This skin archive is too large (32 MB maximum).") }
-        let listing = try command(["-Z1", url.path], limit: 1_048_576)
-        guard let text = String(data: listing, encoding: .utf8) else { throw RadioError.message("The skin archive’s filenames couldn’t be read.") }
-        let paths = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        let archive = try ArchiveSource(url)
+        let paths = try archive.paths()
         var bitmaps: [String: Data] = [:]
         for filename in supported + [visColorFile, playlistColorFile] {
             let matches = paths.filter { path in
@@ -54,19 +53,32 @@ final class ClassicSkin {
                 !normalized.contains(where: { "*?[]:".contains($0) })
             }.sorted { $0.count < $1.count }
             if let path = matches.first {
-                // unzip treats backslashes as pattern escapes, even without a shell.
-                let literal = path.replacingOccurrences(of: "\\", with: "\\\\")
-                bitmaps[filename] = try command(["-p", url.path, literal], limit: filename.hasSuffix(".txt") ? 16_384 : 4_194_304)
+                bitmaps[filename] = try archive.read(path, limit: filename.hasSuffix(".txt") ? 16_384 : 4_194_304)
             }
         }
         return try ClassicSkin(archive: Archive(name: url.deletingPathExtension().lastPathComponent, bitmaps: bitmaps))
+    }
+
+#if os(macOS)
+    private struct ArchiveSource {
+        let url: URL
+        init(_ url: URL) throws { self.url = url }
+        func paths() throws -> [String] {
+            let listing = try ClassicSkin.command(["-Z1", url.path], limit: 1_048_576)
+            guard let text = String(data: listing, encoding: .utf8) else { throw RadioError.message("The skin archive’s filenames couldn’t be read.") }
+            return text.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        }
+        func read(_ path: String, limit: Int) throws -> Data {
+            // unzip treats backslashes as pattern escapes, even without a shell.
+            try ClassicSkin.command(["-p", url.path, path.replacingOccurrences(of: "\\", with: "\\\\")], limit: limit)
+        }
     }
 
     /// `Process.waitUntilExit` spins the run loop, which lets AppKit paint a half-launched window from inside the skin load
     /// (CoreText has crashed drawing the unskinned fallback there). The pipe has already closed, so this wait is a few milliseconds.
     private static func wait(for process: Process) { while process.isRunning { usleep(1000) } }
 
-    private static func command(_ arguments: [String], limit: Int) throws -> Data {
+    fileprivate static func command(_ arguments: [String], limit: Int) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
         process.arguments = arguments
@@ -90,6 +102,18 @@ final class ClassicSkin {
         return result
     }
 
+#else
+    private struct ArchiveSource {
+        let zip: ZipReader
+        init(_ url: URL) throws { zip = try ZipReader(url: url) }
+        func paths() throws -> [String] { zip.entries.map(\.name) }
+        func read(_ path: String, limit: Int) throws -> Data {
+            guard let entry = zip.entries.first(where: { $0.name == path }) else { throw RadioError.message("The skin ZIP is damaged, encrypted, or unreadable.") }
+            return try zip.extract(entry, limit: limit)
+        }
+    }
+#endif
+
     /// The skin's own bitmap, or the default skin's when it has none. A skin without BALANCE.BMP draws its balance from VOLUME.BMP, as Winamp does.
     private func sheet(_ name: String) -> CGImage? {
         if let own = sheets[name] { return own }
@@ -99,13 +123,17 @@ final class ClassicSkin {
     }
     func hasOwn(_ sheet: String) -> Bool { sheets[sheet] != nil }
 
-    func sprite(_ sheet: String, _ rect: NSRect) -> NSImage? {
+    func sprite(_ sheet: String, _ rect: CGRect) -> PlatformImage? {
         let key = "\(sheet):\(rect)"
         if let cached = sprites[key] { return cached }
         guard let image = self.sheet(sheet), rect.minX >= 0, rect.minY >= 0,
               rect.maxX <= CGFloat(image.width), rect.maxY <= CGFloat(image.height),
               let crop = image.cropping(to: rect) else { return nil }
-        let sprite = NSImage(cgImage: crop, size: rect.size)
+        #if canImport(AppKit)
+        let sprite = PlatformImage(cgImage: crop, size: rect.size)
+        #else
+        let sprite = PlatformImage(cgImage: crop, scale: 1, orientation: .up)
+        #endif
         sprites[key] = sprite
         return sprite
     }
@@ -117,17 +145,17 @@ final class ClassicSkin {
         return VisColors.parse(text)
     }()
 
-    lazy var displayBackground: NSColor = {
-        guard let crop = sheet("text.bmp")?.cropping(to: CGRect(x: 150, y: 0, width: 1, height: 1)) else { return NSColor(white: 0.03, alpha: 1) }
-        return NSBitmapImageRep(cgImage: crop).colorAt(x: 0, y: 0) ?? .black
+    lazy var displayBackground: PlatformColor = {
+        guard let crop = sheet("text.bmp")?.cropping(to: CGRect(x: 150, y: 0, width: 1, height: 1)) else { return PlatformColor(white: 0.03, alpha: 1) }
+        return PixelReader(crop).color(0, 0) ?? .black
     }()
-    lazy var displayForeground: NSColor = {
+    lazy var displayForeground: PlatformColor = {
         guard let crop = sheet("text.bmp")?.cropping(to: CGRect(x: 0, y: 0, width: 5, height: 6)),
-              let background = displayBackground.usingColorSpace(.deviceRGB) else { return .green }
-        let bitmap = NSBitmapImageRep(cgImage: crop)
-        var best = NSColor.green, distance: CGFloat = -1
+              let background = Optional(displayBackground.rgb) else { return .green }
+        let bitmap = PixelReader(crop)
+        var best = PlatformColor.green, distance: CGFloat = -1
         for y in 0..<6 { for x in 0..<5 {
-            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+            guard let color = bitmap.color(x, y) else { continue }
             let difference = abs(color.redComponent-background.redComponent) + abs(color.greenComponent-background.greenComponent) + abs(color.blueComponent-background.blueComponent)
             if difference > distance { best = color; distance = difference }
         } }
@@ -142,56 +170,56 @@ final class ClassicSkin {
         return .native
     }()
     /// GENEX.BMP's button label colour (its own, or the default skin's).
-    lazy var buttonText: NSColor? = {
+    lazy var buttonText: PlatformColor? = {
         guard let genex = sheet("genex.bmp"), genex.width > 54 else { return nil }
-        return NSBitmapImageRep(cgImage: genex).colorAt(x: 54, y: 0)?.usingColorSpace(.deviceRGB)
+        return PixelReader(genex).color(54, 0)
     }()
     /// The colour of GEN.BMP's title lettering, used for window titles.
-    lazy var genTitleColor: NSColor = {
+    lazy var genTitleColor: PlatformColor = {
         guard let strip = sheet("gen.bmp")?.cropping(to: CGRect(x: 0, y: 88, width: 100, height: 7)) else { return palette.text }
-        let bitmap = NSBitmapImageRep(cgImage: strip)
-        guard let background = bitmap.colorAt(x: bitmap.pixelsWide - 1, y: 0)?.usingColorSpace(.deviceRGB) else { return palette.text }
+        let bitmap = PixelReader(strip)
+        guard let background = bitmap.color(bitmap.width - 1, 0) else { return palette.text }
         var best = palette.text, distance: CGFloat = -1
-        for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
-            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+        for y in 0..<bitmap.height { for x in 0..<bitmap.width {
+            guard let color = bitmap.color(x, y) else { continue }
             let difference = abs(color.redComponent-background.redComponent) + abs(color.greenComponent-background.greenComponent) + abs(color.blueComponent-background.blueComponent)
             if difference > distance { best = color; distance = difference }
         } }
         return best
     }()
 
-    func glyph(_ char: Character) -> NSImage? {
+    func glyph(_ char: Character) -> PlatformImage? {
         let upper = String(char).uppercased()
         let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ\"@")
         let symbols = Array("0123456789….:()-'!_+\\/[]^&%")
         if let c = upper.first, let i = letters.firstIndex(of: c) {
-            return sprite("text.bmp", NSRect(x: i * 5, y: 0, width: 5, height: 6))
+            return sprite("text.bmp", CGRect(x: i * 5, y: 0, width: 5, height: 6))
         }
         if let c = upper.first, let i = symbols.firstIndex(of: c) {
-            return sprite("text.bmp", NSRect(x: i * 5, y: 6, width: 5, height: 6))
+            return sprite("text.bmp", CGRect(x: i * 5, y: 6, width: 5, height: 6))
         }
-        if char == " " { return sprite("text.bmp", NSRect(x: 150, y: 0, width: 5, height: 6)) }
+        if char == " " { return sprite("text.bmp", CGRect(x: 150, y: 0, width: 5, height: 6)) }
         return nil
     }
 }
 
 /// The colours a skin gives Winamp's general windows (media library, playlist-style lists).
 struct SkinPalette {
-    var window, item, itemAlternate, text, accent, label, selection, headerBackground, headerText: NSColor
+    var window, item, itemAlternate, text, accent, label, selection, headerBackground, headerText: PlatformColor
 
     static let native = SkinPalette(
-        window: NSColor(calibratedRed: 0.16, green: 0.16, blue: 0.21, alpha: 1), item: NSColor(white: 0.025, alpha: 1),
-        itemAlternate: NSColor(calibratedRed: 0.065, green: 0.075, blue: 0.085, alpha: 1), text: NSColor(white: 0.84, alpha: 1),
-        accent: NSColor(calibratedRed: 0.25, green: 1, blue: 0.05, alpha: 1), label: NSColor(white: 0.60, alpha: 1),
-        selection: NSColor(calibratedRed: 0.15, green: 0.19, blue: 0.35, alpha: 1), headerBackground: NSColor(white: 0.26, alpha: 1), headerText: NSColor(white: 0.84, alpha: 1))
+        window: PlatformColor(calibratedRed: 0.16, green: 0.16, blue: 0.21, alpha: 1), item: PlatformColor(white: 0.025, alpha: 1),
+        itemAlternate: PlatformColor(calibratedRed: 0.065, green: 0.075, blue: 0.085, alpha: 1), text: PlatformColor(white: 0.84, alpha: 1),
+        accent: PlatformColor(calibratedRed: 0.25, green: 1, blue: 0.05, alpha: 1), label: PlatformColor(white: 0.60, alpha: 1),
+        selection: PlatformColor(calibratedRed: 0.15, green: 0.19, blue: 0.35, alpha: 1), headerBackground: PlatformColor(white: 0.26, alpha: 1), headerText: PlatformColor(white: 0.84, alpha: 1))
 }
 
 extension SkinPalette {
     /// GENEX.BMP keeps one colour per 2-pixel slot along its top row, starting at x = 48.
     init?(genex image: CGImage) {
         guard image.width >= 90, image.height >= 1 else { return nil }
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        func at(_ x: Int) -> NSColor? { bitmap.colorAt(x: x, y: 0)?.usingColorSpace(.deviceRGB) }
+        let bitmap = PixelReader(image)
+        func at(_ x: Int) -> PlatformColor? { bitmap.color(x, 0) }
         guard let item = at(48), let text = at(50), let window = at(52), let label = at(56), let selection = at(84),
               let header = at(62), let headerText = at(64) else { return nil }
         self.init(window: window, item: item, itemAlternate: item.blended(withFraction: 0.05, of: text) ?? item, text: text,
@@ -200,13 +228,13 @@ extension SkinPalette {
 
     /// PLEDIT.TXT: `Normal`, `Current`, `NormalBG` and `SelectedBG` as #RRGGBB.
     init?(pledit text: String) {
-        var colors: [String: NSColor] = [:]
+        var colors: [String: PlatformColor] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             guard parts.count == 2 else { continue }
             let hex = parts[1].hasPrefix("#") ? String(parts[1].dropFirst()) : parts[1]
             guard hex.count >= 6, let value = UInt32(hex.prefix(6), radix: 16) else { continue }
-            colors[parts[0].lowercased()] = NSColor(deviceRed: CGFloat(value >> 16 & 0xff) / 255, green: CGFloat(value >> 8 & 0xff) / 255, blue: CGFloat(value & 0xff) / 255, alpha: 1)
+            colors[parts[0].lowercased()] = PlatformColor(deviceRed: CGFloat(value >> 16 & 0xff) / 255, green: CGFloat(value >> 8 & 0xff) / 255, blue: CGFloat(value & 0xff) / 255, alpha: 1)
         }
         guard let normal = colors["normal"], let background = colors["normalbg"] else { return nil }
         let current = colors["current"] ?? normal, selected = colors["selectedbg"] ?? (background.blended(withFraction: 0.3, of: normal) ?? background)

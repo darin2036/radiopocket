@@ -210,6 +210,14 @@ open dist/RadioPocket.app
 
 The build script compiles in release mode, creates `dist/RadioPocket.app`, and ad-hoc signs it for local use. Set `RADIOPOCKET_APP_PATH` to build into a separate app path while another copy is running. Build on an Intel Mac to produce an Intel binary; this artifact is not universal.
 
+### iPhone
+
+The `iOS/` folder holds an iPhone app that shares the playback, directory and skin code with the Mac app. It needs full Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen). Landscape shows the classic player window; portrait stacks the player, equalizer and playlist windows, with a touch-sized stream library behind ADD and eject.
+
+```sh
+cd iOS && xcodegen generate && open RadioPocketiOS.xcodeproj
+```
+
 `test.sh` creates temporary fixtures and checks URL validation, M3U/PLS/HLS parsing, persistent favorites, duplicate prevention, corruption preservation, classic ZIP import, bitmap decoding, sprite bounds, all 18 EQF preset round trips, persisted EQ settings, frequency gain, bypass, stereo consistency, and low-rate stability. To include an existing classic skin:
 
 ```sh

@@ -1,5 +1,6 @@
 import Foundation
 import AudioToolbox
+import CoreAudio
 import CEQ
 
 /// Plays compressed packets from a `PacketRing` through an AudioQueue. The processing tap runs the EQ and
