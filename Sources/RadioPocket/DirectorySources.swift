@@ -276,7 +276,7 @@ actor StationListDirectory: DirectoryBackend {
     static func parse(_ text: String, base: URL, label: String, sourceID: String, maximumEntries: Int = 5000, video: Bool = false,
                       reject: ((_ title: String, _ group: String, _ address: URL) -> Bool)? = nil) -> [RadioListing] {
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        var entries: [(title: String, group: String, address: String, radio: Bool, logo: String, language: String)] = []
+        var entries: [(title: String, group: String, address: String, radio: Bool, logo: String, language: String, region: String)] = []
         if lines.contains(where: { $0.lowercased() == "[playlist]" }) {
             var files: [Int: String] = [:], titles: [Int: String] = [:]
             for line in lines {
@@ -286,9 +286,9 @@ actor StationListDirectory: DirectoryBackend {
                 if key.hasPrefix("file"), let i = Int(key.dropFirst(4)) { files[i] = parts[1] }
                 else if key.hasPrefix("title"), let i = Int(key.dropFirst(5)) { titles[i] = parts[1] }
             }
-            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!, false, "", "")) }
+            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!, false, "", "", "")) }
         } else {
-            var title = "", group = "", playlistGroup = "", radio = false, logo = "", language = ""
+            var title = "", group = "", playlistGroup = "", radio = false, logo = "", language = "", region = ""
             for line in lines where !line.isEmpty {
                 if line.hasPrefix("#PLAYLIST:") {
                     playlistGroup = String(line.dropFirst(10)).trimmingCharacters(in: .whitespaces)
@@ -308,10 +308,12 @@ actor StationListDirectory: DirectoryBackend {
                         return String(line[range.upperBound...].prefix { $0 != "\"" }.prefix(2000))
                     }
                     logo = attribute("tvg-logo"); language = attribute("tvg-language")
+                    // TV lists rarely give a language, but they do say where a channel is from: tvg-country, or the ".de" at the end of an iptv-org style tvg-id.
+                    region = DiscoveryCatalog.region(country: attribute("tvg-country"), channelID: attribute("tvg-id"))
                     // Lists that mix radio into a TV playlist say so with radio="true" or tvg-type="radio".
                     let lower = line.lowercased()
                     radio = lower.contains("radio=\"true\"") || lower.contains("tvg-type=\"radio\"")
-                } else if !line.hasPrefix("#") { entries.append((title, group, line, radio, logo, language)); title = ""; group = ""; radio = false; logo = ""; language = "" }
+                } else if !line.hasPrefix("#") { entries.append((title, group, line, radio, logo, language, region)); title = ""; group = ""; radio = false; logo = ""; language = ""; region = "" }
             }
         }
         var seen = Set<String>()
@@ -330,6 +332,15 @@ actor StationListDirectory: DirectoryBackend {
             row.video = video && !audioOnly
             row.artworkURL = (try? StreamAddress.parse(entry.logo))?.absoluteString
             row.languages = DiscoveryCatalog.languageCodes(entry.language)
+            if video, !entry.region.isEmpty {
+                row.countryCode = entry.region
+                row.country = Locale(identifier: "en").localizedString(forRegionCode: entry.region) ?? ""
+                // With no published language, the name wins if it states one ("Espanol"); otherwise use the languages the country broadcasts in.
+                if row.languages?.isEmpty != false {
+                    let hinted = DiscoveryCatalog.languageHints(name + " " + entry.group)
+                    row.languages = hinted.isEmpty ? DiscoveryCatalog.countryLanguages[entry.region] : hinted.sorted()
+                }
+            }
             return row
         }
     }

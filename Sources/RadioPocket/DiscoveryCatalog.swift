@@ -137,6 +137,36 @@ enum DiscoveryCatalog {
         }
         return codes
     }
+    /// The country a TV channel comes from: an explicit tvg-country, else the suffix of an iptv-org style id ("DasErste.de@SD" is Germany).
+    static func region(country: String, channelID: String) -> String {
+        var code = country.trimmingCharacters(in: .whitespaces).uppercased()
+        if code.count != 2 {
+            let base = channelID.split(separator: "@").first.map(String.init) ?? ""
+            code = base.contains(".") ? String(base.split(separator: ".").last ?? "").uppercased() : ""
+        }
+        if code == "UK" { code = "GB" }
+        return code.count == 2 && Locale.Region.isoRegions.contains(where: { $0.identifier == code }) ? code : ""
+    }
+    /// The languages Discover knows that a country's channels usually broadcast in. Countries not listed give no language.
+    static let countryLanguages: [String: [String]] = {
+        let table: [(String, [String])] = [
+            ("en", ["US", "GB", "IE", "AU", "NZ", "CA", "ZA", "NG", "GH", "KE", "SG", "JM", "TT", "PH", "PK", "LK", "MY", "UG", "ZW", "BS", "BB", "BZ", "GY", "MT"]),
+            ("es", ["ES", "MX", "AR", "CL", "CO", "PE", "VE", "EC", "BO", "PY", "UY", "CR", "PA", "DO", "GT", "HN", "SV", "NI", "CU", "PR", "GQ"]),
+            ("fr", ["FR", "BE", "CH", "CA", "LU", "MC", "SN", "CI", "CM", "CD", "ML", "BF", "NE", "TG", "BJ", "GN", "MG", "HT", "DZ", "MA", "TN", "GA", "CG", "DJ"]),
+            ("de", ["DE", "AT", "CH", "LI", "LU"]), ("it", ["IT", "CH", "SM", "VA", "MT"]), ("pt", ["PT", "BR", "AO", "MZ", "CV", "GW", "ST", "TL"]),
+            ("nl", ["NL", "BE", "SR", "AW", "CW"]), ("ar", ["SA", "AE", "EG", "IQ", "SY", "JO", "LB", "KW", "QA", "BH", "OM", "YE", "LY", "SD", "PS", "DZ", "MA", "TN", "MR", "SO", "DJ"]),
+            ("zh", ["CN", "TW", "HK", "MO", "SG"]), ("ja", ["JP"]), ("ko", ["KR", "KP"]), ("hi", ["IN"]), ("bn", ["BD", "IN"]), ("ur", ["PK", "IN"]),
+            ("ru", ["RU", "BY", "KZ", "KG", "UA", "MD", "UZ", "TJ", "TM", "AM", "AZ"]), ("uk", ["UA"]), ("pl", ["PL"]), ("cs", ["CZ", "SK"]),
+            ("el", ["GR", "CY"]), ("tr", ["TR", "CY"]), ("sv", ["SE", "FI"]), ("no", ["NO"]), ("da", ["DK"]), ("fi", ["FI"]), ("ro", ["RO", "MD"]),
+            ("hu", ["HU"]), ("he", ["IL"]), ("id", ["ID"]), ("th", ["TH"]), ("vi", ["VN"]), ("sw", ["KE", "TZ", "UG"]), ("ta", ["IN", "LK", "SG"])
+        ]
+        var map: [String: [String]] = [:]
+        for (language, countries) in table { for country in countries { map[country, default: []].append(language) } }
+        // Several of these countries also broadcast in English alongside their own language.
+        for country in ["IN", "CA", "SG", "PK", "PH", "MY", "ZA", "IE", "MT", "NG", "KE", "HK"] where !(map[country]?.contains("en") ?? false) { map[country, default: []].append("en") }
+        map["US"] = ["en", "es"]
+        return map.mapValues { $0.sorted() }
+    }()
     static func languageName(_ code: String) -> String { languages.first { $0.code == code }?.name ?? code }
 }
 

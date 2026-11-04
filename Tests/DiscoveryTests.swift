@@ -96,6 +96,12 @@ func checkDiscovery(at root: URL) throws {
     try Data("#EXTM3U\n#EXT-X-TARGETDURATION:6\nsegment.ts".utf8).write(to: playlist)
     try rejects("Downloaded HLS manifests cannot become station catalogs") { _ = try LocalPlaylistDirectory.read(url: playlist, label: "Local", sourceID: "local", video: false) }
     try check(!StreamProbe.automaticProbingSupported, "Legacy browser probing stays disabled; discovery uses its separate pinned transport")
+    let iptv = "#EXTM3U\n#EXTINF:-1 tvg-id=\"DasErste.de@SD\" group-title=\"General\",Das Erste\nhttps://tv.example/erste.m3u8\n#EXTINF:-1 tvg-id=\"Fox.us@HD\" group-title=\"General\",Fox\nhttps://tv.example/fox.m3u8\n#EXTINF:-1 tvg-id=\"Rai.it@SD\" group-title=\"General\",Rai Espanol\nhttps://tv.example/rai.m3u8\n#EXTINF:-1 tvg-id=\"Lost\" group-title=\"General\",Lost\nhttps://tv.example/lost.m3u8"
+    let iptvRows = StationListDirectory.parse(iptv, base: URL(string: "https://tv.example/list.m3u")!, label: "TV", sourceID: "tv", video: true)
+    func iptvRow(_ name: String) -> RadioListing? { iptvRows.first { $0.name == name } }
+    try check(iptvRow("Das Erste")?.countryCode == "DE" && iptvRow("Das Erste")?.languages == ["de"] && iptvRow("Fox")?.languages == ["en", "es"] && iptvRow("Rai Espanol")?.languages == ["es"] && iptvRow("Lost")?.languages?.isEmpty != false && DiscoveryCatalog.region(country: "", channelID: "BBCOne.uk@SD") == "GB", "TV channels take country and language from the tvg-id suffix, with a name that states a language winning")
+    var germanTV = DirectoryQuery(); germanTV.video = true; germanTV.countryCode = "DE"; germanTV.supportedOnly = false
+    try check(DirectoryFilter.page(iptvRows, query: germanTV).stations.map(\.name) == ["Das Erste"], "The Country filter narrows TV channels now that they carry a country")
     try check(DiscoveryCatalog.genres.count >= 60 && DiscoveryCatalog.languages.count >= 30, "Discovery offers broad genre and language vocabularies")
     try check(DiscoveryCatalog.matches("lofi, deep-house, hip-hop, drum & bass").isSuperset(of: ["lo-fi", "deep house", "hip hop", "drum and bass"]), "Genre aliases and multiword styles normalize consistently")
     try check(!DiscoveryCatalog.matches("rockabilly").contains("rock"), "Genre matching does not match arbitrary substrings")
