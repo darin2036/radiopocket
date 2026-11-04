@@ -82,6 +82,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let search = NSTextField()
     private let genre = ClassicPopup()
     private let country = ClassicPopup()
+    private let language = ClassicPopup()
+    private var filtersButton: NSButton!
+    private var filtersPopover: NSPopover?
     private let order = ClassicPopup()
     private let sourceMenu = ClassicPopup()
     private let heading = NSTextField(labelWithString: "POPULAR STATIONS")
@@ -224,7 +227,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         navInset.forEach { $0.constant = showSide ? 0 : 28 }
         if !showSide { updateSectionMenu() }
         let mainWidth = root.bounds.width - 24 - (showSide ? 154 : 0)
-        let showFilters = mainWidth >= 580 && root.bounds.height >= 380
+        let showFilters = mainWidth >= 380 && root.bounds.height >= 380
         narrowHidden.forEach { $0.isHidden = !showFilters }
         layoutColumns(width: mainWidth)
     }
@@ -385,15 +388,17 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         search.setAccessibilityLabel("Search radio station names")
         search.heightAnchor.constraint(equalToConstant: 22).isActive = true
         search.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
-        popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Best quality"], width: 104)
+        popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Best quality"], width: 150)
         for (i, sort) in ["clickcount:1", "votes:1", "name:0", "quality:1"].enumerated() { order.item(at: i)?.representedObject = sort }
         popup(genre, label: "Genre filter", values: ["All genres"] + genres, width: 96)
-        popup(country, label: "Country filter", values: ["Any country"], width: 112)
+        popup(country, label: "Country filter", values: ["Any country"], width: 150)
+        popup(language, label: "Language filter", values: ["Any language"], width: 150)
+        for entry in DiscoveryCatalog.languages { language.addItem(withTitle: entry.name); language.lastItem?.representedObject = entry.code }
         let codes = Locale.Region.isoRegions.map(\.identifier).filter { $0.count == 2 }.map { ($0, Locale.current.localizedString(forRegionCode: $0) ?? $0) }.sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
         for (code, name) in codes { country.addItem(withTitle: name); country.lastItem?.representedObject = code }
-        let clear = button("Clear", #selector(clearFilters), width: 56)
-        narrowHidden = [genre, country, clear]
-        let searchRow = row([search, button("Search", #selector(searchNow), width: 56), genre, country, order, clear], spacing: 4); add(searchRow, to: main)
+        filtersButton = button("Filters", #selector(showFilters), width: 76)
+        narrowHidden = [genre, filtersButton]
+        let searchRow = row([search, button("Search", #selector(searchNow), width: 56), genre, filtersButton], spacing: 4); add(searchRow, to: main)
         table.delegate = self; table.dataSource = self; table.target = self; table.doubleAction = #selector(playSelected)
         table.enter = { [weak self] in self?.playSelected() }
         table.delete = { [weak self] in if self?.scope == .favorites { self?.saveSelected() } }
@@ -792,6 +797,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         let tag = (genre.titleOfSelectedItem ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         query.genre = tag == "All genres" ? "" : tag.lowercased()
         query.countryCode = country.selectedItem?.representedObject as? String ?? ""
+        query.language = scope.isTV ? language.selectedItem?.representedObject as? String ?? "" : ""
+        updateFiltersButton()
         query.codec = ""; query.supportedOnly = true; query.video = scope.isTV
         query.sourceID = sourceMenu.selectedItem?.representedObject as? String ?? "all"
         query.minimumBitrate = 0
@@ -927,8 +934,31 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     @objc private func filtersChanged() { leaveLocalScope(); clearSortIndicators(); captureQuery(); load() }
     @objc private func clearFilters() {
         search.stringValue = ""; chooseGenre("All genres")
-        country.selectItem(at: 0)
+        country.selectItem(at: 0); language.selectItem(at: 0)
         clearSortIndicators(); captureQuery(); load()
+    }
+    /// Country and language narrow the list the way genre does, so they are the ones counted on the Filters button.
+    private func updateFiltersButton() {
+        let active = (country.indexOfSelectedItem > 0 ? 1 : 0) + (scope.isTV && language.indexOfSelectedItem > 0 ? 1 : 0)
+        filtersButton?.title = active == 0 ? "Filters" : "Filters (\(active))"
+    }
+    @objc private func showFilters() {
+        if filtersPopover?.isShown == true { filtersPopover?.close(); return }
+        func field(_ title: String, _ control: NSView) -> NSStackView {
+            let label = NSTextField(labelWithString: title); label.font = BrowserTheme.small; label.textColor = .secondaryLabelColor
+            let stack = NSStackView(views: [label, control]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 3
+            return stack
+        }
+        let stack = NSStackView(views: [field("Country", country)] + (scope.isTV ? [field("Language", language)] : []) + [field("Sort by", order), button("Clear", #selector(clearFilters), width: 56)])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        let size = stack.fittingSize
+        stack.frame = NSRect(origin: .zero, size: size)
+        let controller = NSViewController(); controller.view = stack
+        let popover = NSPopover(); popover.behavior = .transient; popover.appearance = NSAppearance(named: .darkAqua)
+        popover.contentViewController = controller; popover.contentSize = size
+        filtersPopover = popover
+        popover.show(relativeTo: filtersButton.bounds, of: filtersButton, preferredEdge: .maxY)
     }
     @objc private func refresh() { leaveLocalScope(); captureQuery(); load(refresh: true) }
     @objc private func playSelected() {

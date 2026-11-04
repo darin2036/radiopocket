@@ -312,11 +312,16 @@ class ClassicChrome: NSView {
             while x < to { let width = min(sw, to - x); _ = sprite(NSRect(x: sx, y: sy, width: width, height: sh), NSRect(x: x, y: y, width: width, height: sh)); x += width }
         }
         if sprite(NSRect(x: 0, y: row, width: 25, height: 20), NSRect(x: 0, y: 0, width: 25, height: 20)) {
+            if isShadeBar {
+                // A shaded bar has its own content, so it gets the plain title-bar filler without the skin's logo pieces.
+                tile(104, row, 25, 20, from: 25, to: w - 25, y: 0)
+            } else {
             tile(104, row, 25, 20, from: 25, to: titleStart, y: 0)
             _ = sprite(NSRect(x: 26, y: row, width: 25, height: 20), NSRect(x: titleStart, y: 0, width: 25, height: 20))
             tile(52, row, 25, 20, from: titleStart + 25, to: titleStart + 25 + middle, y: 0)
             _ = sprite(NSRect(x: 78, y: row, width: 25, height: 20), NSRect(x: titleStart + 25 + middle, y: 0, width: 25, height: 20))
             tile(104, row, 25, 20, from: titleStart + 50 + middle, to: w - 25, y: 0)
+            }
             _ = sprite(NSRect(x: 130, y: row, width: 25, height: 20), NSRect(x: w - 25, y: 0, width: 25, height: 20))
             var y: CGFloat = 20
             while !isShadeBar, y < h - 14 {
