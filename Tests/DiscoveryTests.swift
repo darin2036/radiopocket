@@ -102,6 +102,9 @@ func checkDiscovery(at root: URL) throws {
     try check(iptvRow("Das Erste")?.countryCode == "DE" && iptvRow("Das Erste")?.languages == ["de"] && iptvRow("Fox")?.languages == ["en", "es"] && iptvRow("Rai Espanol")?.languages == ["es"] && iptvRow("Lost")?.languages?.isEmpty != false && DiscoveryCatalog.region(country: "", channelID: "BBCOne.uk@SD") == "GB", "TV channels take country and language from the tvg-id suffix, with a name that states a language winning")
     var germanTV = DirectoryQuery(); germanTV.video = true; germanTV.countryCode = "DE"; germanTV.supportedOnly = false
     try check(DirectoryFilter.page(iptvRows, query: germanTV).stations.map(\.name) == ["Das Erste"], "The Country filter narrows TV channels now that they carry a country")
+    var spanishTV = germanTV; spanishTV.countryCode = ""; spanishTV.language = "es"
+    var germanTVLanguage = germanTV; germanTVLanguage.language = "de"
+    try check(Set(DirectoryFilter.page(iptvRows, query: spanishTV).stations.map(\.name)) == Set(["Fox", "Rai Espanol"]) && DirectoryFilter.page(iptvRows, query: germanTVLanguage).stations.count == 1 && StationCache(directory: FileManager.default.temporaryDirectory).key(for: spanishTV, sources: ["tv"]) != StationCache(directory: FileManager.default.temporaryDirectory).key(for: germanTV, sources: ["tv"]), "The TV language filter keeps matching channels and has its own cache entry")
     try check(DiscoveryCatalog.genres.count >= 60 && DiscoveryCatalog.languages.count >= 30, "Discovery offers broad genre and language vocabularies")
     try check(DiscoveryCatalog.matches("lofi, deep-house, hip-hop, drum & bass").isSuperset(of: ["lo-fi", "deep house", "hip hop", "drum and bass"]), "Genre aliases and multiword styles normalize consistently")
     try check(!DiscoveryCatalog.matches("rockabilly").contains("rock"), "Genre matching does not match arbitrary substrings")

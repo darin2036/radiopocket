@@ -159,6 +159,7 @@ enum DirectoryFilter {
             if !query.matchesName(listing) { return false }
             if !genre.isEmpty, !listing.tags.lowercased().contains(genre) { return false }
             if !query.countryCode.isEmpty, listing.countryCode != query.countryCode { return false }
+            if !query.language.isEmpty, listing.languages?.contains(query.language) != true { return false }
             if !query.codec.isEmpty {
                 let codec = listing.codec.uppercased()
                 if query.codec == "OGG" ? !(codec == "OGG" || codec == "VORBIS") : codec != query.codec { return false }

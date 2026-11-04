@@ -137,6 +137,8 @@ struct DirectoryQuery: Hashable {
     var name = ""
     var genre = ""
     var countryCode = ""
+    /// A language code from `DiscoveryCatalog.languages`; applies to channel lists that publish or imply one.
+    var language = ""
     var codec = ""
     var minimumBitrate = 0
     var order = "clickcount"
