@@ -128,7 +128,7 @@ final class MarqueeLabel: NSView {
         guard let window, window.isVisible, window.occlusionState.contains(.visible) else { return }
         if overflows || text() != current { needsDisplay = true }
     }
-    private var textArea: NSRect { NSRect(x: 3, y: 0, width: bounds.width - (showsChevron ? 16 : 6), height: bounds.height) }
+    private var textArea: NSRect { NSRect(x: 5, y: 0, width: bounds.width - (showsChevron ? 18 : 10), height: bounds.height) }
 
     override func draw(_ dirtyRect: NSRect) {
         let (foreground, background) = colors()

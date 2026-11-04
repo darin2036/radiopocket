@@ -84,6 +84,22 @@ final class PlayerWindow: NSWindow {
     /// Resizing is handled by `ClassicChrome`, not the system mask: a `.resizable` borderless window reserves
     /// an edge strip that swallows clicks on the title-bar buttons.
     var isUserResizable = false
+    /// When set, resizing keeps the content area at this width-to-height ratio (nil result: free resize).
+    /// `aspectChrome` is the window space around the content, which does not scale.
+    var contentAspect: (() -> CGFloat?)?
+    var aspectChrome = NSSize.zero
+
+    /// Adjusts `rect` so its content area has `contentAspect`. The height follows the width unless only the
+    /// bottom edge is being dragged, in which case the width follows the height; the top-left stays put.
+    func fittedToAspect(_ rect: NSRect, widthLeads: Bool) -> NSRect {
+        guard let ratio = contentAspect?(), ratio > 0 else { return rect }
+        var width = rect.width, height = rect.height
+        if widthLeads { height = (width - aspectChrome.width) / ratio + aspectChrome.height }
+        else { width = (height - aspectChrome.height) * ratio + aspectChrome.width }
+        if height < minSize.height { height = minSize.height; width = (height - aspectChrome.height) * ratio + aspectChrome.width }
+        if width < minSize.width { width = minSize.width; height = (width - aspectChrome.width) / ratio + aspectChrome.height }
+        return NSRect(x: rect.minX, y: rect.maxY - height, width: width, height: height)
+    }
 
     /// Double-clicking a panel's title bar shades it to the bar alone, as the player does; the full panel is kept aside.
     private var shadeRestore: (content: NSView, frame: NSRect, minSize: NSSize, autosave: String)?
@@ -143,14 +159,25 @@ final class PlayerWindow: NSWindow {
     }
 
     /// Moves `rect` so its edges line up with the screen edges and the `others` when they come within `snapDistance`.
-    static func snapped(_ rect: NSRect, to others: [NSRect], screen: NSRect) -> NSRect {
+    /// The display `rect` mostly sits on (the one with the largest overlap), as its usable area and its full frame.
+    static func display(for rect: NSRect, fallback: NSScreen?) -> (visible: NSRect, full: NSRect)? {
+        func overlap(_ s: NSScreen) -> CGFloat { let i = s.frame.intersection(rect); return i.isNull ? 0 : i.width * i.height }
+        let best = NSScreen.screens.max { overlap($0) < overlap($1) }.flatMap { overlap($0) > 0 ? $0 : nil } ?? fallback ?? NSScreen.main
+        return best.map { ($0.visibleFrame, $0.frame) }
+    }
+
+    /// Moves `rect` so its edges line up with the screen edges and the `others` when they come within `snapDistance`.
+    /// `desktop` is the display's full frame; its edges attract too, so a panel can sit against the true screen edge
+    /// as well as against the menu bar and Dock.
+    static func snapped(_ rect: NSRect, to others: [NSRect], screen: NSRect, desktop: NSRect? = nil) -> NSRect {
         var best: (dx: CGFloat, dy: CGFloat) = (.infinity, .infinity)
         func consider(x: CGFloat? = nil, y: CGFloat? = nil) {
             if let x, abs(x) < abs(best.dx) { best.dx = x }
             if let y, abs(y) < abs(best.dy) { best.dy = y }
         }
-        for target in [screen] + others {
-            let isScreen = target == screen
+        let screens = [screen] + (desktop.map { [$0] } ?? [])
+        for target in screens + others {
+            let isScreen = screens.contains(target)
             let nearY = rect.minY - snapDistance < target.maxY && rect.maxY + snapDistance > target.minY
             let nearX = rect.minX - snapDistance < target.maxX && rect.maxX + snapDistance > target.minX
             if isScreen || nearY {
@@ -171,8 +198,9 @@ final class PlayerWindow: NSWindow {
     /// Pulls the edges being dragged (`x` values for left/right, `y` values for the bottom) onto the screen edges and
     /// the edges of neighbouring panels within `snapDistance`, so a resized window lines up with what it sits beside.
     func snappedResize(_ rect: NSRect, left: Bool, right: Bool, bottom: Bool) -> NSRect {
-        let screen = (NSScreen.screens.first { $0.frame.intersects(rect) } ?? self.screen ?? NSScreen.main)?.visibleFrame ?? rect
-        var xs: [CGFloat] = [screen.minX, screen.maxX], ys: [CGFloat] = [screen.minY, screen.maxY]
+        let display = Self.display(for: rect, fallback: screen)
+        let visible = display?.visible ?? rect, full = display?.full ?? rect
+        var xs: [CGFloat] = [visible.minX, visible.maxX, full.minX, full.maxX], ys: [CGFloat] = [visible.minY, visible.maxY, full.minY, full.maxY]
         for other in neighbours.map(\.frame) {
             if rect.minY - Self.snapDistance < other.maxY && rect.maxY + Self.snapDistance > other.minY { xs += [other.minX, other.maxX] }
             if rect.minX - Self.snapDistance < other.maxX && rect.maxX + Self.snapDistance > other.minX { ys += [other.minY, other.maxY] }
@@ -200,8 +228,8 @@ final class PlayerWindow: NSWindow {
             let now = NSEvent.mouseLocation
             var moved = group.offsetBy(dx: now.x - startMouse.x, dy: now.y - startMouse.y)
             if !next.modifierFlags.contains(.option) {
-                let screen = (NSScreen.screens.first { $0.frame.intersects(moved) } ?? screen ?? NSScreen.main)?.visibleFrame ?? moved
-                moved = PlayerWindow.snapped(moved, to: others, screen: screen)
+                let display = PlayerWindow.display(for: moved, fallback: screen)
+                moved = PlayerWindow.snapped(moved, to: others, screen: display?.visible ?? moved, desktop: display?.full)
             }
             let dx = moved.minX - group.minX, dy = moved.minY - group.minY
             for (window, frame) in starts { window.setFrameOrigin(NSPoint(x: frame.minX + dx, y: frame.minY + dy)) }
@@ -287,9 +315,9 @@ class ClassicChrome: NSView {
         NSColor.gray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1)).stroke()
         let h = bounds.height, w = bounds.width
         if isShadeBar, let sheet = ClassicUI.skin {
-            // The player's own shaded title bar: its two end caps with the stripes tiled between them.
+            // The player's plain title bar (no WINAMP text or display): its two end caps with the stripes tiled between them.
             func piece(_ sx: CGFloat, _ width: CGFloat, to x: CGFloat) -> Bool {
-                guard let image = sheet.sprite("titlebar.bmp", NSRect(x: sx, y: window?.isKeyWindow == false ? 42 : 29, width: width, height: 14)) else { return false }
+                guard let image = sheet.sprite("titlebar.bmp", NSRect(x: sx, y: window?.isKeyWindow == false ? 15 : 0, width: width, height: 14)) else { return false }
                 image.draw(in: NSRect(x: x, y: 0, width: width, height: 14), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue]); return true
             }
             let cap: CGFloat = 25
@@ -377,6 +405,12 @@ class ClassicChrome: NSView {
         var frame = NSRect(x: x, y: start.maxY - height, width: width, height: height)
         if !event.modifierFlags.contains(.option), let player = window as? PlayerWindow {
             frame = player.snappedResize(frame, left: edges.contains(.left), right: edges.contains(.right), bottom: edges.contains(.bottom))
+        }
+        if let player = window as? PlayerWindow {
+            let horizontal = edges.contains(.left) || edges.contains(.right)
+            frame = player.fittedToAspect(frame, widthLeads: horizontal)
+            // Dragging the left edge keeps the right edge fixed.
+            if edges.contains(.left) { frame.origin.x = start.maxX - frame.width }
         }
         window.setFrame(frame, display: true)
     }

@@ -21,7 +21,7 @@ final class PlayerView: NSView {
         view.isHidden = true; return view
     }()
     private lazy var miniTitle: MarqueeLabel = {
-        let view = MarqueeLabel(frame: NSRect(x: 61, y: 2, width: 179, height: 10), font: .monospacedSystemFont(ofSize: 7, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.engine.title ?? "" }
+        let view = MarqueeLabel(frame: NSRect(x: 64, y: 2, width: 173, height: 10), font: .monospacedSystemFont(ofSize: 7, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.engine.title ?? "" }
         view.colors = { [weak self] in (self?.green ?? ClassicUI.green, self?.ink ?? ClassicUI.black) }
         view.isHidden = true; return view
     }()
