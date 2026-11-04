@@ -33,7 +33,7 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
         let content = chrome
         let close = ClassicWindowButton(title: "×", target: self, action: #selector(closePanel))
         close.frame = NSRect(x: 528, y: 3, width: 9, height: 9); close.autoresizingMask = [.minXMargin]; close.isBordered = false; close.setAccessibilityLabel("Close favorites"); content.addSubview(close)
-        let scroll = NSScrollView()
+        let scroll = FittedScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
         scroll.borderType = .lineBorder; scroll.scrollerStyle = .legacy; scroll.backgroundColor = ClassicUI.black
@@ -127,6 +127,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var smokePath: String? { argument("--smoke-result") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LegacyDefaults.migrate()
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didExposeNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.syncWindowLevels() }
+        }
         do {
             library = try Library(directory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
         } catch {
@@ -149,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.delegate = self
         configureVisualizer()
         window.level = library.state.alwaysOnTop == true ? .floating : .normal
+        ClassicUI.scrollSpeed = library.state.textScrollSpeed ?? 30
         scale(library.state.scale, save: false)
         window.center()
         window.setFrameAutosaveName("RadioPocket.Player")
@@ -162,6 +167,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         favorites.edit = { [weak self] in self?.openDialog(station: $0, favoriteOnly: true) }
         favorites.report = { [weak self] in self?.showError($0) }
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
+        ClassicUI.nowPlaying = { [weak self] in
+            guard let self, let station = self.engine.station else { return nil }
+            // A connecting or failed station says so, since there is no song to show.
+            let song = ([.connecting, .failed].contains(self.engine.status) ? self.engine.detail : self.engine.title).trimmingCharacters(in: .whitespacesAndNewlines)
+            return [station.name, song == station.name ? "" : song].filter { !$0.isEmpty }.joined(separator: " — ")
+        }
+        ClassicUI.isPlaying = { [weak self] in self.map { [.playing, .connecting].contains($0.engine.status) } ?? false }
+        ClassicUI.transport = { [weak self] in self?.handle($0) }
         updateBackgroundStations()
         startHousekeeping()
         if smokePath == nil, argument("--preview") == nil { checkForUpdatesAtLaunch() }
@@ -184,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         engine.changed = { [weak self] in
             guard let self else { return }
             self.view.needsDisplay = true
+            NotificationCenter.default.post(name: ClassicUI.playbackChanged, object: nil)
             self.visuals.hub.refresh()
             self.syncVideo()
             if self.smokePath == nil { self.nowPlaying.update(station: self.engine.station, title: self.engine.title, status: self.engine.status) }
@@ -215,6 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.smokePath != nil, self.engine.status == .failed { self.finishSmoke(success: false) }
         }
         eqView = EqualizerView(equalizer: engine.equalizer)
+        eqView.attach(visualizer: visuals.hub)
+        PlayerWindow.nestedShadeWidth = { [weak self] in self?.window.frame.width }
         eqWindow = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 232), styleMask: [.borderless], backing: .buffered, defer: false)
         eqWindow.title = "RadioPocket Equalizer"
         eqWindow.level = window.level
@@ -301,6 +317,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     if self.view.bounds.height != 116 { failures.append("Player restore failed") }
                     self.presetAction("shade")
                     if self.eqView.bounds.height != 14 { failures.append("EQ shade failed") }
+                    let shown = self.eqView.subviews.filter { $0 is NSControl && !$0.isHidden }
+                    for (i, control) in shown.enumerated() {
+                        if !self.eqView.bounds.contains(control.frame) { failures.append("Shaded EQ control outside bar: \(control.identifier?.rawValue ?? "?")") }
+                        for other in shown[(i + 1)...] where control.frame.intersects(other.frame) { failures.append("Shaded EQ controls overlap") }
+                    }
                     self.presetAction("shade")
                     if self.eqView.bounds.height != 116 { failures.append("EQ restore failed") }
                     try? (failures.isEmpty ? "PASS: no overlapping or out-of-bounds controls at 1×/2×/3×; player and EQ shade/restore work.\n" : failures.joined(separator: "\n")).write(toFile: audit, atomically: true, encoding: .utf8)
@@ -545,6 +566,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         command("Keyboard Shortcuts", "help:shortcuts", to: help)
         command("Version History", "help:history", to: help)
         command("Check for Updates…", "updates", to: help)
+        help.addItem(.separator())
+        command("Report a Problem…", "help:report", to: help)
 
         NSApp.mainMenu = menu
         NSApp.helpMenu = help
@@ -622,6 +645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             } catch { showError(error) }
         case "open": openDialog()
         case "updates": checkForUpdates(userInitiated: true)
+        case "help:report": NSWorkspace.shared.open(ProblemReport.url(version: AboutController.version))
         case "play":
             if engine.station != nil { engine.resume() }
             else if let last = library.state.lastStation { play(last) }
@@ -844,7 +868,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         do { try library.update { $0.lastStation = station }; recordedStation = nil; engine.play(station) }
         catch { showError(error) }
     }
+    /// Gives every ordinary RadioPocket window (library, visualizer, info, …) the player's level, so
+    /// "always on top" covers all panels. Windows already above it (Preferences, full-screen video) are left alone.
+    func syncWindowLevels() {
+        let level = window.level
+        for w in NSApp.windows where w !== window && (w.level == .normal || w.level == .floating) && w.level != level
+            && (w.isVisible || w.isMiniaturized) && !(w is NSPanel && w.styleMask.contains(.nonactivatingPanel)) {
+            w.level = level
+        }
+    }
     func saveWindowLevel() {
+        syncWindowLevels()
         video?.level = window.level
         do { try library.update { $0.alwaysOnTop = window.level == .floating } } catch { showError(error) }
     }

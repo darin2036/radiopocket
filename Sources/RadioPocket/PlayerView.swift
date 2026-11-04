@@ -8,10 +8,23 @@ final class PixelButton: NSButton {
 
 final class PlayerView: NSView {
     let engine: RadioEngine
-    var skin: ClassicSkin? { didSet { ClassicUI.skin = skin; needsDisplay = true; controls.forEach { $0.needsDisplay = true } } }
+    var skin: ClassicSkin? { didSet { ClassicUI.skin = skin; needsDisplay = true; controls.forEach { $0.needsDisplay = true }; miniTransport.needsDisplay = true; miniTitle.needsDisplay = true } }
     var shaded = false { didSet {
-        controls.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }; needsDisplay = true
+        controls.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }
+        miniTransport.isHidden = !shaded; miniTitle.isHidden = !shaded
+        needsDisplay = true
     } }
+    /// The shaded bar's controls: previous / play-pause / next, and the scrolling station and song.
+    private lazy var miniTransport: MiniTransport = {
+        let view = MiniTransport(frame: NSRect(x: 19, y: 2, width: MiniTransport.width, height: 10))
+        view.colors = { [weak self] in (self?.green ?? ClassicUI.green, self?.ink ?? ClassicUI.black) }
+        view.isHidden = true; return view
+    }()
+    private lazy var miniTitle: MarqueeLabel = {
+        let view = MarqueeLabel(frame: NSRect(x: 64, y: 2, width: 173, height: 10), font: .monospacedSystemFont(ofSize: 7, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.engine.title ?? "" }
+        view.colors = { [weak self] in (self?.green ?? ClassicUI.green, self?.ink ?? ClassicUI.black) }
+        view.isHidden = true; return view
+    }()
     var action: ((String) -> Void)?
     var volumeChanged: ((Float) -> Void)?
     var balanceChanged: ((Float) -> Void)?
@@ -70,6 +83,7 @@ final class PlayerView: NSView {
             }
         }
         addToolTip(NSRect(x: 107, y: 57, width: 68, height: 15), owner: Self.volumeTip, userData: nil)
+        addSubview(miniTransport); addSubview(miniTitle)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -142,7 +156,7 @@ final class PlayerView: NSView {
         }
         
         // A connecting or failed station says so in the title strip, since skins have no separate status line.
-        bitmapText([.connecting, .failed].contains(engine.status) ? engine.detail : engine.title, rect: NSRect(x: 111, y: 27, width: 154, height: 6))
+        bitmapText([.connecting, .failed].contains(engine.status) ? engine.detail : engine.title, rect: NSRect(x: 111, y: 27, width: 154, height: 6), scrolling: 0)
         // Keep the skin’s kbps/kHz/channel labels intact; unavailable values are not invented.
         // Measured from the live connection; shown as dashes until the stream has told us.
         let info = engine.status == .playing || engine.status == .paused ? engine.streamInfo : nil
@@ -182,12 +196,76 @@ final class PlayerView: NSView {
         if skin == nil { fill(NSRect(x: 16, y: 72, width: 248, height: 10), ink) }
         let showsDetail = [.failed, .connecting, .paused].contains(engine.status) || (engine.status == .playing && engine.delay >= 2)
         // Classic skins have no info strip here; only the native theme draws one.
-        if skin == nil { bitmapText(showsDetail ? engine.detail : engine.station?.name ?? "", rect: NSRect(x: 19, y: 74, width: 240, height: 6)) }
+        if skin == nil { bitmapText(showsDetail ? engine.detail : engine.station?.name ?? "", rect: NSRect(x: 19, y: 74, width: 240, height: 6), scrolling: 1) }
         
         toolTip = "\(engine.title)\n\(engine.detail)"
     }
 
-    private func bitmapText(_ value: String, rect: NSRect) {
+    /// A text strip that scrolls when its text is wider than the strip, and can be dragged by hand.
+    private struct Strip {
+        var text = "", offset: CGFloat = 0, last = Date(), hold = Date()
+        var dragging = false, overflows = false, rect = NSRect.zero, cycle: CGFloat = 1
+    }
+    private var strips: [Int: Strip] = [:]
+    private var draggedStrip: (id: Int, x: CGFloat, offset: CGFloat)?
+    private var stripTimer: Timer?
+    private static let stripHits = [0: NSRect(x: 111, y: 24, width: 154, height: 12), 1: NSRect(x: 19, y: 74, width: 240, height: 10)]
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        stripTimer?.invalidate(); stripTimer = nil
+        guard window != nil else { return }
+        let timer = Timer(timeInterval: 0.04, repeats: true) { [weak self] _ in self?.tickStrips() }
+        timer.tolerance = 0.01
+        RunLoop.main.add(timer, forMode: .common)
+        stripTimer = timer
+    }
+    deinit { stripTimer?.invalidate() }
+    private func tickStrips() {
+        guard let window, window.isVisible, window.occlusionState.contains(.visible), !shaded else { return }
+        for strip in strips.values where strip.overflows { setNeedsDisplay(strip.rect) }
+    }
+    /// Advances the strip and returns its wrapped scroll offset. New text holds at its start for a moment, as does a strip just let go of.
+    private func scrollOffset(_ id: Int, _ value: String, rect: NSRect, cycle: CGFloat) -> CGFloat {
+        var strip = strips[id] ?? Strip()
+        let now = Date()
+        if strip.text != value { strip = Strip(); strip.text = value; strip.hold = now.addingTimeInterval(1.5) }
+        if !strip.dragging, now >= strip.hold { strip.offset += CGFloat(min(0.2, now.timeIntervalSince(strip.last))) * ClassicUI.scrollSpeed }
+        strip.last = now; strip.rect = rect; strip.cycle = cycle; strip.overflows = true
+        strip.offset = strip.offset.truncatingRemainder(dividingBy: cycle)
+        if strip.offset < 0 { strip.offset += cycle }
+        strips[id] = strip
+        return strip.offset
+    }
+
+    private func bitmapText(_ value: String, rect: NSRect, scrolling id: Int? = nil) {
+        if let id, engine.status != .playing { strips[id] = nil }
+        else if let id {
+            let glyphs = skin.map { skin in value.allSatisfy { skin.glyph($0) != nil } } ?? false
+            let font = NSFont.systemFont(ofSize: 7)
+            let width = glyphs ? CGFloat(value.count * 5) : ceil((value as NSString).size(withAttributes: [.font: font]).width)
+            if width > rect.width - (glyphs ? 0 : 6) {
+                let cycle = width + 30, offset = scrollOffset(id, value, rect: rect, cycle: cycle)
+                NSGraphicsContext.saveGraphicsState()
+                let height: CGFloat = glyphs ? 6 : (rect.minY == 27 ? 12 : 10)
+                let box = NSRect(x: rect.minX, y: glyphs ? rect.minY : rect.minY - (height - 6) / 2, width: rect.width, height: height)
+                box.clip()
+                var x = rect.minX - offset
+                while x < rect.maxX {
+                    if glyphs, let skin {
+                        for (i, char) in value.enumerated() {
+                            skin.glyph(char)?.draw(in: NSRect(x: x + CGFloat(i * 5), y: rect.minY, width: 5, height: 6), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue])
+                        }
+                    } else {
+                        ClassicUI.caption(value, rect: NSRect(x: x, y: box.minY, width: width + 8, height: height), color: green, font: font, alignment: .left)
+                    }
+                    x += cycle
+                }
+                NSGraphicsContext.restoreGraphicsState()
+                return
+            }
+            strips[id]?.overflows = false
+        }
         NSGraphicsContext.saveGraphicsState(); rect.clip()
         let capacity = Int(rect.width / 5)
         var chars = Array(value.prefix(capacity))
@@ -263,7 +341,11 @@ final class PlayerView: NSView {
                 DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
             }
         }
-        else if !shaded, event.clickCount == 2, NSRect(x: 111, y: 24, width: 154, height: 12).contains(p) { action?("info") }   // double-click the title display for Station Info
+        else if !shaded, event.clickCount == 2, NSRect(x: 111, y: 24, width: 154, height: 12).contains(p) { action?("info") }
+        else if !shaded, let id = Self.stripHits.first(where: { strips[$0.key]?.overflows == true && $0.value.contains(p) })?.key {
+            strips[id]?.dragging = true
+            draggedStrip = (id, p.x, strips[id]?.offset ?? 0)
+        }   // double-click the title display for Station Info
         else if !shaded, NSRect(x: 247, y: 91, width: 20, height: 25).contains(p) { action?("about") }   // the logo at the bottom right, as in Winamp
         else if NSRect(x: 107, y: 57, width: 68, height: 16).contains(p) { trackingVolume = true; adjustVolume(p) }
         else if !shaded, Self.balanceSlot.contains(p) { trackingBalance = true; adjustBalance(p) }
@@ -276,8 +358,18 @@ final class PlayerView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if trackingVolume { adjustVolume(p) } else if trackingBalance { adjustBalance(p) }
+        else if let drag = draggedStrip, var strip = strips[drag.id] {
+            strip.offset = drag.offset - (p.x - drag.x)
+            strip.offset = strip.offset.truncatingRemainder(dividingBy: strip.cycle)
+            if strip.offset < 0 { strip.offset += strip.cycle }
+            strips[drag.id] = strip
+            setNeedsDisplay(strip.rect)
+        }
     }
-    override func mouseUp(with event: NSEvent) { trackingVolume = false; trackingBalance = false }
+    override func mouseUp(with event: NSEvent) {
+        trackingVolume = false; trackingBalance = false
+        if let drag = draggedStrip { strips[drag.id]?.dragging = false; strips[drag.id]?.hold = Date().addingTimeInterval(3); draggedStrip = nil }
+    }
     private func adjustBalance(_ point: NSPoint) { balanceChanged?(StereoBalance.snapped(Float((point.x - 184) / 12 - 1))) }
 
     override func scrollWheel(with event: NSEvent) {

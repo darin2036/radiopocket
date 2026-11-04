@@ -41,7 +41,7 @@ Weather attribution links to Open-Meteo; the attribution tooltip credits GeoName
 
 ## Verification
 
-Offline regression checks cover time boundaries, weekends, known occasions, greeting, canonical context/cache keys, weather code handling, persistence, location-coordinate rounding, first-use skip, later weather enable/disable, draft application, structural validation, contradictory AI context, language eligibility, endpoint membership and hierarchy construction. Native fixture QA covers regular/compact layouts, sidebar placement, mood → playable stations and back navigation. Live city/weather requests and live onboard model generation are also exercised, with artifacts under `.work/moods-qa/`.
+Offline regression checks cover time boundaries, weekends, known occasions, greeting, canonical context/cache keys, weather code handling, persistence, location-coordinate rounding, first-use skip, later weather enable/disable, draft application, structural validation, contradictory AI context, language eligibility, endpoint membership and hierarchy construction. Native fixture QA covers regular/compact layouts, sidebar placement, mood → playable stations and back navigation. Live city/weather requests and live onboard model generation are also exercised.
 
 Inspiration: [Songza's contextual Concierge](https://www.afb.org/aw/15/9/15537). Foundation Models sampling reference: [Apple's greedy sampling documentation](https://developer.apple.com/documentation/foundationmodels/generationoptions/samplingmode-swift.struct/greedy).
 

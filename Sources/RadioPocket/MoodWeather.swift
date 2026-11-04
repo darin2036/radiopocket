@@ -31,7 +31,7 @@ actor MoodWeather {
     }
     static func get<T: Decodable>(_ url: URL, as: T.Type) async throws -> T {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
-        request.setValue("RadioPocket/0.9 (optional city weather)", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.value + " (optional city weather)", forHTTPHeaderField: "User-Agent")
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = 10
         let session = URLSession(configuration: configuration)

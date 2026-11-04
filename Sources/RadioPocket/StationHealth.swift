@@ -14,6 +14,21 @@ enum StreamVerdict: Equatable {
 /// Stream addresses the app has found unreachable, kept on disk so the library leaves them out and tries them again later.
 /// Only reachability is recorded: a station that connects but can't be decoded is never listed here, so a gap in the
 /// app's own format support doesn't hide a working station.
+/// Wrapper for disposable on-disk caches: `{"version": n, "data": …}`. Files saved before versioning (the bare value) still load.
+/// A file from a newer version is ignored, and the cache simply rebuilds.
+enum CacheFile {
+    private struct Envelope<T: Codable>: Codable { var version: Int; var data: T }
+
+    static func read<T: Codable>(_ type: T.Type, from data: Data, version: Int) -> T? {
+        if let envelope = try? JSONDecoder().decode(Envelope<T>.self, from: data) { return envelope.version == version ? envelope.data : nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    static func encode<T: Codable>(_ value: T, version: Int) -> Data? {
+        try? JSONEncoder().encode(Envelope(version: version, data: value))
+    }
+}
+
 final class DeadStations: @unchecked Sendable {
     struct Record: Codable { var strikes: Int; var last: Date; var alive: Date? }
 
@@ -26,6 +41,7 @@ final class DeadStations: @unchecked Sendable {
     static let doubtfulGap: TimeInterval = 12 * 3600
     static let forgetAfter: TimeInterval = 30 * 86_400
     static let maximumRecords = 5_000
+    static let fileVersion = 1
 
     private let file: URL?
     private let lock = NSLock()
@@ -34,7 +50,7 @@ final class DeadStations: @unchecked Sendable {
     /// A nil file keeps everything in memory only.
     init(file: URL?) {
         self.file = file
-        if let file, let data = try? Data(contentsOf: file), let stored = try? JSONDecoder().decode([String: Record].self, from: data) { records = stored }
+        if let file, let data = try? Data(contentsOf: file), let stored = CacheFile.read([String: Record].self, from: data, version: Self.fileVersion) { records = stored }
         else { records = [:] }
     }
 
@@ -105,7 +121,7 @@ final class DeadStations: @unchecked Sendable {
 
     private func save() {
         guard let file else { return }
-        guard let data = try? JSONEncoder().encode(records) else { return }
+        guard let data = CacheFile.encode(records, version: Self.fileVersion) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
     }
@@ -166,7 +182,7 @@ enum StreamProbe {
         guard canCheck(url) else { return .unknown }
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.setValue("1", forHTTPHeaderField: "Icy-MetaData")
-        request.setValue("RadioPocket/0.9", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.value, forHTTPHeaderField: "User-Agent")
         do {
             let (bytes, response) = try await session.bytes(for: request)
             bytes.task.cancel()

@@ -179,7 +179,11 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         }
         direct.failed = { [weak self] message in
             guard let self, self.generation == token else { return }
-            if message.contains("isn’t supported MP3/AAC") || message.hasPrefix(HLSSource.unsupportedPrefix) {
+            if message.hasPrefix(RadioStream.fallbackMarker) {
+                // Every User-Agent was refused by our own client; AVPlayer’s stack (Safari’s) may still get through.
+                self.stream?.stop(); self.stream = nil; self.equalizer.disconnect()
+                self.installAVPlayer(url, token: token, agent: UserAgent.browser)
+            } else if message.contains("isn’t supported MP3/AAC") || message.hasPrefix(HLSSource.unsupportedPrefix) {
                 self.stream?.stop(); self.stream = nil; self.equalizer.disconnect()
                 self.installAVPlayer(url, token: token)
             } else if message.hasPrefix(RadioStream.permanentMarker) { self.giveUp(String(message.dropFirst(RadioStream.permanentMarker.count))) }
@@ -215,8 +219,9 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         return nil
     }
 
-    private func installAVPlayer(_ url: URL, token: UUID) {
-        let item = AVPlayerItem(url: url)
+    private func installAVPlayer(_ url: URL, token: UUID, agent: String? = UserAgent.value) {
+        let headers = agent.map { ["User-Agent": $0] } ?? [:]
+        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers]))
         item.preferredForwardBufferDuration = 3
         let metadata = AVPlayerItemMetadataOutput(identifiers: nil)
         metadata.setDelegate(self, queue: .main)

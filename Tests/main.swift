@@ -56,6 +56,42 @@ do {
     try original.write(to: stateFile)
     try rejects("Report corrupt library") { _ = try Library(directory: dir) }
     try check(Data(contentsOf: stateFile) == original, "Preserve corrupt library without overwriting")
+    // Saved-data format: versioning, migration, unknown fields, bad fields, backups.
+    let formatDir = root.appendingPathComponent("format")
+    try FileManager.default.createDirectory(at: formatDir, withIntermediateDirectories: true)
+    let formatFile = formatDir.appendingPathComponent("library.json")
+    try Data(#"{"favorites":[{"id":"00000000-0000-0000-0000-0000000000aa","name":"Old","address":"https://old.example/live"}],"volume":0.5,"scale":2,"futureThing":{"a":[1,2]}}"#.utf8).write(to: formatFile)
+    let legacyLibrary = try Library(directory: formatDir)
+    try check(legacyLibrary.state.favorites.first?.name == "Old", "A pre-versioning library loads")
+    let migrated = try JSONSerialization.jsonObject(with: Data(contentsOf: formatFile)) as? [String: Any]
+    try check(migrated?["schemaVersion"] as? Int == LibraryFormat.current, "A pre-versioning library is stamped with the current version")
+    try check((try FileManager.default.contentsOfDirectory(atPath: formatDir.appendingPathComponent("Backups").path)).count == 1, "Migration backs up the original file")
+    try legacyLibrary.update { $0.volume = 0.8 }
+    let afterSave = try JSONSerialization.jsonObject(with: Data(contentsOf: formatFile)) as? [String: Any]
+    try check((afterSave?["futureThing"] as? [String: Any])?["a"] as? [Int] == [1, 2], "Unknown fields survive a save")
+    let futureDir = root.appendingPathComponent("future")
+    try FileManager.default.createDirectory(at: futureDir, withIntermediateDirectories: true)
+    try Data(#"{"schemaVersion":99,"favorites":[],"volume":0.4,"scale":2,"newerSetting":true}"#.utf8).write(to: futureDir.appendingPathComponent("library.json"))
+    let futureLibrary = try Library(directory: futureDir)
+    try futureLibrary.update { $0.volume = 0.3 }
+    let futureSaved = try JSONSerialization.jsonObject(with: Data(contentsOf: futureDir.appendingPathComponent("library.json"))) as? [String: Any]
+    try check(futureSaved?["schemaVersion"] as? Int == 99 && futureSaved?["newerSetting"] as? Bool == true, "A newer library keeps its version and fields when this build saves")
+    let badDir = root.appendingPathComponent("badfield")
+    try FileManager.default.createDirectory(at: badDir, withIntermediateDirectories: true)
+    try Data(#"{"schemaVersion":1,"favorites":[{"id":"00000000-0000-0000-0000-0000000000cc","name":"Keep","address":"https://keep.example/live"}],"volume":"loud","scale":2,"leveling":true}"#.utf8).write(to: badDir.appendingPathComponent("library.json"))
+    let badLibrary = try Library(directory: badDir)
+    try check(badLibrary.state.favorites.first?.name == "Keep" && badLibrary.state.leveling == true && badLibrary.state.volume == 0.65, "One unreadable field resets alone and the rest loads")
+    try check((try FileManager.default.contentsOfDirectory(atPath: badDir.appendingPathComponent("Backups").path)).count == 1, "A dropped field backs up the original file")
+    let reportURL = ProblemReport.url(version: "0.10.0", system: "Version 26.0").absoluteString
+    try check(reportURL.hasPrefix("https://github.com/darin2036/radiopocket/issues/new?body=") && reportURL.contains("0.10.0") && !reportURL.contains("http%3A") , "Report a Problem prefills versions and no station address")
+    let versionedCache = try CacheFile.encode(["a": 1], version: 1) ?? { throw RadioError.message("encode") }()
+    try check(CacheFile.read([String: Int].self, from: versionedCache, version: 1) == ["a": 1], "Versioned caches round-trip")
+    try check(CacheFile.read([String: Int].self, from: versionedCache, version: 2) == nil, "A cache from another version is ignored")
+    try check(CacheFile.read([String: Int].self, from: Data(#"{"a":2}"#.utf8), version: 1) == ["a": 2], "Unversioned caches saved by older builds still load")
+    let oldSkin = try JSONDecoder().decode(ClassicSkin.Archive.self, from: Data(#"{"name":"Old","bitmaps":{}}"#.utf8))
+    try check(oldSkin.schema == nil && ClassicSkin.Archive(name: "New", bitmaps: [:]).schema == 1, "Saved skins from before versioning still decode")
+    try check(LibraryFormat.knownKeys.isSuperset(of: ["favorites", "volume", "equalizer", "moodCity", "textScrollSpeed"]), "Every saved setting is a known library field")
+    try check(LibraryFormat.migrations.count == LibraryFormat.current && (0..<LibraryFormat.current).allSatisfy { LibraryFormat.migrations[$0] != nil }, "Every schema version has a migration")
     try rejects("Reject missing skin artwork") { _ = try ClassicSkin(archive: .init(name: "Bad", bitmaps: [:])) }
     try rejects("Reject malformed bitmap") { _ = try ClassicSkin(archive: .init(name: "Bad", bitmaps: ["main.bmp": Data("bad bitmap".utf8)])) }
     let skinDir = root.appendingPathComponent("Nested")
@@ -606,6 +642,8 @@ do {
     try check(docked.minX == 300 && docked.maxY == anchor.minY, "A window dropped near another snaps flush under it")
     try check(PlayerWindow.snapped(NSRect(x: 5, y: 300, width: 100, height: 50), to: [], screen: screenRect).minX == 0, "A window near the screen edge snaps to it")
     try check(PlayerWindow.snapped(NSRect(x: 400, y: 100, width: 100, height: 50), to: [anchor], screen: screenRect).origin == NSPoint(x: 400, y: 100), "Distant windows do not snap")
+    let desktopRect = NSRect(x: 0, y: 0, width: screenRect.width, height: screenRect.height + 25)
+    try check(PlayerWindow.snapped(NSRect(x: 100, y: 3, width: 100, height: 50), to: [], screen: screenRect.offsetBy(dx: 0, dy: 40), desktop: desktopRect).minY == 0, "A window near the full screen edge snaps to it as well as to the usable area")
     try check(PlayerWindow.touching(anchor, NSRect(x: 300, y: 168, width: 550, height: 232)) && !PlayerWindow.touching(anchor, NSRect(x: 300, y: 100, width: 550, height: 232)), "Docked windows are detected by touching edges")
     // Jump to Station matching
     let jumpList = [Station(name: "Groove Salad", address: "https://a.example/gs"), Station(name: "Deep Space One", address: "https://a.example/ds"), Station(name: "Space Station Soma", address: "https://a.example/sss")]

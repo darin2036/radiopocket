@@ -1,4 +1,4 @@
-# RadioPocket 0.9.2 (development)
+# RadioPocket 0.10.0 (development)
 
 A small, native macOS internet-radio player inspired by classic Winamp. Swift + AppKit + AudioToolbox/AVFoundation, with a small C DSP core. No package dependencies, browser runtime, account, app backend, large bundled station database. Station discovery offers eight built-in sources: Radio Browser, SomaFM, laut.fm, Radio Paradise, Curated Internet Radio Streams, IPRD, Junguler Radio Playlists, and rrradio.
 
@@ -7,7 +7,7 @@ A small, native macOS internet-radio player inspired by classic Winamp. Swift + 
 ## At a glance
 
 - Direct internet radio streams, station discovery, favorites, and recent history.
-- Winamp Classic 2.91 bundled, RadioPocket’s own theme, and import for any classic `.wsz` skin.
+- RadioPocket’s own theme, and import for any classic `.wsz` skin.
 - Ten-band equalizer, preamp, all 18 classic presets, and EQF import/export.
 - Browser handoff through radio playlists and `radiopocket://` links.
 - Native macOS app, about 3.2 MB on disk, with no browser runtime or package dependencies.
@@ -30,7 +30,7 @@ A small, native macOS internet-radio player inspired by classic Winamp. Swift + 
 
 <img src="previews/RadioPocket-directories.png" alt="Directory settings showing Radio Browser, SomaFM, laut.fm and IPRD" width="760">
 
-Screenshots show the current 0.9 player, equalizer, and library. Directory listings change over time.
+Screenshots show a recent player, equalizer, and library. Directory listings change over time.
 
 ## Quick start
 
@@ -197,9 +197,13 @@ Only recognized bitmap entries are read; archive paths are never extracted to di
 
 ## Data and resource use
 
-Favorites, the last 30 successfully played stations, last station, volume, scale, and EQ settings live in `~/Library/Application Support/RadioPocket/library.json`. The imported skin is in `skin.json` beside it. Writes are atomic. Invalid saved libraries are reported without overwriting them. Stream URLs are stored as entered, so any token embedded in a URL is also stored locally. Playback does not start automatically at launch.
+Favorites, the last 30 successfully played stations, last station, volume, scale, and EQ settings live in `~/Library/Application Support/RadioPocket/library.json`. The imported skin is in `skin.json` beside it. Writes are atomic. `library.json` records a `schemaVersion`; older files are migrated forward (with the original copied to `Backups/`), fields from a newer version are preserved rather than erased, and a single unreadable field resets on its own instead of failing the whole file. Files that aren’t valid JSON are reported without overwriting them. Stream URLs are stored as entered, so any token embedded in a URL is also stored locally. Playback does not start automatically at launch.
 
 The release app is about 3.2 MB on disk, excluding OS-provided frameworks and user-imported skins. The audio queue uses eight fixed 16 KB buffers fed from the time-shift ring, which holds at most five minutes (24 MB) of compressed audio. The DSP state is fixed-size. Station lists downloaded for browsing are held in memory only briefly: they are released two and a half minutes after the last directory search, after RadioPocket has been hidden or behind other apps for 90 seconds, and at once when macOS reports memory pressure, and malloc is then asked to return the freed pages to the system (the saved lists on disk are untouched, and none of this polls). There is no continuous animation or idle polling loop, and the elapsed timer runs only during playback. Fallback AVPlayer buffering is managed by macOS. Disk size does not imply a megabyte-scale runtime footprint; system audio/network/UI frameworks consume additional memory.
+
+## Reporting problems
+
+**Help ▸ Report a Problem…** opens a prefilled issue on the project's GitHub page with the RadioPocket and macOS versions. Station addresses are left out because they can contain private tokens and issues are public; add a station name or link yourself if it matters.
 
 ## Build and test
 
@@ -213,7 +217,7 @@ Requires macOS and the Apple command-line developer tools (`xcode-select --insta
 open dist/RadioPocket.app
 ```
 
-The build script compiles in release mode, creates `dist/RadioPocket.app`, and ad-hoc signs it for local use. Set `RADIOPOCKET_APP_PATH` to build into a separate app path while another copy is running. Build on an Intel Mac to produce an Intel binary; this artifact is not universal.
+The build script compiles in release mode, creates `dist/RadioPocket.app`, and ad-hoc signs it for local use. Set `RADIOPOCKET_APP_PATH` to build into a separate app path while another copy is running. RadioPocket targets Apple Silicon only; the binary is not universal.
 
 ### iPhone
 
@@ -265,7 +269,7 @@ Smoke playback is muted and exits after reaching the playing state. Add `--test-
 - Muted MP3 playback through the updated app with measured -12 dB EQ attenuation.
 - Live 0.6 UI checks completed October 29, 2026 in an isolated app/data directory: player and EQ collapse/restore, keyboard mute, URL validation, Escape/cancel, play/pause/resume, saving favorites and selection actions, Rock/Flat presets, live directory search and format filtering, pagination, favorite saving during uninterrupted audio, and switching to Aqua.
 
-Public station compatibility, Intel hardware, and older supported macOS versions still need broader testing before distribution.
+Public station compatibility and older supported macOS versions still need broader testing before distribution. RadioPocket is Apple Silicon only.
 
 ## Text alignment in 0.7
 
@@ -295,13 +299,13 @@ UI development checks: combine `--preview /absolute/player.png` with `--eq-previ
 
 ## License
 
-RadioPocket's own code is released under the [MIT License](LICENSE). Bundled third-party code is listed in [THIRD-PARTY.md](Resources/THIRD-PARTY.md). Classic skins keep their authors' terms; see [SKIN-CREDITS.md](Resources/SKIN-CREDITS.md).
+RadioPocket's own code is released under the [MIT License](LICENSE). Bundled third-party code is listed in [THIRD-PARTY.md](Resources/THIRD-PARTY.md). Classic skins you import keep their authors' terms.
 
 ## Versioning and discovery development
 
 New releases use `major.minor.patch` (for example, `0.9.1`, `0.9.2`, then `0.10.0`). Historical release labels stay unchanged. The first header in `Resources/CHANGELOG.txt` supplies the macOS app version, bundle build version, and ZIP filename.
 
-The `feature/0.9.1-local-discovery` branch implements the first local discovery release. See the [specification](docs/Discovery-Engine-Product-Spec.md) and [implementation status](docs/Discovery-Implementation.md) for scope and verification. Icecast directory discovery remains retired.
+Local discovery is described in the [specification](docs/Discovery-Engine-Product-Spec.md) and [implementation status](docs/Discovery-Implementation.md) for scope and verification. Icecast directory discovery remains retired.
 
 ### Discover (0.9.1)
 

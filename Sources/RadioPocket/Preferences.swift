@@ -27,6 +27,8 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         window.title = "RadioPocket Preferences"
         window.appearance = NSAppearance(named: .aqua)
         window.isReleasedWhenClosed = false
+        // Above the player, equalizer and always-on-top panels, and the full-screen video window.
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         super.init(window: window)
         window.contentView = PreferencesBackground(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
         guard let root = window.contentView else { return }
@@ -64,6 +66,11 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             size.target = self; size.action = #selector(sizeChanged(_:)); page.addSubview(size)
             let top = NSButton(checkboxWithTitle: "Keep player and equalizer on top", target: self, action: #selector(topChanged(_:)))
             top.frame = NSRect(x: 0, y: 356, width: 480, height: 24); top.state = app.window.level == .floating ? .on : .off; page.addSubview(top)
+            label("Station and song scroll speed", x: 0, y: 322, width: 200)
+            let speed = NSPopUpButton(frame: NSRect(x: 210, y: 319, width: 160, height: 28), pullsDown: false)
+            speed.addItems(withTitles: ClassicUI.scrollSpeeds.map(\.title))
+            speed.selectItem(at: ClassicUI.scrollSpeeds.firstIndex { $0.value == ClassicUI.scrollSpeed } ?? 2)
+            speed.target = self; speed.action = #selector(scrollSpeedChanged(_:)); speed.setAccessibilityLabel("Station and song scroll speed"); page.addSubview(speed)
         case 3:
             let eq = app.engine.equalizer
             label("Spatial audio", x: 0, y: 422, width: 200)
@@ -165,7 +172,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     private var allRemovedBuiltIns: [DirectorySource] { (app.library.state.directories ?? []).filter { $0.removed == true && $0.builtIn } }
     private var removedBuiltIns: [DirectorySource] { allRemovedBuiltIns.filter { $0.isTV == showsTV } }
     private func directoriesPage(top: CGFloat) {
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 64, width: 524, height: top - 64))
+        let scroll = FittedScrollView(frame: NSRect(x: 0, y: 64, width: 524, height: top - 64))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         if directoryTable.tableColumns.isEmpty { directoryTable.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("directory"))) }
         directoryTable.tableColumns[0].width = 500
@@ -339,7 +346,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         table.headerView = nil; table.rowHeight = 24; table.intercellSpacing = NSSize(width: 0, height: 0)
         table.delegate = self; table.dataSource = self; table.allowsEmptySelection = false
         table.setAccessibilityLabel(table === sidebar ? "Preferences categories" : "Installed skins")
-        let scroll = NSScrollView(frame: frame); scroll.borderType = .bezelBorder; scroll.hasVerticalScroller = true; scroll.documentView = table
+        let scroll = FittedScrollView(frame: frame); scroll.borderType = .bezelBorder; scroll.hasVerticalScroller = true; scroll.documentView = table
         return scroll
     }
     private func label(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat = 500, height: CGFloat = 24, bold: Bool = false) {
@@ -379,6 +386,11 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func closePreferences() { window?.orderOut(nil) }
     @objc private func action(_ sender: NSButton) { if let id = sender.identifier?.rawValue { app.handle(id) } }
     @objc private func sizeChanged(_ sender: NSPopUpButton) { app.handle("scale" + String(format: "%g", Self.sizes[sender.indexOfSelectedItem])) }
+    @objc private func scrollSpeedChanged(_ sender: NSPopUpButton) {
+        let value = ClassicUI.scrollSpeeds[sender.indexOfSelectedItem].value
+        do { try app.library.update { $0.textScrollSpeed = value }; ClassicUI.scrollSpeed = value }
+        catch { app.showError(error) }
+    }
     @objc private func topChanged(_ sender: NSButton) { app.window.level = sender.state == .on ? .floating : .normal; app.eqWindow.level = app.window.level; app.saveWindowLevel() }
     @objc private func updatesChanged(_ sender: NSButton) {
         do { try app.library.update { $0.checkForUpdates = sender.state == .on } }

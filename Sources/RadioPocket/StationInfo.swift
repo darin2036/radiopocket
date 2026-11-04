@@ -11,7 +11,9 @@ final class StationInfoController: NSWindowController {
     private var listing: RadioListing?
     private var lookupMessage: String?
     private var lookupTask: Task<Void, Never>?
-    private let lookup = ClassicButton(title: "Look Up Details", target: nil, action: nil)
+    private let artwork = NSImageView()
+    private var artworkURL: String?
+    private var artworkTask: Task<Void, Never>?
     private let homepage = ClassicButton(title: "Open Homepage", target: nil, action: nil)
     private let favorite = ClassicButton(title: "Add to Favorites", target: nil, action: nil)
     private static let labels = ["Station", "Stream", "Now playing", "Status", "Format", "Bitrate", "Buffer", "Leveling", "Country", "Genre", "Directory",
@@ -20,7 +22,7 @@ final class StationInfoController: NSWindowController {
     private var inspected: RadioListing?
     private var probe: StreamReply.Result?
     private var probeTask: Task<Void, Never>?
-    private static let height = CGFloat(30 + labels.count * 22 + 101)
+    private static let height = CGFloat(30 + labels.count * 22 + 70)
 
     init(engine: RadioEngine, directory: RadioDirectory, library: Library) {
         self.engine = engine; self.directory = directory; self.library = library
@@ -37,28 +39,30 @@ final class StationInfoController: NSWindowController {
             key.frame = NSRect(x: 14, y: CGFloat(30 + i * 22) + 3, width: 84, height: 16); root.addSubview(key)
             let value = NSTextField(labelWithString: ""); value.font = ClassicUI.font; value.textColor = i < 4 ? ClassicUI.green : ClassicUI.text
             value.lineBreakMode = .byTruncatingMiddle; value.isSelectable = true
-            value.frame = NSRect(x: 100, y: CGFloat(30 + i * 22) + 2, width: 346, height: 18); root.addSubview(value)
+            value.frame = NSRect(x: 100, y: CGFloat(30 + i * 22) + 2, width: i < 4 ? 270 : 346, height: 18); root.addSubview(value)
             rows.append((name, value))
         }
-        // Two rows of equal buttons on a three-column grid.
+        // Station graphic beside the first rows, which are narrowed to leave it room.
+        artwork.frame = NSRect(x: 382, y: 33, width: 64, height: 64); artwork.imageScaling = .scaleProportionallyUpOrDown
+        artwork.wantsLayer = true; artwork.layer?.cornerRadius = 6; artwork.layer?.masksToBounds = true; artwork.isHidden = true
+        artwork.setAccessibilityElement(false); root.addSubview(artwork)
+        // One row of three equal buttons.
         let columns = [14.0, 163.0, 312.0]
-        let grid: [(ClassicButton, String, Selector, Int, Int)] = [
-            (favorite, "Add to Favorites", #selector(toggleFavorite), 0, 0), (lookup, "Look Up Details", #selector(lookUp), 1, 0),
-            (homepage, "Open Homepage", #selector(openHomepage), 2, 0),
-            (ClassicButton(title: "Copy URL", target: nil, action: nil), "Copy URL", #selector(copyURL), 0, 1),
-            (ClassicButton(title: "Close", target: nil, action: nil), "Close", #selector(dismiss), 2, 1)]
-        for (button, title, selector, column, row) in grid {
+        let grid: [(ClassicButton, String, Selector)] = [
+            (favorite, "Add to Favorites", #selector(toggleFavorite)), (homepage, "Open Homepage", #selector(openHomepage)),
+            (ClassicButton(title: "Close", target: nil, action: nil), "Close", #selector(dismiss))]
+        for (column, (button, title, selector)) in grid.enumerated() {
             button.title = title; button.target = self; button.action = selector; button.isBordered = false
             if title == "Close" { button.keyEquivalent = "\u{1b}" }
-            button.frame = NSRect(x: columns[column], y: Self.height - 77 + CGFloat(row) * 31, width: 134, height: 23); root.addSubview(button)
+            button.frame = NSRect(x: columns[column], y: Self.height - 46, width: 134, height: 23); root.addSubview(button)
         }
     }
     required init?(coder: NSCoder) { fatalError() }
 
     func present(over player: NSWindow?) {
         if window?.isVisible != true, let player { window?.setFrameTopLeftPoint(NSPoint(x: player.frame.minX, y: player.frame.minY - 8)) }
-        inspected = nil; listing = nil; lookupMessage = nil; lookupTask?.cancel()
-        runProbe()
+        inspected = nil; listing = nil; lookupMessage = nil; lookupTask?.cancel(); lookupTask = nil
+        runProbe(); lookUp()
         refresh()
         window?.makeKeyAndOrderFront(nil)
         // One timer, only while the window is open.
@@ -85,7 +89,11 @@ final class StationInfoController: NSWindowController {
         }
     }
     /// A different station started: the directory record no longer applies.
-    func stationChanged() { if inspected != nil { return }; runProbe(); listing = nil; lookupMessage = nil; lookupTask?.cancel(); if window?.isVisible == true { refresh() } }
+    func stationChanged() {
+        if inspected != nil { return }
+        runProbe(); listing = nil; lookupMessage = nil; lookupTask?.cancel(); lookupTask = nil
+        if window?.isVisible == true { lookUp(); refresh() }
+    }
 
     func refresh() {
         let station = inspected?.station ?? engine.station
@@ -117,20 +125,31 @@ final class StationInfoController: NSWindowController {
         set("ICY", reply?.icy ?? "—")
         set("First bytes", reply?.sniff ?? "—")
         set("Final URL", reply?.finalURL ?? "—")
-        lookup.isEnabled = station != nil && lookupTask == nil && inspected == nil
+        showArtwork()
         homepage.isEnabled = homepageURL != nil
         if let station {
             favorite.title = library.isFavorite(station) ? "Remove Favorite" : "Add to Favorites"
             favorite.isEnabled = true
         } else { favorite.title = "Add to Favorites"; favorite.isEnabled = false }
-        lookup.needsDisplay = true; homepage.needsDisplay = true; favorite.needsDisplay = true
+        homepage.needsDisplay = true; favorite.needsDisplay = true
     }
     private var homepageURL: URL? {
         guard let text = listing?.homepage, let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return url
     }
-    @objc private func lookUp() {
-        guard let station = engine.station else { return }
+    private func showArtwork() {
+        let url = listing?.artworkURL ?? inspected?.artworkURL
+        guard url != artworkURL else { return }
+        artworkURL = url; artworkTask?.cancel(); artwork.image = nil; artwork.isHidden = true
+        guard let url else { return }
+        artworkTask = Task { @MainActor [weak self] in
+            let image = await StationArtwork.image(at: url)
+            guard let self, !Task.isCancelled, self.artworkURL == url, let image else { return }
+            self.artwork.image = image; self.artwork.isHidden = false
+        }
+    }
+    private func lookUp() {
+        guard inspected == nil, let station = engine.station else { return }
         lookupMessage = "Looking up…"; refresh()
         lookupTask = Task { @MainActor [weak self] in
             let found = await self?.directory.refreshed(uuid: station.id.uuidString)
@@ -148,10 +167,6 @@ final class StationInfoController: NSWindowController {
         refresh()
     }
     @objc private func openHomepage() { if let url = homepageURL { NSWorkspace.shared.open(url) } }
-    @objc private func copyURL() {
-        guard let address = inspected?.address ?? engine.station?.address else { return }
-        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(address, forType: .string)
-    }
     @objc private func dismiss() { probeTask?.cancel(); window?.orderOut(nil); timer?.invalidate(); timer = nil }
 }
 
@@ -170,7 +185,7 @@ enum StreamReply {
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url)
         request.setValue("1", forHTTPHeaderField: "Icy-MetaData")
-        request.setValue("RadioPocket/0.9", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.value, forHTTPHeaderField: "User-Agent")
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {

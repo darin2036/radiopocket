@@ -1,3 +1,25 @@
+RadioPocket 0.10.0
+* Added: Help ▸ Report a Problem opens a prefilled issue on GitHub
+* Fixed: Streams that refuse RadioPocket, serve ASX/XSPF or extensionless playlists, or answer with a web page now play, falling back to a browser identity and then AVPlayer
+* Added: Double-click a panel's title bar to shade it; shaded panels have play/pause, previous and next, and scroll the station and song
+* Added: The shaded equalizer keeps the on/off switch and preset menu
+* Changed: Shaded panels shrink to the player's width so they stack cleanly; the shaded library shows its section menu and station count
+* Added: The shaded equalizer shows a live spectrum
+* Fixed: Always on top now keeps every panel above other apps, and Preferences opens above all panels
+* Changed: Discover card reasons name a related favorite or recent station, and on-device AI can write a specific reason for each card
+* Added: TV Discover recommends by TV category and your Mac's language, with TV categories in Your mix
+* Fixed: TV channels from lists that publish no language, such as iptv-org, now get their country and language from the channel ID, so Discover stops offering other languages and the Country filter works for TV
+* Changed: The library search row keeps Genre and a Filters button; Country, Sort and a new TV Language filter live in its popover
+* Fixed: Moods keep the same cards when the library refreshes on its own
+* Fixed: Stations listed by several directories or playlists are merged even when the address differs by http/https or a trailing slash
+* Fixed: Library and Settings lists no longer scroll sideways unnecessarily
+* Fixed: Discover hides stations whose stream is gone (404 or a web page) right away and checks more cards per pass, in Moods too
+* Fixed: Discover no longer offers a station website link that is gone
+* Changed: Discover shelves have friendlier names and descriptions
+* Added: A narrow library shows a section menu in place of the hidden sidebar
+* Added: Long station and song text in the player scrolls, can be dragged by hand, and has a speed setting in Preferences
+* Fixed: Panels snap to the edges of the screen they are on, including the true screen edge, and the video panel keeps the picture ratio when resized
+
 RadioPocket 0.9.3
 * Changed: Compact Discover station cards with genre-themed artwork
 * Added: Add or remove a favorite from Station Info

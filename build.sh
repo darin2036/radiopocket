@@ -44,14 +44,13 @@ ditto Resources/Skins "$APP/Contents/Resources/Skins"
 cp Resources/CHANGELOG.txt "$APP/Contents/Resources/CHANGELOG.txt"
 cp Resources/THIRD-PARTY.md "$APP/Contents/Resources/THIRD-PARTY.md"
 cp Resources/DIRECTORY-SOURCES.md "$APP/Contents/Resources/DIRECTORY-SOURCES.md"
-cp Resources/SKIN-CREDITS.md "$APP/Contents/Resources/SKIN-CREDITS.md"
 cp Resources/RadioPocket.icns "$APP/Contents/Resources/RadioPocket.icns"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>RadioPocket</string>
-<key>CFBundleIdentifier</key><string>local.radiopocket.player</string>
+<key>CFBundleIdentifier</key><string>com.radiopocket.player</string>
 <key>CFBundleIconFile</key><string>RadioPocket</string>
 <key>CFBundleName</key><string>RadioPocket</string>
 <key>CFBundleDisplayName</key><string>RadioPocket</string>
@@ -76,6 +75,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <dict><key>UTTypeIdentifier</key><string>public.pls-playlist</string><key>UTTypeDescription</key><string>PLS Radio Playlist</string><key>UTTypeConformsTo</key><array><string>public.text</string></array><key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><string>pls</string><key>public.mime-type</key><string>audio/x-scpls</string></dict></dict>
 </array>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+<key>LSArchitecturePriority</key><array><string>arm64</string></array>
+<key>NSHumanReadableCopyright</key><string>Copyright © 2026 Darin LaFramboise. MIT License.</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSLocationUsageDescription</key><string>Find your nearby city for weather-inspired Moods. RadioPocket saves an approximate area and uses it to request weather from Open-Meteo. Location is requested only when you choose Use my location.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>Find your nearby city for weather-inspired Moods when you choose Use my location.</string>

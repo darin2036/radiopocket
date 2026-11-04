@@ -66,6 +66,10 @@ final class DiscoverPreferencesController: NSWindowController, NSTabViewDelegate
             }
             addGrid(buttons, to: genres)
         }
+        genres.addArrangedSubview(label("Internet TV", size: 13, bold: true))
+        addGrid(DiscoveryCatalog.tvCategories.map { category -> NSButton in
+            let button = checkbox(category.capitalized, selected: draft.genres.contains(category)); genreButtons.append((category, button)); return button
+        }, to: genres)
         let languages = stack()
         languages.addArrangedSubview(label("Prefer these broadcast languages. None selected means all languages. Country is never used to guess a station’s language."))
         let buttons = DiscoveryCatalog.languages.map { language -> NSButton in

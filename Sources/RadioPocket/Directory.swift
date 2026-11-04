@@ -137,6 +137,8 @@ struct DirectoryQuery: Hashable {
     var name = ""
     var genre = ""
     var countryCode = ""
+    /// A language code from `DiscoveryCatalog.languages`; applies to channel lists that publish or imply one.
+    var language = ""
     var codec = ""
     var minimumBitrate = 0
     var order = "clickcount"
@@ -221,7 +223,7 @@ actor RadioBrowserDirectory: DirectoryBackend {
         config.urlCache = nil
         config.timeoutIntervalForRequest = 12
         config.timeoutIntervalForResource = 25
-        config.httpAdditionalHeaders = ["User-Agent": "RadioPocket/0.3", "Accept": "application/json"]
+        config.httpAdditionalHeaders = ["User-Agent": UserAgent.value, "Accept": "application/json"]
         session = URLSession(configuration: config)
     }
 
@@ -397,7 +399,7 @@ actor RadioDirectory {
         let records = try discoveryRecords(video: query.video, text: query.name, sourceID: query.sourceID)
         var seen = Set<String>()
         let rows = records.map(\.restored).filter { row in
-            guard seen.insert(DiscoveryIndex.endpointKey(row.address)).inserted else { return false }
+            guard seen.insert(DiscoveryIndex.matchKey(row.address)).inserted else { return false }
             if row.video, let url = URL(string: row.address) { return TVSafety.allows(title: row.name, group: row.tags, address: url, settings: safety) }
             return true
         }
@@ -645,7 +647,7 @@ actor RadioDirectory {
         for round in 0..<(pages.map { $0.stations.count }.max() ?? 0) {
             for page in pages where round < page.stations.count {
                 let row = page.stations[round]
-                if seen.insert(row.address).inserted { merged.append(row) }
+                if seen.insert(DiscoveryIndex.matchKey(row.address)).inserted { merged.append(row) }
             }
         }
         if query.order != "clickcount" { merged = RadioListing.ordered(merged, by: query.order, reverse: query.reverse) }

@@ -159,6 +159,7 @@ enum DirectoryFilter {
             if !query.matchesName(listing) { return false }
             if !genre.isEmpty, !listing.tags.lowercased().contains(genre) { return false }
             if !query.countryCode.isEmpty, listing.countryCode != query.countryCode { return false }
+            if !query.language.isEmpty, listing.languages?.contains(query.language) != true { return false }
             if !query.codec.isEmpty {
                 let codec = listing.codec.uppercased()
                 if query.codec == "OGG" ? !(codec == "OGG" || codec == "VORBIS") : codec != query.codec { return false }
@@ -178,7 +179,7 @@ enum DirectoryFetch {
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.timeoutIntervalForRequest = 12; config.timeoutIntervalForResource = 25
-        config.httpAdditionalHeaders = ["User-Agent": "RadioPocket/0.9"]
+        config.httpAdditionalHeaders = ["User-Agent": UserAgent.value]
         return URLSession(configuration: config)
     }()
     static func data(_ url: URL, limit: Int = 2_097_152) async throws -> Data {
@@ -276,7 +277,7 @@ actor StationListDirectory: DirectoryBackend {
     static func parse(_ text: String, base: URL, label: String, sourceID: String, maximumEntries: Int = 5000, video: Bool = false,
                       reject: ((_ title: String, _ group: String, _ address: URL) -> Bool)? = nil) -> [RadioListing] {
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        var entries: [(title: String, group: String, address: String, radio: Bool, logo: String, language: String)] = []
+        var entries: [(title: String, group: String, address: String, radio: Bool, logo: String, language: String, region: String)] = []
         if lines.contains(where: { $0.lowercased() == "[playlist]" }) {
             var files: [Int: String] = [:], titles: [Int: String] = [:]
             for line in lines {
@@ -286,9 +287,9 @@ actor StationListDirectory: DirectoryBackend {
                 if key.hasPrefix("file"), let i = Int(key.dropFirst(4)) { files[i] = parts[1] }
                 else if key.hasPrefix("title"), let i = Int(key.dropFirst(5)) { titles[i] = parts[1] }
             }
-            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!, false, "", "")) }
+            for i in files.keys.sorted() { entries.append((titles[i] ?? "", "", files[i]!, false, "", "", "")) }
         } else {
-            var title = "", group = "", playlistGroup = "", radio = false, logo = "", language = ""
+            var title = "", group = "", playlistGroup = "", radio = false, logo = "", language = "", region = ""
             for line in lines where !line.isEmpty {
                 if line.hasPrefix("#PLAYLIST:") {
                     playlistGroup = String(line.dropFirst(10)).trimmingCharacters(in: .whitespaces)
@@ -308,17 +309,19 @@ actor StationListDirectory: DirectoryBackend {
                         return String(line[range.upperBound...].prefix { $0 != "\"" }.prefix(2000))
                     }
                     logo = attribute("tvg-logo"); language = attribute("tvg-language")
+                    // TV lists rarely give a language, but they do say where a channel is from: tvg-country, or the ".de" at the end of an iptv-org style tvg-id.
+                    region = DiscoveryCatalog.region(country: attribute("tvg-country"), channelID: attribute("tvg-id"))
                     // Lists that mix radio into a TV playlist say so with radio="true" or tvg-type="radio".
                     let lower = line.lowercased()
                     radio = lower.contains("radio=\"true\"") || lower.contains("tvg-type=\"radio\"")
-                } else if !line.hasPrefix("#") { entries.append((title, group, line, radio, logo, language)); title = ""; group = ""; radio = false; logo = ""; language = "" }
+                } else if !line.hasPrefix("#") { entries.append((title, group, line, radio, logo, language, region)); title = ""; group = ""; radio = false; logo = ""; language = ""; region = "" }
             }
         }
         var seen = Set<String>()
         return entries.prefix(maximumEntries).compactMap { entry in
             guard let address = URL(string: entry.address, relativeTo: base)?.absoluteURL, let valid = try? StreamAddress.parse(address.absoluteString),
                   RadioListing.isViable(name: entry.title, address: valid), reject?(entry.title, entry.group, valid) != true,
-                  seen.insert(valid.absoluteString).inserted else { return nil }
+                  seen.insert(DiscoveryIndex.matchKey(valid.absoluteString)).inserted else { return nil }
             let ext = valid.pathExtension.lowercased()
             let codec = ["mp3": "MP3", "aac": "AAC", "ogg": "OGG", "opus": "OPUS", "m3u8": "HLS"][ext] ?? ""
             let name = String(entry.title.trimmingCharacters(in: .whitespaces).prefix(300))
@@ -330,6 +333,15 @@ actor StationListDirectory: DirectoryBackend {
             row.video = video && !audioOnly
             row.artworkURL = (try? StreamAddress.parse(entry.logo))?.absoluteString
             row.languages = DiscoveryCatalog.languageCodes(entry.language)
+            if video, !entry.region.isEmpty {
+                row.countryCode = entry.region
+                row.country = Locale(identifier: "en").localizedString(forRegionCode: entry.region) ?? ""
+                // With no published language, the name wins if it states one ("Espanol"); otherwise use the languages the country broadcasts in.
+                if row.languages?.isEmpty != false {
+                    let hinted = DiscoveryCatalog.languageHints(name + " " + entry.group)
+                    row.languages = hinted.isEmpty ? DiscoveryCatalog.countryLanguages[entry.region] : hinted.sorted()
+                }
+            }
             return row
         }
     }

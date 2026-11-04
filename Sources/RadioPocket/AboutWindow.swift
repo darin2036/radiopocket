@@ -106,9 +106,8 @@ final class AboutController: NSObject {
         case .about:
             return "RadioPocket \(Self.version)\n\nA small native internet radio player inspired by classic desktop players.\n\nOpen a direct HTTP/HTTPS audio stream or M3U/PLS playlist. Drop a classic .wsz skin onto the player.\n\nAn independent app, not affiliated with Winamp.\n\n" + Self.legalNotice
         case .credits:
-            guard let url = Bundle.main.url(forResource: "SKIN-CREDITS", withExtension: "md"), let credits = try? String(contentsOf: url, encoding: .utf8) else { return "Skin credits are unavailable." }
-            let third = Bundle.main.url(forResource: "THIRD-PARTY", withExtension: "md").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
-            return (third + "\n" + credits).replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+            guard let url = Bundle.main.url(forResource: "THIRD-PARTY", withExtension: "md"), let credits = try? String(contentsOf: url, encoding: .utf8) else { return "Credits are unavailable." }
+            return credits.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
         case .shortcuts:
             let player = "Space        Play / pause\nZ X C V B    Previous · Play · Pause · Stop · Next\n↑ / ↓        Volume\n← / →        Back / forward 10 s (pause buffers up to 5 min)\nL            Jump to live\n⌘O           Open stream\n⇧⌘J          Jump to station\n⌘D           Save favorite\n⇧⌘I          Station info\n⌘L           Favorites\n⌘B           Station library\n⌘E           Equalizer\n⌘K           Choose skin\n⌘I           Import skin\n⌘1 ⌘2 ⌘3     Window size\n⌘T           Always on top\n⌘W ⌘M        Close / minimize window\n⌥⌘← / ⌥⌘→    Previous / next favorite\n⇧⌘V          Visualization window\n⌃⌘F          Full screen visualization\n\nVisualizer (click the analyzer in the player):\n  click           Bars → Fire → Oscilloscope\n  double-click    Open the visualization window\n  right-click     Visualizer options\n\nVisualization window and full screen:\n"
             return player + VisualizerKeys.help.map { "  " + $0.0.padding(toLength: 22, withPad: " ", startingAt: 0) + $0.1 }.joined(separator: "\n")
