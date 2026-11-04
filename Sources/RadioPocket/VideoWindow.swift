@@ -47,6 +47,11 @@ final class VideoController: NSWindowController {
         let window = PlayerWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
         window.title = "RadioPocket — Video"
         window.minSize = NSSize(width: 259, height: 164); window.isUserResizable = true
+        window.aspectChrome = NSSize(width: 19, height: 34)
+        window.contentAspect = { [weak engine] in
+            let size = engine?.player.currentItem?.presentationSize ?? .zero
+            return size.width > 0 && size.height > 0 ? size.width / size.height : 16.0 / 9.0
+        }
         window.isReleasedWhenClosed = false; window.hasShadow = true; window.appearance = NSAppearance(named: .darkAqua)
         root = ClassicChrome(frame: NSRect(origin: .zero, size: size)); root.title = "VIDEO"
         video = VideoView(player: engine.player)

@@ -642,6 +642,8 @@ do {
     try check(docked.minX == 300 && docked.maxY == anchor.minY, "A window dropped near another snaps flush under it")
     try check(PlayerWindow.snapped(NSRect(x: 5, y: 300, width: 100, height: 50), to: [], screen: screenRect).minX == 0, "A window near the screen edge snaps to it")
     try check(PlayerWindow.snapped(NSRect(x: 400, y: 100, width: 100, height: 50), to: [anchor], screen: screenRect).origin == NSPoint(x: 400, y: 100), "Distant windows do not snap")
+    let desktopRect = NSRect(x: 0, y: 0, width: screenRect.width, height: screenRect.height + 25)
+    try check(PlayerWindow.snapped(NSRect(x: 100, y: 3, width: 100, height: 50), to: [], screen: screenRect.offsetBy(dx: 0, dy: 40), desktop: desktopRect).minY == 0, "A window near the full screen edge snaps to it as well as to the usable area")
     try check(PlayerWindow.touching(anchor, NSRect(x: 300, y: 168, width: 550, height: 232)) && !PlayerWindow.touching(anchor, NSRect(x: 300, y: 100, width: 550, height: 232)), "Docked windows are detected by touching edges")
     // Jump to Station matching
     let jumpList = [Station(name: "Groove Salad", address: "https://a.example/gs"), Station(name: "Deep Space One", address: "https://a.example/ds"), Station(name: "Space Station Soma", address: "https://a.example/sss")]

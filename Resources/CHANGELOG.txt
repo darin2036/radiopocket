@@ -18,6 +18,7 @@ RadioPocket 0.10.0
 * Changed: Discover shelves have friendlier names and descriptions
 * Added: A narrow library shows a section menu in place of the hidden sidebar
 * Added: Long station and song text in the player scrolls, can be dragged by hand, and has a speed setting in Preferences
+* Fixed: Panels snap to the edges of the screen they are on, including the true screen edge, and the video panel keeps the picture ratio when resized
 
 RadioPocket 0.9.3
 * Changed: Compact Discover station cards with genre-themed artwork
