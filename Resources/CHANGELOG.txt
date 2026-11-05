@@ -1,3 +1,9 @@
+RadioPocket 0.11.0
+* Added: Play several TV channels at once, each in its own video panel with its own player; right-click a channel in the library or Discover and choose Tune In on a panel or a new one
+* Added: Audio follows one panel at a time; click a panel's speaker icon to take the audio
+* Added: Video Multiview shows every open channel together in a full-screen wall
+* Fixed: Moods and Discover no longer repeat the same station across sections, including stations listed under several stream addresses
+
 RadioPocket 0.10.0
 * Added: Help ▸ Report a Problem opens a prefilled issue on GitHub
 * Fixed: Streams that refuse RadioPocket, serve ASX/XSPF or extensionless playlists, or answer with a web page now play, falling back to a browser identity and then AVPlayer
