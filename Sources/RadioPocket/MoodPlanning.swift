@@ -153,11 +153,13 @@ enum MoodPlanning {
     }
     static func build(records: [DiscoveryIndex.Record], state: Library.State, context: Context, plan: MoodPlan, availability: [String: DiscoveryAvailability.Evidence] = [:]) -> DiscoveryFeed {
         var groups: [MoodGroup] = []
+        // A station shown in one mood (by endpoint or by name) is withheld from every later mood.
+        var claimed = Set<String>()
         for activity in plan.activities {
             if Task.isCancelled { break }
-            // Resolve each mood independently: suitable stations may fit several moods.
+            let available = claimed.isEmpty ? records : records.filter { !claimed.contains(DiscoveryIndex.matchKey($0.restored.address)) && !claimed.contains(DiscoveryRecommendations.nameKey($0.restored.name)) }
             let themes = activity.collections.map { MoodCuration.Theme(title: $0.title, genres: $0.genres) }
-            let feed = MoodCuration.build(records: records, state: state, moment: context.moment, themes: themes, availability: availability)
+            let feed = MoodCuration.build(records: available, state: state, moment: context.moment, themes: themes, availability: availability)
             // Round-robin the musical directions so the first collection cannot fill all four slots.
             var selected = feed.shelves.map { _ in [DiscoveryPick]() }
             var count = 0
@@ -171,6 +173,7 @@ enum MoodPlanning {
                 guard !selected[index].isEmpty else { return nil }
                 return DiscoveryShelf(title: shelf.title, subtitle: shelf.subtitle, picks: selected[index])
             }
+            for pick in selected.joined() { claimed.insert(DiscoveryIndex.matchKey(pick.listing.address)); claimed.insert(DiscoveryRecommendations.nameKey(pick.listing.name)) }
             if !shelves.isEmpty { groups.append(.init(title: activity.title, detail: activity.detail, artwork: activity.artwork, collections: shelves)) }
         }
         return DiscoveryFeed(shelves: groups.flatMap(\.collections), interests: context.preferences, basis: context.moment.label + " · Moods made on this device", indexed: records.count, updated: records.map(\.fetched).max(), moodGroups: groups, moodGreetings: plan.greetings)

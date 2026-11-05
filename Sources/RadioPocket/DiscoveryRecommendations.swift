@@ -138,13 +138,14 @@ enum DiscoveryRecommendations {
         }
         let scores = Dictionary(uniqueKeysWithValues: candidates.map { ($0.listing.address, score($0)) })
         let ordered = candidates.sorted { let a = scores[$0.listing.address]!, b = scores[$1.listing.address]!; return a == b ? $0.listing.address < $1.listing.address : a > b }
-        var used = Set<String>()
+        var used = Set<String>(), usedNames = Set<String>()
         func shelf(_ title: String, _ subtitle: String, _ pool: [DiscoveryPick]) -> DiscoveryShelf? {
             var hosts: [String: Int] = [:], picks: [DiscoveryPick] = []
             for pick in pool {
                 let key = DiscoveryIndex.matchKey(pick.listing.address), host = URL(string: key)?.host ?? key
-                guard !used.contains(key), hosts[host, default: 0] < 2 else { continue }
-                used.insert(key); hosts[host, default: 0] += 1; picks.append(pick)
+                let name = nameKey(pick.listing.name)
+                guard !used.contains(key), !usedNames.contains(name), hosts[host, default: 0] < 2 else { continue }
+                used.insert(key); usedNames.insert(name); hosts[host, default: 0] += 1; picks.append(pick)
                 if picks.count == 6 { break }
             }
             return picks.isEmpty ? nil : DiscoveryShelf(title: title, subtitle: subtitle, picks: picks)
@@ -194,6 +195,8 @@ enum DiscoveryRecommendations {
         }
         return "An exploration pick with a " + String(row.quality) + "-star stream quality rating"
     }
+    /// The same station is often listed under several stream URLs; its name is the cross-listing identity.
+    static func nameKey(_ name: String) -> String { "name:" + StationSearch.fold(name).filter { $0.isLetter || $0.isNumber } }
     private static func rotation(_ text: String, day: Int) -> UInt64 {
         (text + "|\(day)").utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
     }
@@ -258,14 +261,15 @@ enum MoodCuration {
         var shelves: [DiscoveryShelf] = []
         for theme in themes {
             if Task.isCancelled { break }
-            let remaining = records.filter { !used.contains(DiscoveryIndex.matchKey($0.restored.address)) }
+            let remaining = records.filter { !used.contains(DiscoveryIndex.matchKey($0.restored.address)) && !used.contains(DiscoveryRecommendations.nameKey($0.restored.name)) }
             let feed = DiscoveryRecommendations.build(records: remaining, recent: state.recentStations ?? [], favorites: state.favorites, interests: state.discoveryInterests ?? [], dismissed: Set(state.discoveryDismissed ?? []), personalizes: state.discoveryPersonalization != false, video: false, languages: state.discoveryLanguages ?? [], includeUnknownLanguage: state.discoveryIncludeUnknownLanguage != false, requiredGenres: theme.genres, feedback: state.discoveryFeedback ?? [:], availability: availability, day: moment.day)
-            let picks = feed.shelves.flatMap(\.picks).filter { $0.feedback >= 0 }.filter { !used.contains(DiscoveryIndex.matchKey($0.listing.address)) }.prefix(6).map { pick -> DiscoveryPick in
+            let picks = feed.shelves.flatMap(\.picks).filter { $0.feedback >= 0 }.filter { !used.contains(DiscoveryIndex.matchKey($0.listing.address)) && !used.contains(DiscoveryRecommendations.nameKey($0.listing.name)) }.prefix(6).map { pick -> DiscoveryPick in
                 var result = pick
                 let genre = theme.genres.first { DiscoverySafety.interests(pick.listing).contains($0) } ?? "music"
                 result.reason = genre.capitalized + " for this moment"; return result
             }
             used.formUnion(picks.map { DiscoveryIndex.matchKey($0.listing.address) })
+            used.formUnion(picks.map { DiscoveryRecommendations.nameKey($0.listing.name) })
             if !picks.isEmpty { shelves.append(DiscoveryShelf(title: theme.title, subtitle: moment.label, picks: picks)) }
         }
         return DiscoveryFeed(shelves: shelves, interests: state.discoveryInterests ?? [], basis: moment.label + " · Moods made on this device", indexed: records.count, updated: records.map(\.fetched).max())
