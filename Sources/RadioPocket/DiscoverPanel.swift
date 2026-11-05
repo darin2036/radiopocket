@@ -142,6 +142,9 @@ private final class DiscoveryReasonScrollView: NSScrollView {
 /// Compact station card: small artwork beside the name, one reason line, then actions.
 private final class DiscoveryStationCard: NSView {
     let content = NSStackView()
+    /// Builds the right-click menu when it is needed, so it reflects the video panels open at that moment.
+    var contextMenu: (() -> NSMenu?)?
+    override func menu(for event: NSEvent) -> NSMenu? { contextMenu?() }
     override init(frame: NSRect) {
         super.init(frame: frame)
         content.orientation = .vertical; content.alignment = .leading; content.spacing = 8
@@ -184,6 +187,9 @@ final class DiscoverPanel: NSView {
     var browse: (() -> Void)?
     var play: ((RadioListing) -> Void)?
     var favorite: ((RadioListing) -> Void)?
+    /// Titles of the open video panels, and a way to tune one of them; a nil panel opens a new one.
+    var panelTitles: (() -> [String])?
+    var playOnPanel: ((RadioListing, Int?) -> Void)?
     /// Set by the controller: true when a station's homepage is known to be gone, so no dead link is offered.
     var websiteHidden: ((String) -> Bool)?
     func redraw() { if let feed = currentFeed { render(feed, favorites: currentFavorites) } }
@@ -494,7 +500,20 @@ final class DiscoverPanel: NSView {
             actions.append(icon("safari", label: "Open " + row.name + " website", tip: website.host ?? "Station website", tint: .systemTeal) { NSWorkspace.shared.open(website) })
         }
         append(horizontal(actions), height: 24)
+        card.contextMenu = { [weak self] in self?.cardMenu(pick, saved: saved) }
         return card
+    }
+    private func cardMenu(_ pick: DiscoveryPick, saved: Bool) -> NSMenu {
+        let row = pick.listing, menu = NSMenu(); menu.autoenablesItems = false
+        menu.addItem(MenuAction.item(row.video ? "Tune In" : "Play") { [weak self] in self?.play?(row) })
+        if row.video, let panels = PanelMenu.item("Tune In on", titles: panelTitles?() ?? [], choose: { [weak self] in self?.playOnPanel?(row, $0) }) { menu.addItem(panels) }
+        menu.addItem(.separator())
+        menu.addItem(MenuAction.item(saved ? "Saved to Favorites" : "Save to Favorites", enabled: !saved) { [weak self] in self?.favorite?(row) })
+        menu.addItem(MenuAction.item(pick.feedback == 1 ? "Clear More Like This" : "More Like This") { [weak self] in self?.feedbackChanged?(row, 1) })
+        menu.addItem(MenuAction.item(pick.feedback == -1 ? "Clear Less Often" : "Less Often") { [weak self] in self?.feedbackChanged?(row, -1) })
+        menu.addItem(.separator())
+        menu.addItem(MenuAction.item("Copy Stream URL") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(row.address, forType: .string) })
+        return menu
     }
     private var compactCards: Bool { bounds.width < (showingMoods && selectedMood == nil ? 420 : 540) }
     override func layout() {

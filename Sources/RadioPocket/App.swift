@@ -17,7 +17,9 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
     private let table = FavoritesTable()
     let library: Library
     var play: ((Station) -> Void)?
-    var playInNewPanel: ((Station) -> Void)?
+    var panelTitles: (() -> [String])?
+    var playOnPanel: ((Station, Int?) -> Void)?
+    private let panelMenuItem = NSMenuItem(title: "Play on", action: nil, keyEquivalent: "")
     var edit: ((Station?) -> Void)?
     var report: ((Error) -> Void)?
     private var selectionButtons: [NSButton] = []
@@ -50,9 +52,11 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
         table.target = self; table.doubleAction = #selector(playSelected)
         table.delete = { [weak self] in self?.remove() }
         let context = NSMenu()
-        for (title, selector) in [("Play", #selector(playSelected)), ("Play on New Panel", #selector(playSelectedInNewPanel)), ("Edit…", #selector(editSelected)), ("Remove from Favorites", #selector(remove))] {
+        for (title, selector) in [("Play", #selector(playSelected)), ("Edit…", #selector(editSelected)), ("Remove from Favorites", #selector(remove))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
         }
+        panelMenuItem.action = #selector(panelMenuParent); panelMenuItem.target = self
+        context.insertItem(panelMenuItem, at: 1)
         table.menu = context
         scroll.documentView = table
         content.addSubview(scroll)
@@ -99,12 +103,16 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
     }
     private var selected: Station? { library.state.favorites.indices.contains(table.selectedRow) ? library.state.favorites[table.selectedRow] : nil }
     @objc private func playSelected() { if let selected { play?(selected) } }
-    @objc private func playSelectedInNewPanel() { if let selected { playInNewPanel?(selected) } }
+    @objc private func panelMenuParent() {}
+    @objc private func playOnPanelSelected(_ sender: NSMenuItem) {
+        if let selected, let index = sender.representedObject as? Int { playOnPanel?(selected, index < 0 ? nil : index) }
+    }
     /// Only TV channels have a picture to put in a panel.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        guard item.action == #selector(playSelectedInNewPanel) else { return selected != nil || item.action == #selector(add) }
-        item.isHidden = selected?.video != true
-        return selected?.video == true
+        guard item.action == #selector(panelMenuParent) else { return selected != nil || item.action == #selector(add) }
+        let titles = selected?.video == true ? panelTitles?() ?? [] : []
+        PanelMenu.fill(item, titles: titles, target: self, action: #selector(playOnPanelSelected(_:)))
+        return !titles.isEmpty
     }
     @objc private func add() { edit?(nil) }
     @objc private func editSelected() { if let selected { edit?(selected) } }
@@ -177,7 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         favorites = FavoritesController(library: library)
         favorites.play = { [weak self] in self?.play($0) }
-        favorites.playInNewPanel = { [weak self] in self?.playInNewPanel($0) }
+        favorites.panelTitles = { [weak self] in self?.panelTitles() ?? [] }
+        favorites.playOnPanel = { [weak self] in self?.playOnPanel($0, $1) }
         favorites.edit = { [weak self] in self?.openDialog(station: $0, favoriteOnly: true) }
         favorites.report = { [weak self] in self?.showError($0) }
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
@@ -561,6 +570,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         command("Always on Top", "ontop", "t", to: view)
         command("Compact Player", "shade", to: view)
         command("Choose Skin…", "skins", "k", to: view)
+        view.addItem(.separator())
+        command("Video Multiview", "multiview", "m", [.command, .control], to: view)
 
         let visualization = NSMenuItem(title: "Visualization", action: nil, keyEquivalent: "")
         visualization.submenu = visuals.menu(withKeys: true); menu.addItem(visualization)
@@ -618,6 +629,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item.title = focus.status == .playing || focus.status == .connecting ? "Pause" : "Play"
             enabled = focus.station != nil || library.state.lastStation != nil
         case "stop": enabled = focus.status != .stopped
+        case "multiview": enabled = multiview != nil || openPanels().count > 1; mark(multiview != nil)
         case "favorite": item.title = (focus.station ?? library.state.lastStation).map { library.isFavorite($0) } == true ? "Remove Favorite" : "Save Favorite…"
         case "back10", "forward10", "live": enabled = focus.canTimeShift
         case "previous", "next": enabled = !library.state.favorites.isEmpty
@@ -665,6 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             else if let last = library.state.lastStation { play(last) }
             else { openDialog() }
         case "toggle": handle(focus.status == .playing || focus.status == .connecting ? "pause" : "play")
+        case "multiview": toggleMultiview()
         case "pause": focus.pause()
         case "stop": focus.stop()
         case "back10": focus.seek(by: -10)
@@ -932,10 +945,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         } else { refreshAudioIcons() }
     }
 
+    /// The open video panels in order: the main one (when it shows TV), then the extras.
+    private func openPanels() -> [(engine: RadioEngine, controller: VideoController)] {
+        var list: [(engine: RadioEngine, controller: VideoController)] = []
+        if let video, video.isShown { list.append((engine, video)) }
+        return list + panels.filter { $0.controller.isShown }.map { ($0.engine, $0.controller) }
+    }
+
+    private func panelTitles() -> [String] {
+        let open = openPanels()
+        return open.enumerated().map { index, panel in
+            (open.count == 1 ? "Video" : "Video \(index + 1)") + (panel.engine.station.map { " — " + $0.name } ?? "")
+        }
+    }
+
+    /// Tunes a station on the numbered panel from `panelTitles`, or on a new panel when none is given.
+    private func playOnPanel(_ station: Station, _ index: Int?) {
+        let open = openPanels()
+        guard let index, open.indices.contains(index) else { playInNewPanel(station); return }
+        let target = open[index].engine
+        if target === engine { play(station); return }
+        takeAudio(target)
+        target.play(station)
+        open[index].controller.retitle(station.name)
+        do { try library.recordRecent(station) } catch { showError(error) }
+    }
+
     private func refreshAudioIcons() {
-        let shown = (video?.isShown == true ? 1 : 0) + panels.filter { $0.controller.isShown }.count > 1
-        video?.setAudio(audible: focus === engine, shown: shown)
-        for panel in panels { panel.controller.setAudio(audible: focus === panel.engine, shown: shown) }
+        let open = openPanels()
+        for (index, panel) in open.enumerated() {
+            panel.controller.setLabel(open.count == 1 ? "Video" : "Video \(index + 1)")
+            panel.controller.setAudio(audible: focus === panel.engine, shown: open.count > 1)
+        }
+        multiview?.setAudible(focus)
+    }
+
+    private var multiview: MultiviewController?
+    /// Shows every open video panel at once on one screen; leaving puts the panels back where they were.
+    private func toggleMultiview() {
+        if let wall = multiview { wall.exit(); return }
+        let open = openPanels()
+        guard open.count > 1 else { return }
+        let screen = NSApp.keyWindow?.screen ?? open.first?.controller.window?.screen ?? NSScreen.main
+        guard let screen else { return }
+        let names = panelTitles()
+        let wall = MultiviewController(panels: zip(names, open).map { ($0, $1.engine) }, screen: screen)
+        wall.onTakeAudio = { [weak self] in self?.takeAudio($0) }
+        wall.onExit = { [weak self] in
+            self?.multiview = nil
+            self?.openPanels().forEach { $0.controller.resume() }
+        }
+        multiview = wall
+        open.forEach { $0.controller.suspend() }
+        wall.setAudible(focus)
     }
 
     private func refreshPlayer() {
@@ -1043,7 +1105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let client = directoryClient
         let browser = DiscoveryController(library: library, directory: client)
         browser.play = { [weak self] in self?.play($0) }
-        browser.playInNewPanel = { [weak self] in self?.playInNewPanel($0) }
+        browser.panelTitles = { [weak self] in self?.panelTitles() ?? [] }
+        browser.playOnPanel = { [weak self] in self?.playOnPanel($0, $1) }
         browser.openStream = { [weak self] in self?.openDialog() }
         browser.inspect = { [weak self] entry in
             guard let self else { return }

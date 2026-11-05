@@ -73,7 +73,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let library: Library
     private let directory: RadioDirectory
     var play: ((Station) -> Void)?
-    var playInNewPanel: ((Station) -> Void)?
+    /// Titles of the open video panels ("Video 1 — Channel"), and a way to tune one of them; a nil panel opens a new one.
+    var panelTitles: (() -> [String])?
+    var playOnPanel: ((Station, Int?) -> Void)?
+    private let panelMenuItem = NSMenuItem(title: "Tune In on", action: nil, keyEquivalent: "")
     var openStream: (() -> Void)?
     var inspect: ((RadioListing) -> Void)?
     var loaded: ((Bool) -> Void)?
@@ -415,9 +418,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         tableScroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: tableScroll.contentView)
         let context = NSMenu()
-        for (title, selector) in [("Tune In", #selector(playSelected)), ("Tune In on New Panel", #selector(playNewPanelSelected)), ("Add to Favorites", #selector(saveSelected)), ("Copy Stream URL", #selector(copySelected)), ("Station Info…", #selector(inspectSelected))] {
+        for (title, selector) in [("Tune In", #selector(playSelected)), ("Add to Favorites", #selector(saveSelected)), ("Copy Stream URL", #selector(copySelected)), ("Station Info…", #selector(inspectSelected))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
         }
+        panelMenuItem.action = #selector(panelMenuParent); panelMenuItem.target = self
+        context.insertItem(panelMenuItem, at: 1)
         table.menu = context
         message.textColor = BrowserTheme.text; message.font = BrowserTheme.font; message.alignment = .center
         message.maximumNumberOfLines = 4; add(message, to: tableScroll)
@@ -513,6 +518,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         discoverPanel.play = { [weak self] row in
             guard DiscoverySafety.allows(row) else { return }
             self?.play?(row.station) // Recommendations never report directory clicks.
+        }
+        discoverPanel.panelTitles = { [weak self] in self?.panelTitles?() ?? [] }
+        discoverPanel.playOnPanel = { [weak self] row, panel in
+            guard DiscoverySafety.allows(row) else { return }
+            self?.playOnPanel?(row.station, panel)
         }
         discoverPanel.favorite = { [weak self] row in
             guard let self else { return }
@@ -967,9 +977,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         play?(selected.station)
         if library.state.directoryClickReporting == true, let id = selected.directoryID { Task { [directory] in await directory.countPlay(id) } }
     }
-    @objc private func playNewPanelSelected() {
-        guard let selected else { return }
-        playInNewPanel?(selected.station)
+    @objc private func panelMenuParent() {}
+    @objc private func playOnPanelSelected(_ sender: NSMenuItem) {
+        guard let selected, let index = sender.representedObject as? Int else { return }
+        playOnPanel?(selected.station, index < 0 ? nil : index)
         if library.state.directoryClickReporting == true, let id = selected.directoryID { Task { [directory] in await directory.countPlay(id) } }
     }
     @objc private func saveSelected() {
@@ -988,9 +999,13 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     /// The popups share this target, so only the row context menu depends on a selection;
     /// otherwise every directory/country/format choice greys out whenever no row is selected or a load is running.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard let action = menuItem.action, [#selector(playSelected), #selector(playNewPanelSelected), #selector(saveSelected), #selector(copySelected), #selector(inspectSelected)].contains(action) else { return true }
+        guard let action = menuItem.action, [#selector(playSelected), #selector(panelMenuParent), #selector(saveSelected), #selector(copySelected), #selector(inspectSelected)].contains(action) else { return true }
         // Only TV channels have a picture to put in a panel.
-        if action == #selector(playNewPanelSelected) { menuItem.isHidden = selected?.station.video != true; return selected?.station.video == true }
+        if action == #selector(panelMenuParent) {
+            let titles = selected?.station.video == true ? panelTitles?() ?? [] : []
+            PanelMenu.fill(menuItem, titles: titles, target: self, action: #selector(playOnPanelSelected(_:)))
+            return !titles.isEmpty
+        }
         if action == #selector(saveSelected) { menuItem.title = selected.map { library.isFavorite($0.station) } == true ? "Remove from Favorites" : "Add to Favorites" }
         return selected != nil
     }

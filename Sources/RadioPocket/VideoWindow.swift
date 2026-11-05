@@ -65,16 +65,56 @@ private final class VideoView: NSView {
 }
 
 /// The classic-skinned window that shows an Internet TV channel, like Winamp's video window.
+/// The "Tune In on" submenu shared by the library and favorites: one item per open video panel, then a new one.
+/// Runs a closure from a menu item; the item keeps it alive through `representedObject`.
+final class MenuAction: NSObject {
+    private let run: () -> Void
+    init(_ run: @escaping () -> Void) { self.run = run }
+    @objc func fire() { run() }
+    static func item(_ title: String, enabled: Bool = true, _ run: @escaping () -> Void) -> NSMenuItem {
+        let box = MenuAction(run)
+        let item = NSMenuItem(title: title, action: #selector(fire), keyEquivalent: "")
+        item.target = box; item.representedObject = box; item.isEnabled = enabled
+        return item
+    }
+}
+
+enum PanelMenu {
+    /// A "Tune In on" item for closure-based menus; nil when no video panel is open. A nil choice means a new panel.
+    static func item(_ title: String, titles: [String], choose: @escaping (Int?) -> Void) -> NSMenuItem? {
+        guard !titles.isEmpty else { return nil }
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: ""), menu = NSMenu()
+        for (index, name) in titles.enumerated() { menu.addItem(MenuAction.item(name) { choose(index) }) }
+        menu.addItem(.separator())
+        menu.addItem(MenuAction.item("New Panel") { choose(nil) })
+        parent.submenu = menu
+        return parent
+    }
+    static func fill(_ item: NSMenuItem, titles: [String], target: AnyObject, action: Selector) {
+        let menu = NSMenu(); menu.autoenablesItems = false
+        for (index, title) in titles.enumerated() {
+            let entry = NSMenuItem(title: title, action: action, keyEquivalent: ""); entry.target = target; entry.representedObject = index
+            menu.addItem(entry)
+        }
+        menu.addItem(.separator())
+        let new = NSMenuItem(title: "New Panel", action: action, keyEquivalent: ""); new.target = target; new.representedObject = -1
+        menu.addItem(new)
+        item.submenu = menu
+        item.isHidden = titles.isEmpty
+    }
+}
+
 final class VideoController: NSWindowController {
     private let root: ClassicChrome
     private let placed: Bool
+    /// "Video" alone, "Video 1", "Video 2"… once several panels are open.
+    private var label = "Video"
+    private var channel = ""
+    private func heading() -> String { channel.isEmpty ? label.uppercased() : label.uppercased() + " — " + channel.uppercased() }
+    func setLabel(_ value: String) { guard value != label else { return }; label = value; root.title = heading() }
     private let video: VideoView
     private let closeButton: ClassicWindowButton
     private var restore: (frame: NSRect, level: NSWindow.Level)?
-    /// Menu bar and Dock hiding is app-wide, so it is set when the first panel goes full screen and
-    /// restored when the last one leaves; panels on different monitors can be full screen together.
-    private static var fullScreenCount = 0
-    private static var savedOptions: NSApplication.PresentationOptions = []
     static let frameName = "RadioPocket.Video"
     /// Called when the × closes this panel, after its channel has stopped.
     var onClose: (() -> Void)?
@@ -122,8 +162,7 @@ final class VideoController: NSWindowController {
         guard let window, let root = window.contentView else { return }
         if let saved = restore {
             restore = nil
-            Self.fullScreenCount -= 1
-            if Self.fullScreenCount == 0 { NSApp.presentationOptions = Self.savedOptions }
+            FullScreenPresentation.leave()
             window.level = saved.level
             window.setFrame(saved.frame, display: true)
             video.frame = NSRect(x: 11, y: 20, width: root.bounds.width - 19, height: root.bounds.height - 34)
@@ -131,9 +170,7 @@ final class VideoController: NSWindowController {
         } else {
             guard let screen = window.screen ?? NSScreen.main else { return }
             restore = (window.frame, window.level)
-            if Self.fullScreenCount == 0 { Self.savedOptions = NSApp.presentationOptions }
-            Self.fullScreenCount += 1
-            NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+            FullScreenPresentation.enter()
             window.level = .statusBar
             window.setFrame(screen.frame, display: true)
             video.frame = root.bounds
@@ -144,16 +181,20 @@ final class VideoController: NSWindowController {
     required init?(coder: NSCoder) { fatalError() }
 
     func present(title: String, below player: NSWindow?, offset: CGFloat = 0) {
-        root.title = "VIDEO — " + title.uppercased()
-        guard window?.isVisible != true else { return }
+        channel = title; root.title = heading()
+        guard window?.isVisible != true, !suspended else { return }
         if (!placed || offset > 0), let player { window?.setFrameTopLeftPoint(NSPoint(x: player.frame.minX + offset, y: player.frame.minY - 8 - offset)) }
         window?.orderFront(nil)
     }
-    var isShown: Bool { window?.isVisible == true }
+    /// Hidden while the multiview wall shows its picture; `resume` brings it back.
+    private var suspended = false
+    var isShown: Bool { window?.isVisible == true || suspended }
+    func suspend() { guard window?.isVisible == true else { return }; leaveFullScreen(); suspended = true; window?.orderOut(nil) }
+    func resume() { guard suspended else { return }; suspended = false; window?.orderFront(nil) }
     var frame: NSRect { window?.frame ?? .zero }
     var level: NSWindow.Level { get { window?.level ?? .normal } set { if restore == nil { window?.level = newValue } } }
-    func retitle(_ title: String) { root.title = "VIDEO — " + title.uppercased() }
-    func hide() { leaveFullScreen(); window?.orderOut(nil) }
+    func retitle(_ title: String) { channel = title; root.title = heading() }
+    func hide() { suspended = false; leaveFullScreen(); window?.orderOut(nil) }
     private func leaveFullScreen() { if restore != nil { toggleFullScreen() } }
     /// Closing the video panel stops the channel.
     @objc private func dismiss() { hide(); engine.stop(); onClose?() }
