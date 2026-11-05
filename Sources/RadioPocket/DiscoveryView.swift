@@ -73,6 +73,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     private let library: Library
     private let directory: RadioDirectory
     var play: ((Station) -> Void)?
+    var playInNewPanel: ((Station) -> Void)?
     var openStream: (() -> Void)?
     var inspect: ((RadioListing) -> Void)?
     var loaded: ((Bool) -> Void)?
@@ -414,7 +415,7 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         tableScroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: tableScroll.contentView)
         let context = NSMenu()
-        for (title, selector) in [("Tune In", #selector(playSelected)), ("Add to Favorites", #selector(saveSelected)), ("Copy Stream URL", #selector(copySelected)), ("Station Info…", #selector(inspectSelected))] {
+        for (title, selector) in [("Tune In", #selector(playSelected)), ("Tune In on New Panel", #selector(playNewPanelSelected)), ("Add to Favorites", #selector(saveSelected)), ("Copy Stream URL", #selector(copySelected)), ("Station Info…", #selector(inspectSelected))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
         }
         table.menu = context
@@ -966,6 +967,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         play?(selected.station)
         if library.state.directoryClickReporting == true, let id = selected.directoryID { Task { [directory] in await directory.countPlay(id) } }
     }
+    @objc private func playNewPanelSelected() {
+        guard let selected else { return }
+        playInNewPanel?(selected.station)
+        if library.state.directoryClickReporting == true, let id = selected.directoryID { Task { [directory] in await directory.countPlay(id) } }
+    }
     @objc private func saveSelected() {
         guard let selected else { return }
         do {
@@ -982,7 +988,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
     /// The popups share this target, so only the row context menu depends on a selection;
     /// otherwise every directory/country/format choice greys out whenever no row is selected or a load is running.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard let action = menuItem.action, [#selector(playSelected), #selector(saveSelected), #selector(copySelected), #selector(inspectSelected)].contains(action) else { return true }
+        guard let action = menuItem.action, [#selector(playSelected), #selector(playNewPanelSelected), #selector(saveSelected), #selector(copySelected), #selector(inspectSelected)].contains(action) else { return true }
+        // Only TV channels have a picture to put in a panel.
+        if action == #selector(playNewPanelSelected) { menuItem.isHidden = selected?.station.video != true; return selected?.station.video == true }
         if action == #selector(saveSelected) { menuItem.title = selected.map { library.isFavorite($0.station) } == true ? "Remove from Favorites" : "Add to Favorites" }
         return selected != nil
     }

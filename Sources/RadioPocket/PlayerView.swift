@@ -7,7 +7,8 @@ final class PixelButton: NSButton {
 }
 
 final class PlayerView: NSView {
-    let engine: RadioEngine
+    /// The engine the display and controls follow: whichever panel has the audio.
+    var engine: RadioEngine { didSet { needsDisplay = true } }
     var skin: ClassicSkin? { didSet { ClassicUI.skin = skin; needsDisplay = true; controls.forEach { $0.needsDisplay = true }; miniTransport.needsDisplay = true; miniTitle.needsDisplay = true } }
     var shaded = false { didSet {
         controls.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }

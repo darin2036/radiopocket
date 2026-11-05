@@ -22,6 +22,15 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     /// Left/right balance, -1 to 1.
     private(set) var balance: Float = 0
     var changed: (() -> Void)?
+    /// Silenced while another panel has the audio; the stream keeps playing so switching back is instant.
+    private(set) var muted = false
+    func setMuted(_ value: Bool) {
+        guard value != muted else { return }
+        muted = value
+        player.isMuted = value
+        stream?.setVolume(value ? 0 : player.volume)
+        changed?()
+    }
     /// Called once when automatic reconnection gives up (or the stream can never play), so the app can offer alternatives.
     var onGiveUp: ((Station, String) -> Void)?
     static let maxRetries = 8
@@ -166,7 +175,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     }
 
     private func install(_ url: URL, token: UUID) {
-        let direct = RadioStream(volume: player.volume, balance: balance, leveling: leveling)
+        let direct = RadioStream(volume: muted ? 0 : player.volume, balance: balance, leveling: leveling)
         stream = direct
         equalizer.bind(direct.dsp)
         direct.playing = { [weak self] in
@@ -384,7 +393,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
 
     func setVolume(_ value: Float) {
         player.volume = min(1, max(0, value))
-        stream?.setVolume(player.volume)
+        stream?.setVolume(muted ? 0 : player.volume)
         refreshEQStatus()
         changed?()
     }

@@ -13,10 +13,11 @@ private final class FavoritesTable: NSTableView {
     }
 }
 
-final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     private let table = FavoritesTable()
     let library: Library
     var play: ((Station) -> Void)?
+    var playInNewPanel: ((Station) -> Void)?
     var edit: ((Station?) -> Void)?
     var report: ((Error) -> Void)?
     private var selectionButtons: [NSButton] = []
@@ -49,7 +50,7 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
         table.target = self; table.doubleAction = #selector(playSelected)
         table.delete = { [weak self] in self?.remove() }
         let context = NSMenu()
-        for (title, selector) in [("Play", #selector(playSelected)), ("Edit…", #selector(editSelected)), ("Remove from Favorites", #selector(remove))] {
+        for (title, selector) in [("Play", #selector(playSelected)), ("Play on New Panel", #selector(playSelectedInNewPanel)), ("Edit…", #selector(editSelected)), ("Remove from Favorites", #selector(remove))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
         }
         table.menu = context
@@ -98,6 +99,13 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
     }
     private var selected: Station? { library.state.favorites.indices.contains(table.selectedRow) ? library.state.favorites[table.selectedRow] : nil }
     @objc private func playSelected() { if let selected { play?(selected) } }
+    @objc private func playSelectedInNewPanel() { if let selected { playInNewPanel?(selected) } }
+    /// Only TV channels have a picture to put in a panel.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard item.action == #selector(playSelectedInNewPanel) else { return selected != nil || item.action == #selector(add) }
+        item.isHidden = selected?.video != true
+        return selected?.video == true
+    }
     @objc private func add() { edit?(nil) }
     @objc private func editSelected() { if let selected { edit?(selected) } }
     @objc private func remove() {
@@ -112,6 +120,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var view: PlayerView!
     var library: Library!
     let engine = RadioEngine()
+    /// The engine whose audio is audible; the main player's display and transport follow it.
+    private(set) var focus: RadioEngine!
+    /// Extra video panels opened with "Tune In on New Panel"; each plays on its own engine.
+    private var panels: [(engine: RadioEngine, controller: VideoController)] = []
     var favorites: FavoritesController!
     private var discovery: DiscoveryController?
     private var preferences: PreferencesController?
@@ -143,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         engine.equalizer.spatial = library.state.spatial ?? SpatialSettings()
         engine.leveling = library.state.leveling ?? false
         buildMenu()
+        focus = engine
         view = PlayerView(engine: engine)
         window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 232), styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
         window.title = "RadioPocket"
@@ -164,16 +177,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         favorites = FavoritesController(library: library)
         favorites.play = { [weak self] in self?.play($0) }
+        favorites.playInNewPanel = { [weak self] in self?.playInNewPanel($0) }
         favorites.edit = { [weak self] in self?.openDialog(station: $0, favoriteOnly: true) }
         favorites.report = { [weak self] in self?.showError($0) }
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
         ClassicUI.nowPlaying = { [weak self] in
-            guard let self, let station = self.engine.station else { return nil }
+            guard let self, let station = self.focus.station else { return nil }
             // A connecting or failed station says so, since there is no song to show.
-            let song = ([.connecting, .failed].contains(self.engine.status) ? self.engine.detail : self.engine.title).trimmingCharacters(in: .whitespacesAndNewlines)
+            let song = ([.connecting, .failed].contains(self.focus.status) ? self.focus.detail : self.focus.title).trimmingCharacters(in: .whitespacesAndNewlines)
             return [station.name, song == station.name ? "" : song].filter { !$0.isEmpty }.joined(separator: " — ")
         }
-        ClassicUI.isPlaying = { [weak self] in self.map { [.playing, .connecting].contains($0.engine.status) } ?? false }
+        ClassicUI.isPlaying = { [weak self] in self.map { [.playing, .connecting].contains($0.focus.status) } ?? false }
         ClassicUI.transport = { [weak self] in self?.handle($0) }
         updateBackgroundStations()
         startHousekeeping()
@@ -181,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         view.action = { [weak self] in self?.handle($0) }
         view.volumeChanged = { [weak self] value in
             guard let self else { return }
-            self.engine.setVolume(value)
+            self.focus.setVolume(value)
             if self.sleepBaseVolume != nil { self.sleepBaseVolume = value }   // the fade continues from the new level
             self.scheduleVolumeSave()
         }
@@ -191,8 +205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         engine.onGiveUp = { [weak self] station, message in self?.stationFailed(station, message) }
         nowPlaying.action = { [weak self] in self?.handle($0) }
-        nowPlaying.canSeek = { [weak self] in self?.engine.canTimeShift ?? false }
-        nowPlaying.canPlay = { [weak self] in self.map { $0.engine.station != nil || $0.library.state.lastStation != nil } ?? false }
+        nowPlaying.canSeek = { [weak self] in self?.focus.canTimeShift ?? false }
+        nowPlaying.canPlay = { [weak self] in self.map { $0.focus.station != nil || $0.library.state.lastStation != nil } ?? false }
         nowPlaying.canSkip = { [weak self] in !(self?.library.state.favorites.isEmpty ?? true) }
         engine.changed = { [weak self] in
             guard let self else { return }
@@ -200,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             NotificationCenter.default.post(name: ClassicUI.playbackChanged, object: nil)
             self.visuals.hub.refresh()
             self.syncVideo()
-            if self.smokePath == nil { self.nowPlaying.update(station: self.engine.station, title: self.engine.title, status: self.engine.status) }
+            if self.smokePath == nil { self.nowPlaying.update(station: self.focus.station, title: self.focus.title, status: self.focus.status) }
             if self.engine.status == .playing, let station = self.engine.station {
                 let availability = DiscoveryAvailability.shared(directory: self.library.directory)
                 availability.recordPlayback(station.address)
@@ -601,11 +615,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         var enabled = true
         switch id {
         case "toggle":
-            item.title = engine.status == .playing || engine.status == .connecting ? "Pause" : "Play"
-            enabled = engine.station != nil || library.state.lastStation != nil
-        case "stop": enabled = engine.status != .stopped
-        case "favorite": item.title = (engine.station ?? library.state.lastStation).map { library.isFavorite($0) } == true ? "Remove Favorite" : "Save Favorite…"
-        case "back10", "forward10", "live": enabled = engine.canTimeShift
+            item.title = focus.status == .playing || focus.status == .connecting ? "Pause" : "Play"
+            enabled = focus.station != nil || library.state.lastStation != nil
+        case "stop": enabled = focus.status != .stopped
+        case "favorite": item.title = (focus.station ?? library.state.lastStation).map { library.isFavorite($0) } == true ? "Remove Favorite" : "Save Favorite…"
+        case "back10", "forward10", "live": enabled = focus.canTimeShift
         case "previous", "next": enabled = !library.state.favorites.isEmpty
         case "ontop": mark(window.level == .floating)
         case "shade": mark(view.shaded)
@@ -635,7 +649,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func handle(_ id: String) {
         switch id {
         case "copyLink":
-            guard let station = engine.station ?? library.state.lastStation else {
+            guard let station = focus.station ?? library.state.lastStation else {
                 showError(RadioError.message("Choose a station first to copy its Open-in-Player link.")); return
             }
             do {
@@ -647,19 +661,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "updates": checkForUpdates(userInitiated: true)
         case "help:report": NSWorkspace.shared.open(ProblemReport.url(version: AboutController.version))
         case "play":
-            if engine.station != nil { engine.resume() }
+            if focus.station != nil { focus.resume() }
             else if let last = library.state.lastStation { play(last) }
             else { openDialog() }
-        case "toggle": handle(engine.status == .playing || engine.status == .connecting ? "pause" : "play")
-        case "pause": engine.pause()
-        case "stop": engine.stop()
-        case "back10": engine.seek(by: -10)
-        case "forward10": engine.seek(by: 10)
-        case "live": engine.goLive()
-        case "volumeUp": view.volumeChanged?(min(1, engine.player.volume + 0.05))
-        case "volumeDown": view.volumeChanged?(max(0, engine.player.volume - 0.05))
+        case "toggle": handle(focus.status == .playing || focus.status == .connecting ? "pause" : "play")
+        case "pause": focus.pause()
+        case "stop": focus.stop()
+        case "back10": focus.seek(by: -10)
+        case "forward10": focus.seek(by: 10)
+        case "live": focus.goLive()
+        case "volumeUp": view.volumeChanged?(min(1, focus.player.volume + 0.05))
+        case "volumeDown": view.volumeChanged?(max(0, focus.player.volume - 0.05))
         case "favorite":
-            if let current = engine.station ?? library.state.lastStation {
+            if let current = focus.station ?? library.state.lastStation {
                 if library.isFavorite(current) { do { try library.removeFavorite(current) } catch { showError(error) } }
                 else { openDialog(station: current, favoriteOnly: true) }
             }
@@ -834,18 +848,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     private func cancelSleep() {
         sleepTimer?.invalidate(); sleepTimer = nil; sleepDeadline = nil; sleepMinutes = 0
-        if let base = sleepBaseVolume { sleepBaseVolume = nil; engine.setVolume(base) }
+        if let base = sleepBaseVolume { sleepBaseVolume = nil; focus.setVolume(base) }
         engine.sleepRemaining = nil
         view?.needsDisplay = true
     }
     private func sleepTick() {
         guard let deadline = sleepDeadline else { return }
         let remaining = Int(ceil(deadline.timeIntervalSinceNow))
-        guard remaining > 0 else { cancelSleep(); engine.stop(); return }
+        guard remaining > 0 else { cancelSleep(); ([engine] + panels.map(\.engine)).forEach { $0.stop() }; return }
         engine.sleepRemaining = remaining
         if remaining <= 20, engine.status == .playing {
-            if sleepBaseVolume == nil { sleepBaseVolume = engine.player.volume }
-            engine.setVolume((sleepBaseVolume ?? 1) * Float(remaining) / 20)
+            if sleepBaseVolume == nil { sleepBaseVolume = focus.player.volume }
+            focus.setVolume((sleepBaseVolume ?? 1) * Float(remaining) / 20)
         }
         view.needsDisplay = true
     }
@@ -853,20 +867,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Shows the video window when a TV channel starts and puts it away when radio takes over.
     private func syncVideo() {
         guard smokePath == nil, library != nil else { return }
-        guard let station = engine.station, station.video == true else { video?.hide(); videoShownFor = nil; return }
+        guard let station = engine.station, station.video == true else { video?.hide(); videoShownFor = nil; refreshAudioIcons(); return }
         video?.retitle(station.name)
         guard [.connecting, .playing].contains(engine.status), videoShownFor != station.id else { return }
         videoShownFor = station.id
-        if video == nil { video = VideoController(engine: engine) }
+        if video == nil {
+            let controller = VideoController(engine: engine)
+            controller.onTakeAudio = { [weak self] in self?.takeAudio(self?.engine) }
+            controller.onClose = { [weak self] in self?.panelClosed(nil) }
+            video = controller
+        }
         video?.level = window.level
         video?.present(title: station.name, below: window)
+        refreshAudioIcons()
     }
 
     private func play(_ station: Station) {
         info?.stationChanged()
         videoShownFor = nil
-        do { try library.update { $0.lastStation = station }; recordedStation = nil; engine.play(station) }
+        do { try library.update { $0.lastStation = station }; recordedStation = nil; takeAudio(engine); engine.play(station) }
         catch { showError(error) }
+    }
+
+    /// Opens a TV channel in an additional video panel with its own player; the new panel takes the audio.
+    private func playInNewPanel(_ station: Station) {
+        guard station.video == true else { play(station); return }
+        let extra = RadioEngine()
+        extra.setVolume(focus.player.volume)
+        let controller = VideoController(engine: extra, extra: true)
+        controller.level = window.level
+        controller.onTakeAudio = { [weak self, weak extra] in self?.takeAudio(extra) }
+        controller.onClose = { [weak self, weak extra] in self?.panelClosed(extra) }
+        extra.changed = { [weak self, weak extra] in
+            guard let self, let extra else { return }
+            if let panel = self.panels.first(where: { $0.engine === extra }) {
+                let name = extra.station?.name ?? station.name
+                panel.controller.retitle(extra.status == .failed ? name + " — OFFLINE" : name)
+            }
+            self.refreshPlayer()
+        }
+        panels.append((extra, controller))
+        controller.present(title: station.name, below: window, offset: CGFloat(panels.count) * 28)
+        takeAudio(extra)
+        extra.play(station)
+        do { try library.recordRecent(station) } catch { showError(error) }
+    }
+
+    /// Gives the audio to one engine and mutes every other; the main player then follows that engine.
+    private func takeAudio(_ target: RadioEngine?) {
+        guard let target else { return }
+        focus = target
+        for other in [engine] + panels.map(\.engine) { other.setMuted(other !== target) }
+        view.engine = target
+        refreshAudioIcons()
+        refreshPlayer()
+    }
+
+    private func panelClosed(_ closed: RadioEngine?) {
+        if let closed { panels.removeAll { $0.engine === closed } }
+        if closed == nil || focus === closed || focus.status == .stopped {
+            // Audio goes to whatever is still playing: the main player first, then the newest extra panel.
+            let next = [engine] + panels.map(\.engine).reversed()
+            takeAudio(next.first { [.playing, .connecting].contains($0.status) } ?? engine)
+        } else { refreshAudioIcons() }
+    }
+
+    private func refreshAudioIcons() {
+        let shown = (video?.isShown == true ? 1 : 0) + panels.filter { $0.controller.isShown }.count > 1
+        video?.setAudio(audible: focus === engine, shown: shown)
+        for panel in panels { panel.controller.setAudio(audible: focus === panel.engine, shown: shown) }
+    }
+
+    private func refreshPlayer() {
+        view.needsDisplay = true
+        NotificationCenter.default.post(name: ClassicUI.playbackChanged, object: nil)
+        if smokePath == nil { nowPlaying.update(station: focus.station, title: focus.title, status: focus.status) }
     }
     /// Gives every ordinary RadioPocket window (library, visualizer, info, …) the player's level, so
     /// "always on top" covers all panels. Windows already above it (Preferences, full-screen video) are left alone.
@@ -968,6 +1043,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let client = directoryClient
         let browser = DiscoveryController(library: library, directory: client)
         browser.play = { [weak self] in self?.play($0) }
+        browser.playInNewPanel = { [weak self] in self?.playInNewPanel($0) }
         browser.openStream = { [weak self] in self?.openDialog() }
         browser.inspect = { [weak self] entry in
             guard let self else { return }
