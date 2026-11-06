@@ -264,6 +264,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         alert.accessoryView = form
         alert.addButton(withTitle: "Add"); alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = url
+        alert.window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             let source = try DirectorySource.custom(name: name.stringValue, url: url.stringValue, kind: (tv ? [.tvList] : [.stationList, .radioBrowserAPI] as [DirectorySource.Kind])[kind.indexOfSelectedItem])
@@ -410,6 +411,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             alert.messageText = "Show adult channels?"
             alert.informativeText = "Channels in your TV lists that look adult will no longer be hidden."
             alert.addButton(withTitle: "Show Them"); alert.addButton(withTitle: "Keep Hiding")
+            alert.window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
             guard alert.runModal() == .alertFirstButtonReturn else { sender.state = .on; return }
         }
         saveTVFilters { $0.tvHideAdult = sender.state == .on }
