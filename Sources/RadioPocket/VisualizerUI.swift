@@ -206,6 +206,7 @@ final class VisPanelController: NSObject {
 /// Glue between the app and everything visual: owns the hub, panel and full-screen window, builds menus, routes hotkeys.
 final class VisualizerController: NSObject, NSMenuItemValidation {
     let hub = VisualizerHub()
+    private(set) lazy var dock = DockTileVisualizer(hub: hub)
     /// Transport and volume ids (previous, play, pause, stop, next, volumeUp, volumeDown) go back to the app.
     var perform: ((String) -> Void)?
     var nowPlaying: () -> (station: String, title: String, signal: VisSignal) = { ("", "", .idle) }
@@ -299,6 +300,7 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         case "autocycle": s.autoCycle.toggle()
         case "cycletime": s.cycleSeconds = VisCycleInterval.nearest(Int(parts[2]) ?? s.cycleSeconds)
         case "overlay": s.overlay.toggle()
+        case "dockicon": s.dockIcon.toggle()
         default: return
         }
         hub.settings = s
@@ -314,33 +316,8 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
             entry.keyEquivalentModifierMask = modifiers; entry.target = self; entry.representedObject = id
             (target ?? menu).addItem(entry)
         }
-        func submenu(_ title: String, _ items: [(String, String)]) {
-            let root = NSMenuItem(title: title, action: nil, keyEquivalent: ""); let sub = NSMenu(title: title); root.submenu = sub; menu.addItem(root)
-            for (name, id) in items { item(name, id, into: sub) }
-        }
-        let speeds = ["Slower", "Slow", "Moderate", "Fast", "Faster"], levels = ["Lowest", "Low", "Medium", "High", "Highest"]
         item("Visualization Window", "vis:panel", key: "v", modifiers: [.command, .shift])
         item("Full Screen Visualization", "vis:fullscreen", key: "f", modifiers: [.command, .control])
-        item("Show Title in Full Screen", "vis:overlay")
-        menu.addItem(.separator())
-        submenu("Player Visualizer", MiniVisMode.allCases.map { ($0.title, "vis:mini:\($0.rawValue)") })
-        submenu("Window Visualization", VisPanelMode.allCases.map { ($0.title, "vis:mode:\($0.rawValue)") })
-        submenu("Coloring", VisColoring.allCases.map { ($0.title, "vis:color:\($0.rawValue)") })
-        menu.addItem(.separator())
-        item("Auto-Cycle Visualizations", "vis:autocycle")
-        submenu("Auto-Cycle Interval", VisCycleInterval.seconds.map { (VisCycleInterval.title($0), "vis:cycletime:\($0)") })
-        menu.addItem(.separator())
-        item("Show Peaks", "vis:peaks")
-        submenu("Analyzer Falloff", speeds.enumerated().map { ($1, "vis:falloff:\($0)") })
-        submenu("Peak Falloff", speeds.enumerated().map { ($1, "vis:peakfall:\($0)") })
-        submenu("Band Line Width", BandWidth.allCases.map { ($0.title, "vis:bandwidth:\($0.rawValue)") })
-        submenu("Oscilloscope Style", ScopeStyle.allCases.map { ($0.title, "vis:scope:\($0.rawValue)") })
-        menu.addItem(.separator())
-        submenu("Fire Height", levels.enumerated().map { ($1, "vis:fireheight:\($0)") })
-        submenu("Fire Turbulence", ["Calm", "Gentle", "Medium", "Strong", "Wild"].enumerated().map { ($1, "vis:fireturb:\($0)") })
-        submenu("Fire Colors", FirePalette.allCases.map { ($0.title, "vis:firepalette:\($0.rawValue)") })
-        menu.addItem(.separator())
-        submenu("Refresh Rate", VisRefresh.allCases.map { ($0.title, "vis:refresh:\($0.rawValue)") })
         menu.addItem(.separator())
         item("Visualization Settings…", "vis:prefs")
         return menu
@@ -367,6 +344,7 @@ final class VisualizerController: NSObject, NSMenuItemValidation {
         case "autocycle": checked = s.autoCycle
         case "cycletime": checked = s.cycleSeconds == Int(parts[2])
         case "overlay": checked = s.overlay
+        case "dockicon": checked = s.dockIcon
         case "fullscreen": checked = isFullscreen
         default: checked = nil
         }

@@ -29,6 +29,8 @@ final class VisualizerHub {
 
     private var clients: [Client] = []
     private var settingObservers: [(VisSettings) -> Void] = []
+    /// Called whenever the display timer stops (playback ended and the bars have settled).
+    var onStop: [() -> Void] = []
     private var timer: Timer?
     private var interval = 0.0
     private var lastTick = CACurrentMediaTime()
@@ -99,7 +101,7 @@ final class VisualizerHub {
     /// Flames keep burning down after the bars hit zero.
     private func animating(_ visible: [Client]) -> Bool { miniFire.isHot || visible.contains { $0.busy() } }
 
-    private func stop() { timer?.invalidate(); timer = nil }
+    private func stop() { timer?.invalidate(); timer = nil; onStop.forEach { $0() } }
 
     private func tick() {
         let visible = clients.filter { $0.owner != nil && $0.visible() }

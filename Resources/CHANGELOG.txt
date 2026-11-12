@@ -1,5 +1,81 @@
-RadioPocket 0.8
+RadioPocket 0.12.0
+* Added: Compatibility Mode for radio and TV station lists in General Preferences.
+* Changed: Rank station quality and TV recommendations using recent playback results.
+* Fixed: Try alternate playlist mirrors when a stream fails to connect.
+* Fixed: Cancel offline reconnection intent when playback is paused.
+* Fixed: Align mood-ranking regression checks with station deduplication across moods.
+* Fixed: About buttons no longer appear pressed when the window opens.
+
+RadioPocket 0.11.0
+* Added: Play several TV channels at once, each in its own video panel with its own player; right-click a channel in the library or Discover and choose Tune In on a panel or a new one
+* Added: Audio follows one panel at a time; click a panel's speaker icon to take the audio
+* Added: Video Multiview shows every open channel together in a full-screen wall
+* Fixed: Moods and Discover no longer repeat the same station across sections, including stations listed under several stream addresses
+
+RadioPocket 0.10.0
+* Added: Help ▸ Report a Problem opens a prefilled issue on GitHub
+* Fixed: Streams that refuse RadioPocket, serve ASX/XSPF or extensionless playlists, or answer with a web page now play, falling back to a browser identity and then AVPlayer
+* Added: Double-click a panel's title bar to shade it; shaded panels have play/pause, previous and next, and scroll the station and song
+* Added: The shaded equalizer keeps the on/off switch and preset menu
+* Changed: Shaded panels shrink to the player's width so they stack cleanly; the shaded library shows its section menu and station count
+* Added: The shaded equalizer shows a live spectrum
+* Fixed: Always on top now keeps every panel above other apps, and Preferences opens above all panels
+* Changed: Discover card reasons name a related favorite or recent station, and on-device AI can write a specific reason for each card
+* Added: TV Discover recommends by TV category and your Mac's language, with TV categories in Your mix
+* Fixed: TV channels from lists that publish no language, such as iptv-org, now get their country and language from the channel ID, so Discover stops offering other languages and the Country filter works for TV
+* Changed: The library search row keeps Genre and a Filters button; Country, Sort and a new TV Language filter live in its popover
+* Fixed: Moods keep the same cards when the library refreshes on its own
+* Fixed: Stations listed by several directories or playlists are merged even when the address differs by http/https or a trailing slash
+* Fixed: Library and Settings lists no longer scroll sideways unnecessarily
+* Fixed: Discover hides stations whose stream is gone (404 or a web page) right away and checks more cards per pass, in Moods too
+* Fixed: Discover no longer offers a station website link that is gone
+* Changed: Discover shelves have friendlier names and descriptions
+* Added: A narrow library shows a section menu in place of the hidden sidebar
+* Added: Long station and song text in the player scrolls, can be dragged by hand, and has a speed setting in Preferences
+* Fixed: Panels snap to the edges of the screen they are on, including the true screen edge, and the video panel keeps the picture ratio when resized
+
+RadioPocket 0.9.3
+* Changed: Compact Discover station cards with genre-themed artwork
+* Added: Add or remove a favorite from Station Info
+* Added: Check for updates from the app menu, Help menu or Preferences, and optionally at launch
+
+RadioPocket 0.9.2
+* Added: Moods suggests stations for your activities, time of day, and optional local weather
+* Fixed: Library panes no longer scroll sideways unnecessarily
+
+RadioPocket 0.9.1
+* Fixed: Smoother library transitions while recommendations load
+* Changed: Suggestions stay steady while you browse
+* Changed: Faster recommendations with less processing
+* Changed: Lighter background activity and better memory cleanup
+* Added: Discover helps you find more stations you’ll enjoy
+* Added: Personalize your mix with genres and preferred languages
+* Added: Richer station cards with artwork and website links where available
+* Added: Fine-tune recommendations with simple station feedback
+* Changed: At-a-glance quality ratings keep station cards easy to scan
+* Changed: Discovery focuses on higher-quality stations
+* Changed: Recommendations favor streams that responded recently
+* Fixed: Unavailable recommendations retry before being set aside temporarily
+* Added: Bring your own station playlists into the library
+* Changed: A cleaner library experience puts listening first
+* Changed: Find saved stations even when directories are unavailable
+* Fixed: Temporary connection problems no longer keep stations hidden for long
+
+RadioPocket 0.9
+* Added: Internet TV in the library, with 40media Group's free channels in a classic video window
+* Added: Preferences ▸ Internet TV: manage your own M3U TV channel lists
+* Added: Video window follows Always on Top; double-click it for full screen; closing it stops the stream
+* Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
+* Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Internet Radio
 * Added: Remove a favorite from the library button, right-click menu, ⌘D, or the Delete key
+* Added: 1.5× player size
+* Added: Any built-in directory or skin can be deleted and restored from the + menu
+* Added: The last station is restored on launch
+* Added: Terms of use and legal notice in About
+* Changed: Library search matches words in any order, ignoring case and accents
+* Removed: Icecast/Xiph directory source
+
+RadioPocket 0.8
 * Added: Balance slider beside volume; snaps to center
 * Added: Scroll wheel over the volume slider adjusts volume
 * Added: Clicking the player logo opens About
@@ -8,14 +84,12 @@ RadioPocket 0.8
 * Added: Visualization Settings: peak falloff, line width, flame height, turbulence, colors
 * Added: Jump to Station (⇧⌘J) searches favorites and recent stations
 * Added: Station Info (⇧⌘I): format, sample rate, bitrate, buffer, leveler gain, Radio Browser lookup
-* Added: Station Info from the library right-click menu, with the stream server's HTTP response, content type and first bytes
 * Added: Real kbps/kHz and mono/stereo lamp on the player display
 * Added: Sleep Timer, 15 minutes to 2 hours, with fade-out
 * Added: Loudness Leveling, off by default
 * Added: Windows snap to screen edges and each other; hold Option to drag freely
-* Added: 1.5× player size
-* Added: Directory sources: Radio Browser, SomaFM, laut.fm, IPRD, Radio Paradise, Mike Pierce's streams, Junguler playlists
-* Added: Custom directories and per-source on/off in Preferences; any built-in directory or skin can be deleted and restored from the + menu
+* Added: Directory sources: Radio Browser, SomaFM, laut.fm, Icecast/Xiph, IPRD, Radio Paradise, Mike Pierce's streams, Junguler playlists
+* Added: Custom directories and per-source on/off in Preferences
 * Added: Directory picker in the library: search all sources or one
 * Added: Saved station lists: instant library from an on-disk cache, refreshed in the background
 * Added: Ogg Opus, Ogg Vorbis and HLS playback with EQ and visualizer
@@ -23,8 +97,6 @@ RadioPocket 0.8
 * Added: Opus and Ogg Vorbis library filters
 * Added: Automatic reconnect on dropouts, network changes and wake
 * Added: Moved-station recovery: retries the new address, then offers alternatives
-* Added: Stations that no longer respond are hidden from the library; on by default in Preferences ▸ Media Library
-* Added: Spatial audio styles in Preferences ▸ Playback: Studio, Room, Club, Stage, Hall, Cathedral, Surround, Wide Stereo, Headphones, with amount and stereo width
 * Added: Media-key skip buttons rewind and forward 10 s
 * Changed: Menus follow Mac conventions: File, Edit, Controls, View, Visualization, Window, Help
 * Changed: Player has Winamp's EQ and PL buttons; + FAV, LIB and SK moved to the ≡ menu
@@ -32,10 +104,8 @@ RadioPocket 0.8
 * Changed: Station Library is one continuously loading list
 * Changed: Double-clicking a title bar shades the player or equalizer; a docked equalizer follows
 * Changed: Genre comments and collection sections are searchable
-* Changed: Library search matches words in any order, ignoring case and accents
 * Removed: Bundled skins other than Winamp Classic 2.91; import any .wsz instead
 * Removed: Library Previous/Next paging
-* Removed: Open equalizer button in Preferences
 * Removed: Coloring picker in the visualization window
 * Fixed: Unnamed stations, URL names and page/image links no longer appear in station lists
 * Fixed: Rare crash during startup

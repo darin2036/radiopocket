@@ -30,11 +30,52 @@ let root = FileManager.default.temporaryDirectory.appendingPathComponent("RadioP
 do {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
+    let compatibilityNow = Date(timeIntervalSince1970: 1_800_000_000)
+    func profileRow(_ address: String, _ codec: String = "MP3", video: Bool = false) -> RadioListing {
+        var row = RadioListing(station: Station(name: "Profile", address: address))
+        row.codec = codec; row.video = video; row.bitrate = 128
+        return row
+    }
+    let compatibleRadio = profileRow("https://radio.example/live", "AAC")
+    let incompatibleRadio = profileRow("https://radio.example/live.opus", "OPUS")
+    let unknownRadio = profileRow("https://radio.example/stream", "")
+    let insecureRadio = profileRow("http://radio.example/live.mp3")
+    var compatibleTV = profileRow("https://tv.example/live.m3u8", "", video: true)
+    compatibleTV.languages = ["fr"]
+    let unsupportedTV = profileRow("https://tv.example/live.webm", "VP9", video: true)
+    try check(compatibleRadio.highlyCompatible && compatibleTV.highlyCompatible && !incompatibleRadio.highlyCompatible && !unknownRadio.highlyCompatible && !insecureRadio.highlyCompatible && !unsupportedTV.highlyCompatible, "Compatibility profile covers radio and TV conservatively")
+    try check(profileRow("https://radio.example/a.M4A?token=x", "").highlyCompatible && !profileRow("https://user:secret@radio.example/live.mp3").highlyCompatible, "Compatibility checks use the URL path and reject embedded credentials")
+    var profileQuery = DirectoryQuery(); profileQuery.compatibleOnly = true
+    let profileRows = [insecureRadio, unknownRadio, incompatibleRadio, compatibleRadio]
+    try check(DirectoryFilter.page(profileRows, query: profileQuery).stations == [compatibleRadio], "Compatibility filters apply before station-list paging")
+    profileQuery.compatibleOnly = false
+    try check(DirectoryFilter.page(profileRows, query: profileQuery).stations.count == 4, "Disabling compatibility restores the native player's wider formats")
+    let played = StreamPlaybackCheck(address: insecureRadio.address, played: true, time: compatibilityNow)
+    let failed = StreamPlaybackCheck(address: compatibleRadio.address, played: false, time: compatibilityNow)
+    let ranking = RadioListing.ordered([compatibleRadio, insecureRadio, unknownRadio], by: "quality", reverse: true, checks: [played, failed], now: compatibilityNow)
+    try check(ranking.map(\.address) == [insecureRadio.address, unknownRadio.address, compatibleRadio.address], "Real playback outranks codec estimates and temporary failures sink")
+    try check(failed.rank(now: compatibilityNow.addingTimeInterval(3600)) == 0 && played.rank(now: compatibilityNow.addingTimeInterval(7 * 86400)) == 0 && played.rank(now: compatibilityNow.addingTimeInterval(-1)) == 0, "Playback outcomes expire and future timestamps are ignored")
+    var englishTV = compatibleTV; englishTV.address = "https://tv.example/english.m3u8"; englishTV.languages = ["en"]
+    try check(RadioListing.ordered([englishTV, compatibleTV], by: "recommended", reverse: true, now: compatibilityNow, languages: ["fr-CA", "en-US"]).first == compatibleTV, "Recommended TV honors preferred language")
+    profileQuery.order = "recommended"
+    try check(profileQuery.items.first { $0.name == "order" }?.value == "clickcount", "Personalized sort names never reach the Radio Browser API")
+    let mirrorList = "[playlist]\nFile2=https://radio.example/good\nFile1=https://radio.example/bad\nFile3=https://radio.example/good\n"
+    let mirrorBase = URL(string: "https://radio.example/list.pls")!
+    try check(StreamAddress.playlistEntry(mirrorList, base: mirrorBase).path == "/bad" && StreamAddress.playlistEntry(mirrorList, base: mirrorBase, attempt: 1).path == "/good" && StreamAddress.playlistEntry(mirrorList, base: mirrorBase, attempt: 2).path == "/bad", "Playlist retries rotate unique mirrors in numeric order")
+    try check(StreamAddress.playlistEntry("#EXTM3U\n#EXT-X-TARGETDURATION:2\nsegment.aac", base: mirrorBase, attempt: 1) == mirrorBase, "HLS manifests are never treated as station mirror lists")
+    try check(StreamAddress.recoveryPlaylist(URL(string: "https://ice1.somafm.com/groovesalad-128-mp3")!)?.absoluteString == "https://api.somafm.com/groovesalad.pls" && StreamAddress.recoveryPlaylist(URL(string: "https://ice1.somafm.com.evil.example/groovesalad-128-mp3")!) == nil, "SomaFM mirror recovery uses only the exact provider mount")
+    let profileLibrary = try Library(directory: root.appendingPathComponent("profiles"))
+    try profileLibrary.update { $0.compatibilityMode = true }
+    try profileLibrary.recordPlayback(compatibleRadio.station, played: false, now: compatibilityNow)
+    try profileLibrary.recordPlayback(compatibleRadio.station, played: true, now: compatibilityNow)
+    let reloadedProfile = try Library(directory: root.appendingPathComponent("profiles"))
+    try check(reloadedProfile.state.compatibilityMode == true && reloadedProfile.state.playbackChecks?.count == 1 && reloadedProfile.state.playbackChecks?.first?.played == true, "Compatibility and latest playback evidence survive a library reload")
     try check(DirectoryCacheAge.isIdle(Date().addingTimeInterval(-DirectoryCacheAge.idle - 5)) && !DirectoryCacheAge.isIdle(Date().addingTimeInterval(-5)), "In-memory directory copies count as idle after two minutes")
     try check(StreamAddress.parse(" https://radio.example/live?token=abc \n").host == "radio.example", "HTTP URL normalization")
     for invalid in ["file:///etc/passwd", "ftp://radio.example/live", "radio.example", "https://", "https://example.org/has space"] {
         try rejects("Reject \(invalid)") { _ = try StreamAddress.parse(invalid) }
     }
+    try checkDiscovery(at: root)
     let base = URL(string: "https://radio.example/playlists/list.m3u")!
     try check(StreamAddress.playlistEntry("#EXTM3U\n#EXTINF:-1,Radio\n../live.mp3", base: base).absoluteString == "https://radio.example/live.mp3", "Relative M3U entries")
     try check(StreamAddress.playlistEntry("[playlist]\nFile2=https://b.example/live\nFile1=https://a.example/live", base: base).host == "a.example", "Ordered PLS entries")
@@ -55,6 +96,42 @@ do {
     try original.write(to: stateFile)
     try rejects("Report corrupt library") { _ = try Library(directory: dir) }
     try check(Data(contentsOf: stateFile) == original, "Preserve corrupt library without overwriting")
+    // Saved-data format: versioning, migration, unknown fields, bad fields, backups.
+    let formatDir = root.appendingPathComponent("format")
+    try FileManager.default.createDirectory(at: formatDir, withIntermediateDirectories: true)
+    let formatFile = formatDir.appendingPathComponent("library.json")
+    try Data(#"{"favorites":[{"id":"00000000-0000-0000-0000-0000000000aa","name":"Old","address":"https://old.example/live"}],"volume":0.5,"scale":2,"futureThing":{"a":[1,2]}}"#.utf8).write(to: formatFile)
+    let legacyLibrary = try Library(directory: formatDir)
+    try check(legacyLibrary.state.favorites.first?.name == "Old", "A pre-versioning library loads")
+    let migrated = try JSONSerialization.jsonObject(with: Data(contentsOf: formatFile)) as? [String: Any]
+    try check(migrated?["schemaVersion"] as? Int == LibraryFormat.current, "A pre-versioning library is stamped with the current version")
+    try check((try FileManager.default.contentsOfDirectory(atPath: formatDir.appendingPathComponent("Backups").path)).count == 1, "Migration backs up the original file")
+    try legacyLibrary.update { $0.volume = 0.8 }
+    let afterSave = try JSONSerialization.jsonObject(with: Data(contentsOf: formatFile)) as? [String: Any]
+    try check((afterSave?["futureThing"] as? [String: Any])?["a"] as? [Int] == [1, 2], "Unknown fields survive a save")
+    let futureDir = root.appendingPathComponent("future")
+    try FileManager.default.createDirectory(at: futureDir, withIntermediateDirectories: true)
+    try Data(#"{"schemaVersion":99,"favorites":[],"volume":0.4,"scale":2,"newerSetting":true}"#.utf8).write(to: futureDir.appendingPathComponent("library.json"))
+    let futureLibrary = try Library(directory: futureDir)
+    try futureLibrary.update { $0.volume = 0.3 }
+    let futureSaved = try JSONSerialization.jsonObject(with: Data(contentsOf: futureDir.appendingPathComponent("library.json"))) as? [String: Any]
+    try check(futureSaved?["schemaVersion"] as? Int == 99 && futureSaved?["newerSetting"] as? Bool == true, "A newer library keeps its version and fields when this build saves")
+    let badDir = root.appendingPathComponent("badfield")
+    try FileManager.default.createDirectory(at: badDir, withIntermediateDirectories: true)
+    try Data(#"{"schemaVersion":1,"favorites":[{"id":"00000000-0000-0000-0000-0000000000cc","name":"Keep","address":"https://keep.example/live"}],"volume":"loud","scale":2,"leveling":true}"#.utf8).write(to: badDir.appendingPathComponent("library.json"))
+    let badLibrary = try Library(directory: badDir)
+    try check(badLibrary.state.favorites.first?.name == "Keep" && badLibrary.state.leveling == true && badLibrary.state.volume == 0.65, "One unreadable field resets alone and the rest loads")
+    try check((try FileManager.default.contentsOfDirectory(atPath: badDir.appendingPathComponent("Backups").path)).count == 1, "A dropped field backs up the original file")
+    let reportURL = ProblemReport.url(version: "0.10.0", system: "Version 26.0").absoluteString
+    try check(reportURL.hasPrefix("https://github.com/darin2036/radiopocket/issues/new?body=") && reportURL.contains("0.10.0") && !reportURL.contains("http%3A") , "Report a Problem prefills versions and no station address")
+    let versionedCache = try CacheFile.encode(["a": 1], version: 1) ?? { throw RadioError.message("encode") }()
+    try check(CacheFile.read([String: Int].self, from: versionedCache, version: 1) == ["a": 1], "Versioned caches round-trip")
+    try check(CacheFile.read([String: Int].self, from: versionedCache, version: 2) == nil, "A cache from another version is ignored")
+    try check(CacheFile.read([String: Int].self, from: Data(#"{"a":2}"#.utf8), version: 1) == ["a": 2], "Unversioned caches saved by older builds still load")
+    let oldSkin = try JSONDecoder().decode(ClassicSkin.Archive.self, from: Data(#"{"name":"Old","bitmaps":{}}"#.utf8))
+    try check(oldSkin.schema == nil && ClassicSkin.Archive(name: "New", bitmaps: [:]).schema == 1, "Saved skins from before versioning still decode")
+    try check(LibraryFormat.knownKeys.isSuperset(of: ["favorites", "volume", "equalizer", "moodCity", "textScrollSpeed"]), "Every saved setting is a known library field")
+    try check(LibraryFormat.migrations.count == LibraryFormat.current && (0..<LibraryFormat.current).allSatisfy { LibraryFormat.migrations[$0] != nil }, "Every schema version has a migration")
     try rejects("Reject missing skin artwork") { _ = try ClassicSkin(archive: .init(name: "Bad", bitmaps: [:])) }
     try rejects("Reject malformed bitmap") { _ = try ClassicSkin(archive: .init(name: "Bad", bitmaps: ["main.bmp": Data("bad bitmap".utf8)])) }
     let skinDir = root.appendingPathComponent("Nested")
@@ -163,6 +240,42 @@ do {
     try rejects("Reject malformed directory JSON") { _ = try RadioDirectory.decodePage(Data("not JSON".utf8), query: query) }
     let excessiveRows = try JSONSerialization.data(withJSONObject: Array(repeating: rawRows[0], count: 201))
     try rejects("Reject unbounded directory pages before allocating station models") { _ = try RadioDirectory.decodePage(excessiveRows, query: query) }
+    // Internet TV
+    let tvChannels = FortyMediaDirectory.channels
+    try check(tvChannels.count == 11 && tvChannels.allSatisfy { $0.video && $0.hls && $0.likelyPlayable && $0.station.video == true }, "40media channels are playable video listings")
+    var tvQuery = DirectoryQuery(); tvQuery.video = true
+    try check(DirectoryFilter.page(tvChannels, query: tvQuery).stations.count == 11, "The TV directory lists every channel")
+    let tvList = StationListDirectory.parse("#EXTM3U\n#EXTINF:-1 group-title=\"News\",Local News\nhttps://tv.example/news.m3u8\n#EXTINF:-1 group-title=\"Adult\",Late Night Sex TV\nhttps://tv.example/x.m3u8", base: URL(string: "https://tv.example/list.m3u")!, label: "Mine", sourceID: "mine", video: true) { !TVSafety.allows(title: $0, group: $1, address: $2) }
+    try check(tvList.count == 1 && tvList[0].video && tvList[0].tags == "News", "A user TV list keeps its channels, marked as video, after the safety filter")
+    try check(DirectorySource.fortyMedia.isTV && !DirectorySource.somaFM.isTV, "Only the 40media directory is TV")
+    try check(RadioListing(station: tvChannels[0].station).video && !RadioListing(station: Station(name: "Radio", address: "https://radio.example/live")).video, "A saved station keeps its TV flag")
+    let tvDecoded = try JSONDecoder().decode(Station.self, from: Data(#"{"id":"00000000-0000-0000-0000-0000000000bb","name":"Old","address":"https://radio.example/live"}"#.utf8))
+    try check(tvDecoded.video == nil, "Stations saved before TV support still decode")
+    let safeURL = URL(string: "https://cdn.example.com/a.m3u8")!
+    func tvAllowed(_ title: String, group: String = "", url: URL? = nil) -> Bool {
+        TVSafety.allows(title: title, group: group, address: url ?? safeURL)
+    }
+    try check(tvAllowed("Local News 8") && tvAllowed("Adult Swim West") && tvAllowed("Sussex Local TV"), "Ordinary TV channels pass the safety filter")
+    try check(!tvAllowed("Hot Sexy TV") && !tvAllowed("Okay", group: "XXX") && !tvAllowed("Adult Animation") && !tvAllowed("Playboy TV"), "Adult channels are hidden")
+    try check(!tvAllowed("Okay", url: URL(string: "http://88.212.7.14/x.m3u8")!), "Streams on a bare IP address are hidden")
+    try check(!tvAllowed("Channel [Not 24/7;Geo-blocked]"), "Geo-blocked channels are hidden")
+    var adultOff = TVSafety.Settings(); adultOff.hideAdult = false
+    var qualityOff = TVSafety.Settings(); qualityOff.hideUnreliable = false
+    let bareIP = URL(string: "http://88.212.7.14/x.m3u8")!
+    try check(TVSafety.allows(title: "Hot Sexy TV", group: "", address: safeURL, settings: adultOff) && !TVSafety.allows(title: "Hot Sexy TV", group: "", address: safeURL, settings: qualityOff), "Each TV filter turns off on its own")
+    try check(TVSafety.allows(title: "A [Geo-blocked]", group: "", address: bareIP, settings: qualityOff) && !TVSafety.allows(title: "A [Geo-blocked]", group: "", address: bareIP, settings: adultOff), "The quality filter covers geo-blocked and bare-IP streams")
+    var tvState = Library.State(); try check(tvState.tvSafety == TVSafety.Settings(), "Both TV filters are on by default")
+    tvState.tvHideAdult = false; try check(!tvState.tvSafety.hideAdult && tvState.tvSafety.hideUnreliable, "A saved TV filter choice is honored")
+    try check(adultOff.key != qualityOff.key && adultOff.key != TVSafety.Settings().key, "Filter settings change the saved-page key")
+    let mixed = StationListDirectory.parse("#EXTM3U\n#EXTINF:-1 group-title=\"Music\",Music Videos 24/7\nhttps://tv.example/mv.m3u8\n#EXTINF:-1 group-title=\"News\",Local News\nhttps://tv.example/news.m3u8\n#EXTINF:-1 group-title=\"Jazz\",Jazz FM\nhttps://radio.example/jazz.mp3\n#EXTINF:-1 radio=\"true\" group-title=\"Pop\",Pop Hits\nhttps://radio.example/pop.m3u8", base: URL(string: "https://tv.example/list.m3u")!, label: "Mine", sourceID: "mixed", video: true)
+    var radioQuery = DirectoryQuery(); radioQuery.video = false
+    var tvOnlyQuery = DirectoryQuery(); tvOnlyQuery.video = true
+    let mixedTV = DirectoryFilter.page(mixed, query: tvOnlyQuery).stations.map(\.name), mixedRadio = DirectoryFilter.page(mixed, query: radioQuery).stations.map(\.name)
+    try check(Set(mixedTV) == ["Music Videos 24/7", "Local News"], "Music video channels stay in TV")
+    try check(Set(mixedRadio) == ["Jazz FM", "Pop Hits"] && mixed.filter { !$0.video }.allSatisfy { $0.station.video == nil }, "Audio-only streams in a TV list go to radio")
+    try check(DirectorySource.fortyMedia.serves(video: true) && !DirectorySource.fortyMedia.serves(video: false) && DirectorySource.somaFM.serves(video: false) && !DirectorySource.somaFM.serves(video: true), "Sources serve the right medium")
+    let tvListSource = try DirectorySource.custom(name: "Mine", url: "https://tv.example/list.m3u", kind: .tvList)
+    try check(tvListSource.serves(video: true) && tvListSource.serves(video: false), "A TV list serves both TV and radio")
     // Saved station lists
     let cacheDir = root.appendingPathComponent("station-cache")
     let saved = StationCache(directory: cacheDir)
@@ -172,6 +285,8 @@ do {
     let savedKey = saved.key(for: browse, sources: ["radio-browser@", "somafm@"])!
     saved.store(DirectoryPage(stations: [savedRow], hasMore: true, rawCount: 100), key: savedKey)
     let reloaded = saved.load(savedKey)
+    var tvQueryKey = browse; tvQueryKey.video = true
+    try check(saved.key(for: tvQueryKey, sources: ["radio-browser@", "somafm@"]) != savedKey, "TV and radio pages are saved under different keys")
     try check(reloaded?.page.stations == [savedRow] && reloaded?.page.hasMore == true && reloaded?.page.rawCount == 100 && reloaded?.page.cached == true, "A saved station page reloads with every field intact")
     var typed = DirectoryQuery(); typed.name = "jazz"
     try check(saved.key(for: typed, sources: ["radio-browser@"]) == nil, "Typed searches are never saved")
@@ -230,15 +345,17 @@ do {
     var paged = DirectoryQuery(); paged.offset = 1
     try check(DirectoryFilter.page(listed, query: paged).stations.count == 1 && !DirectoryFilter.page(listed, query: paged).hasMore, "Local directories page like the network ones")
     let resolvedSources = DirectorySource.resolved([DirectorySource(id: "somafm", name: "x", kind: .somaFM, enabled: false), try DirectorySource.custom(name: "Mine", url: "https://lists.example/radio.m3u", kind: .stationList)])
-    try check(resolvedSources.map(\.id).prefix(2) == ["radio-browser", "somafm"] && !resolvedSources[1].enabled && resolvedSources.count == 8, "Built-in directories always exist; saved choices and custom directories are kept")
-    try check(DirectorySource.defaults.count == 7 && DirectorySource.defaults.filter(\.enabled).count == 5, "Seven built-in catalogs; larger feeds are opt-in")
-    try check(DirectorySource.defaults.allSatisfy(\.builtIn) && DirectorySource.resolved(resolvedSources).count == 8, "Built-in migration is idempotent and does not duplicate saved sources")
+    try check(resolvedSources.map(\.id).prefix(2) == ["radio-browser", "somafm"] && !resolvedSources[1].enabled && resolvedSources.count == 10, "Built-in directories always exist; saved choices and custom directories are kept")
+    try check(DirectorySource.defaults.count == 9 && DirectorySource.defaults.filter(\.enabled).count == 6, "Nine built-in catalogs; larger feeds are opt-in")
+    try check(DirectorySource.defaults.allSatisfy(\.builtIn) && DirectorySource.resolved(resolvedSources).count == 10, "Built-in migration is idempotent and does not duplicate saved sources")
     let oldChoices = [DirectorySource.radioBrowser, DirectorySource.somaFM, DirectorySource.lautFM, DirectorySource.iprd]
     let upgradedChoices = DirectorySource.resolved(oldChoices)
-    try check(upgradedChoices.count == 7 && upgradedChoices.contains { $0.id == "curated-streams" && $0.enabled } && upgradedChoices.contains { $0.id == "junguler" && !$0.enabled }, "Existing five-source settings gain the new sources with lightweight defaults")
+    try check(upgradedChoices.count == 9 && upgradedChoices.contains { $0.id == "curated-streams" && $0.enabled } && upgradedChoices.contains { $0.id == "junguler" && !$0.enabled } && upgradedChoices.contains { $0.id == "rrradio" && !$0.enabled }, "Existing five-source settings gain the new sources with lightweight defaults")
+    let rrradioRows = try RrradioDirectory.decode(Data(#"{"stations":[{"id":"a","name":"Grrif","streamUrl":"https://grrif.example/a.aac","country":"CH","tags":["rock","indie"],"codec":"AAC","bitrate":128,"status":"working"},{"id":"b","name":"Bulk Copy","streamUrl":"https://bulk.example/b","status":"stream-only"}]}"#.utf8))
+    try check(rrradioRows.count == 1 && rrradioRows[0].tags == "rock, indie" && rrradioRows[0].countryCode == "CH" && rrradioRows[0].bitrate == 128, "rrradio keeps its own checked stations and skips the bulk copy of other directories")
     var deleted = DirectorySource.somaFM; deleted.removed = true
     let withoutSoma = DirectorySource.resolved([deleted])
-    try check(withoutSoma.count == 6 && !withoutSoma.contains { $0.id == "somafm" } && DirectorySource.resolved([deleted] + withoutSoma).count == 6, "A deleted built-in directory stays deleted")
+    try check(withoutSoma.count == 8 && !withoutSoma.contains { $0.id == "somafm" } && DirectorySource.resolved([deleted] + withoutSoma).count == 8, "A deleted built-in directory stays deleted")
     let collectionDirectory = root.appendingPathComponent("Collection")
     try FileManager.default.createDirectory(at: collectionDirectory.appendingPathComponent("DEMOTED"), withIntermediateDirectories: true)
     try Data("#EXTM3U\n#EXTINF:-1,Keep Radio\n#EXTGENRE: electronic\nhttps://keep.example/live\n".utf8).write(to: collectionDirectory.appendingPathComponent("Keep.m3u"))
@@ -330,6 +447,13 @@ do {
     let sample = Changelog.parse("RadioPocket 1.1\nReleased: Jan 2 2027\n* Added: Thing\n* Fixed: Other\n\nRadioPocket 1.0\n* Misc: First\n")
     try check(sample.map(\.version) == ["1.1", "1.0"], "Changelog parses release headers")
     try check(sample[0].released == "Jan 2 2027" && sample[1].released == nil, "Changelog release date is optional")
+    try check(UpdateCheck.isNewer("0.9.3", than: "0.9.2") && UpdateCheck.isNewer("0.10.0", than: "0.9.9") && UpdateCheck.isNewer("1.0.0", than: "0.99.99"), "Update check compares versions numerically")
+    try check(!UpdateCheck.isNewer("0.9.3", than: "0.9.3") && !UpdateCheck.isNewer("0.9.2", than: "0.9.3") && !UpdateCheck.isNewer("0.9", than: "0.9.0"), "Update check ignores equal and older versions")
+    try check(!UpdateCheck.isNewer("beta", than: "0.9.3") && !UpdateCheck.isNewer("", than: "0.9.3"), "Update check ignores unreadable versions")
+    try check(UpdateCheck.outcome(changelog: "RadioPocket 0.9.4\n* Added: X\n\nRadioPocket 0.9.3\n", installed: "0.9.3") == .available(Release(version: "0.9.4", released: nil, entries: ["* Added: X"])), "Update check offers a newer changelog release")
+    try check(UpdateCheck.outcome(changelog: "RadioPocket 0.9.3\n", installed: "0.9.3") == .current && UpdateCheck.outcome(changelog: "not a changelog", installed: "0.9.3") == nil, "Update check reports current and unreadable changelogs")
+    let day = UpdateCheck.launchInterval, now = Date()
+    try check(UpdateCheck.shouldCheckAtLaunch(last: nil, now: now) && !UpdateCheck.shouldCheckAtLaunch(last: now.addingTimeInterval(-day + 60), now: now) && UpdateCheck.shouldCheckAtLaunch(last: now.addingTimeInterval(-day), now: now) && UpdateCheck.shouldCheckAtLaunch(last: now.addingTimeInterval(60), now: now), "Launch update checks run at most daily")
     try check(sample[0].entries == ["* Added: Thing", "* Fixed: Other"], "Changelog keeps entries in order")
     let shipped = Changelog.parse(try String(contentsOfFile: "Resources/CHANGELOG.txt", encoding: .utf8))
     try check(!shipped.isEmpty && shipped.allSatisfy { !$0.entries.isEmpty }, "Shipped CHANGELOG.txt parses with entries for every release")
@@ -468,9 +592,9 @@ do {
     OggOpusDemuxer(sink: unknownSink).feed(oggPage(flags: 2, sequence: 0, packets: [Data([0x7F]) + Data("FLAC".utf8) + Data(count: 20)]))
     try check(unknownSink.failures.first?.hasPrefix("\u{1}") == true && unknownSink.failures.first?.contains("Opus or Vorbis") == true, "Other Ogg codecs fail permanently with a clear message")
     let mixedSink = Recorder()
-    let mixed = OggDemuxer(sink: mixedSink)
-    mixed.feed(oggPage(flags: 2, sequence: 0, packets: [head]))
-    mixed.feed(oggPage(flags: 2, serial: 10, sequence: 0, packets: [Data([1]) + Data("vorbis".utf8) + Data(count: 20)]))
+    let mixedDemuxer = OggDemuxer(sink: mixedSink)
+    mixedDemuxer.feed(oggPage(flags: 2, sequence: 0, packets: [head]))
+    mixedDemuxer.feed(oggPage(flags: 2, serial: 10, sequence: 0, packets: [Data([1]) + Data("vorbis".utf8) + Data(count: 20)]))
     try check(mixedSink.failures.first?.contains("changed its audio format") == true, "A chained stream that switches codec is rejected")
     var vorbisComment = Data([3]) + Data("vorbis".utf8) + le32(4) + Data("test".utf8) + le32(2)
     for comment in comments { vorbisComment += le32(UInt32(comment.count)) + comment }
@@ -478,7 +602,17 @@ do {
     let ffmpeg = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"].first { FileManager.default.isExecutableFile(atPath: $0) }
     if let ffmpeg {
         let wavURL = root.appendingPathComponent("tone.wav"), oggURL = root.appendingPathComponent("tone.ogg")
-        var wav = Data("RIFF".utf8) + le32(36 + 44100 * 4) + Data("WAVEfmt ".utf8) + le32(16) + Data([1, 0, 2, 0]) + le32(44100) + le32(44100 * 4) + Data([4, 0, 16, 0]) + Data("data".utf8) + le32(44100 * 4)
+        var wav = Data()
+        wav.append(Data("RIFF".utf8))
+        wav.append(le32(36 + 44100 * 4))
+        wav.append(Data("WAVEfmt ".utf8))
+        wav.append(le32(16))
+        wav.append(Data([1, 0, 2, 0]))
+        wav.append(le32(44100))
+        wav.append(le32(44100 * 4))
+        wav.append(Data([4, 0, 16, 0]))
+        wav.append(Data("data".utf8))
+        wav.append(le32(44100 * 4))
         for n in 0..<44100 { let v = Int16(8000 * sin(2 * Double.pi * 1000 * Double(n) / 44100)); for _ in 0..<2 { wav += withUnsafeBytes(of: v.littleEndian) { Data($0) } } }
         try wav.write(to: wavURL)
         let encoder = Process(); encoder.executableURL = URL(fileURLWithPath: ffmpeg)
@@ -548,6 +682,8 @@ do {
     try check(docked.minX == 300 && docked.maxY == anchor.minY, "A window dropped near another snaps flush under it")
     try check(PlayerWindow.snapped(NSRect(x: 5, y: 300, width: 100, height: 50), to: [], screen: screenRect).minX == 0, "A window near the screen edge snaps to it")
     try check(PlayerWindow.snapped(NSRect(x: 400, y: 100, width: 100, height: 50), to: [anchor], screen: screenRect).origin == NSPoint(x: 400, y: 100), "Distant windows do not snap")
+    let desktopRect = NSRect(x: 0, y: 0, width: screenRect.width, height: screenRect.height + 25)
+    try check(PlayerWindow.snapped(NSRect(x: 100, y: 3, width: 100, height: 50), to: [], screen: screenRect.offsetBy(dx: 0, dy: 40), desktop: desktopRect).minY == 0, "A window near the full screen edge snaps to it as well as to the usable area")
     try check(PlayerWindow.touching(anchor, NSRect(x: 300, y: 168, width: 550, height: 232)) && !PlayerWindow.touching(anchor, NSRect(x: 300, y: 100, width: 550, height: 232)), "Docked windows are detected by touching edges")
     // Jump to Station matching
     let jumpList = [Station(name: "Groove Salad", address: "https://a.example/gs"), Station(name: "Deep Space One", address: "https://a.example/ds"), Station(name: "Space Station Soma", address: "https://a.example/sss")]
@@ -580,11 +716,11 @@ do {
         row.directoryID = directoryID
         return row
     }
-    try check(StreamProbe.verdict(status: 200, contentType: "audio/mpeg") == .alive && StreamProbe.verdict(status: 200, contentType: "") == .alive, "A 200 audio response is alive")
+    try check(StreamProbe.verdict(status: 200, contentType: "audio/mpeg") == .alive && StreamProbe.verdict(status: 200, contentType: "") == .unknown, "Audio headers indicate reachability; missing content type is inconclusive")
     try check(StreamProbe.verdict(status: 200, contentType: "text/html; charset=utf-8") == .dead, "A web page instead of audio is dead")
     try check(StreamProbe.verdict(status: 404, contentType: "") == .dead && StreamProbe.verdict(status: 410, contentType: "") == .dead, "404 and 410 are dead")
-    try check(StreamProbe.verdict(status: 403, contentType: "") == .doubtful && StreamProbe.verdict(status: 503, contentType: "") == .doubtful, "403 and 5xx are only doubtful")
-    try check(StreamProbe.verdict(error: URLError(.cannotFindHost)) == .dead && StreamProbe.verdict(error: URLError(.cannotConnectToHost)) == .dead, "No such host or nothing listening is dead")
+    try check(StreamProbe.verdict(status: 403, contentType: "") == .unknown && StreamProbe.verdict(status: 503, contentType: "") == .doubtful, "403 is restricted/inconclusive; 5xx remains transient")
+    try check(StreamProbe.verdict(error: URLError(.cannotFindHost)) == .doubtful && StreamProbe.verdict(error: URLError(.cannotConnectToHost)) == .doubtful, "DNS and connection failures are transient evidence")
     try check(StreamProbe.verdict(error: URLError(.timedOut)) == .doubtful && StreamProbe.verdict(error: URLError(.notConnectedToInternet)) == .unknown, "Timeouts are doubtful and being offline says nothing")
     try check(!StreamProbe.canCheck(URL(string: "http://192.168.1.5:8000/s")!) && !StreamProbe.canCheck(URL(string: "http://localhost/s")!) && !StreamProbe.canCheck(URL(string: "http://radio.local/s")!) && !StreamProbe.canCheck(URL(string: "http://[::1]/s")!), "Addresses on the user's own network are never checked")
     try check(!StreamProbe.canCheck(URL(string: "https://x.example.com/live.m3u8")!) && !StreamProbe.canCheck(URL(string: "https://x.example.com/a.pls")!) && StreamProbe.canCheck(URL(string: "https://cast1.example.com:4660/stream")!), "Playlists and HLS are not judged by a header; public streams are checked")
@@ -600,11 +736,11 @@ do {
     deadList.record("http://d.example.com/s", .unknown, now: t0)
     try check(deadList.isDead("http://a.example.com/s", now: t0) && !deadList.isDead("http://b.example.com/s", now: t0) && !deadList.isDead("http://c.example.com/s", now: t0) && !deadList.isDead("http://d.example.com/s", now: t0), "Dead is immediate, one doubtful strike is not, unknown records nothing")
     deadList.record("http://b.example.com/s", .doubtful, now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1))
-    try check(deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1)), "A second doubtful strike makes a station dead")
+    try check(!deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 1)), "Repeated transient failures never hide a station as dead")
     deadList.record("http://b.example.com/s", .alive, now: t0.addingTimeInterval(DeadStations.doubtfulGap + 2))
     try check(!deadList.isDead("http://b.example.com/s", now: t0.addingTimeInterval(DeadStations.doubtfulGap + 2)), "A station that answers again is forgiven")
-    try check(!deadList.isDead("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)) && deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)), "A dead station is retried after two weeks")
-    try check(!deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(86_400)) && !deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(86_400)) && deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(DeadStations.aliveFor + 1)) && deadList.needsCheck("http://new.example.com/s", now: t0), "Recent answers are not asked again; new and stale stations are checked")
+    try check(!deadList.isDead("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)) && deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(DeadStations.deadFor + 1)), "A failed endpoint is retried after twelve hours")
+    try check(!deadList.needsCheck("http://a.example.com/s", now: t0.addingTimeInterval(3600)) && !deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(86_400)) && deadList.needsCheck("http://c.example.com/s", now: t0.addingTimeInterval(DeadStations.aliveFor + 1)) && deadList.needsCheck("http://new.example.com/s", now: t0), "Recent answers are not asked again; new and stale stations are checked")
     let deadReloaded = DeadStations(file: deadFile)
     try check(deadReloaded.isDead("http://a.example.com/s", now: t0), "Dead stations are saved across launches")
     let deadPage = DirectoryPage(stations: [listing("http://a.example.com/s"), listing("http://c.example.com/s"), listing("http://z.example.com/s", directoryID: UUID().uuidString)], hasMore: true, rawCount: 3)

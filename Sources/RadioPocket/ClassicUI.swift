@@ -4,6 +4,8 @@ import AppKit
 enum ClassicUI {
     static let font = NSFont(name: "Tahoma", size: 11) ?? .systemFont(ofSize: 11)
     static let small = font
+    /// Station and song/artist for the shaded title bars; nothing is returned while no station is loaded.
+    static var nowPlaying: () -> String? = { nil }
     /// Colours follow the skin (GENEX.BMP / PLEDIT.TXT), as Winamp's general windows do.
     static var palette: SkinPalette { skin?.palette ?? .native }
     static var panel: NSColor { palette.window }
@@ -12,6 +14,9 @@ enum ClassicUI {
     static var text: NSColor { palette.text }
     static var dim: NSColor { palette.label }
     static var selection: NSColor { palette.selection }
+    /// Speed of scrolling station and song text, in points per second; 0 is off.
+    static var scrollSpeed: Double = 30
+    static let scrollSpeeds: [(title: String, value: Double)] = [("Off", 0), ("Slow", 15), ("Normal", 30), ("Fast", 60)]
     static var skin: ClassicSkin? { didSet {
         let old = oldValue?.palette ?? .native, new = palette
         for window in NSApp.windows { if let content = window.contentView { recolor(content, from: old, to: new) } }
@@ -79,6 +84,56 @@ final class PlayerWindow: NSWindow {
     /// Resizing is handled by `ClassicChrome`, not the system mask: a `.resizable` borderless window reserves
     /// an edge strip that swallows clicks on the title-bar buttons.
     var isUserResizable = false
+    /// When set, resizing keeps the content area at this width-to-height ratio (nil result: free resize).
+    /// `aspectChrome` is the window space around the content, which does not scale.
+    var contentAspect: (() -> CGFloat?)?
+    var aspectChrome = NSSize.zero
+
+    /// Adjusts `rect` so its content area has `contentAspect`. The height follows the width unless only the
+    /// bottom edge is being dragged, in which case the width follows the height; the top-left stays put.
+    func fittedToAspect(_ rect: NSRect, widthLeads: Bool) -> NSRect {
+        guard let ratio = contentAspect?(), ratio > 0 else { return rect }
+        var width = rect.width, height = rect.height
+        if widthLeads { height = (width - aspectChrome.width) / ratio + aspectChrome.height }
+        else { width = (height - aspectChrome.height) * ratio + aspectChrome.width }
+        if height < minSize.height { height = minSize.height; width = (height - aspectChrome.height) * ratio + aspectChrome.width }
+        if width < minSize.width { width = minSize.width; height = (width - aspectChrome.width) / ratio + aspectChrome.height }
+        return NSRect(x: rect.minX, y: rect.maxY - height, width: width, height: height)
+    }
+
+    /// Double-clicking a panel's title bar shades it to the bar alone, as the player does; the full panel is kept aside.
+    private var shadeRestore: (content: NSView, frame: NSRect, minSize: NSSize, autosave: String)?
+    /// Width every shaded panel takes, so the bars stack under the player and equalizer at the same width.
+    static var nestedShadeWidth: () -> CGFloat? = { nil }
+    /// What this panel shows on its shaded bar in place of the playback controls; the close and minimize buttons stay.
+    var shadeContent: ((ClassicChrome) -> Void)?
+    var isShaded: Bool { shadeRestore != nil }
+    func toggleShade() {
+        if let saved = shadeRestore {
+            shadeRestore = nil
+            minSize = saved.minSize
+            setFrameAutosaveName(saved.autosave)
+            // The top edge stays where the bar was left, even if it was dragged while shaded.
+            setFrame(NSRect(x: frame.minX, y: frame.maxY - saved.frame.height, width: saved.frame.width, height: saved.frame.height), display: false)
+            contentView = saved.content
+            display()
+            delegate?.windowDidResize?(Notification(name: NSWindow.didResizeNotification, object: self))
+        } else if let chrome = contentView as? ClassicChrome {
+            shadeRestore = (chrome, frame, minSize, frameAutosaveName)
+            // A shaded bar must not be remembered as the panel's size for the next launch.
+            setFrameAutosaveName("")
+            let width = Self.nestedShadeWidth() ?? frame.width
+            let bar = ClassicChrome(frame: NSRect(origin: .zero, size: NSSize(width: width, height: ClassicChrome.shadeHeight)))
+            bar.title = chrome.title; bar.shadeMinimizable = styleMask.contains(.miniaturizable); bar.shadeContent = shadeContent; bar.isShadeBar = true
+            minSize = NSSize(width: min(minSize.width, width), height: ClassicChrome.shadeHeight)
+            contentView = bar
+            setFrame(NSRect(x: frame.minX, y: frame.maxY - ClassicChrome.shadeHeight, width: width, height: ClassicChrome.shadeHeight), display: true)
+        }
+    }
+    override func close() {
+        if isShaded { toggleShade() }
+        super.close()
+    }
 
     static let snapDistance: CGFloat = 12
     /// The windows other windows snap to: the other visible RadioPocket panels.
@@ -104,14 +159,25 @@ final class PlayerWindow: NSWindow {
     }
 
     /// Moves `rect` so its edges line up with the screen edges and the `others` when they come within `snapDistance`.
-    static func snapped(_ rect: NSRect, to others: [NSRect], screen: NSRect) -> NSRect {
+    /// The display `rect` mostly sits on (the one with the largest overlap), as its usable area and its full frame.
+    static func display(for rect: NSRect, fallback: NSScreen?) -> (visible: NSRect, full: NSRect)? {
+        func overlap(_ s: NSScreen) -> CGFloat { let i = s.frame.intersection(rect); return i.isNull ? 0 : i.width * i.height }
+        let best = NSScreen.screens.max { overlap($0) < overlap($1) }.flatMap { overlap($0) > 0 ? $0 : nil } ?? fallback ?? NSScreen.main
+        return best.map { ($0.visibleFrame, $0.frame) }
+    }
+
+    /// Moves `rect` so its edges line up with the screen edges and the `others` when they come within `snapDistance`.
+    /// `desktop` is the display's full frame; its edges attract too, so a panel can sit against the true screen edge
+    /// as well as against the menu bar and Dock.
+    static func snapped(_ rect: NSRect, to others: [NSRect], screen: NSRect, desktop: NSRect? = nil) -> NSRect {
         var best: (dx: CGFloat, dy: CGFloat) = (.infinity, .infinity)
         func consider(x: CGFloat? = nil, y: CGFloat? = nil) {
             if let x, abs(x) < abs(best.dx) { best.dx = x }
             if let y, abs(y) < abs(best.dy) { best.dy = y }
         }
-        for target in [screen] + others {
-            let isScreen = target == screen
+        let screens = [screen] + (desktop.map { [$0] } ?? [])
+        for target in screens + others {
+            let isScreen = screens.contains(target)
             let nearY = rect.minY - snapDistance < target.maxY && rect.maxY + snapDistance > target.minY
             let nearX = rect.minX - snapDistance < target.maxX && rect.maxX + snapDistance > target.minX
             if isScreen || nearY {
@@ -129,6 +195,26 @@ final class PlayerWindow: NSWindow {
         return result
     }
 
+    /// Pulls the edges being dragged (`x` values for left/right, `y` values for the bottom) onto the screen edges and
+    /// the edges of neighbouring panels within `snapDistance`, so a resized window lines up with what it sits beside.
+    func snappedResize(_ rect: NSRect, left: Bool, right: Bool, bottom: Bool) -> NSRect {
+        let display = Self.display(for: rect, fallback: screen)
+        let visible = display?.visible ?? rect, full = display?.full ?? rect
+        var xs: [CGFloat] = [visible.minX, visible.maxX, full.minX, full.maxX], ys: [CGFloat] = [visible.minY, visible.maxY, full.minY, full.maxY]
+        for other in neighbours.map(\.frame) {
+            if rect.minY - Self.snapDistance < other.maxY && rect.maxY + Self.snapDistance > other.minY { xs += [other.minX, other.maxX] }
+            if rect.minX - Self.snapDistance < other.maxX && rect.maxX + Self.snapDistance > other.minX { ys += [other.minY, other.maxY] }
+        }
+        func pull(_ value: CGFloat, _ targets: [CGFloat]) -> CGFloat {
+            targets.filter { abs($0 - value) <= Self.snapDistance }.min { abs($0 - value) < abs($1 - value) } ?? value
+        }
+        var minX = rect.minX, maxX = rect.maxX, minY = rect.minY
+        if left { minX = min(pull(minX, xs), maxX - minSize.width) }
+        if right { maxX = max(pull(maxX, xs), minX + minSize.width) }
+        if bottom { minY = min(pull(minY, ys), rect.maxY - minSize.height) }
+        return NSRect(x: minX, y: minY, width: maxX - minX, height: rect.maxY - minY)
+    }
+
     /// Drags the window by its title strip with Winamp-style snapping. Hold Option to move freely. With
     /// `movesDockedWindows` (the player), anything docked to it moves too.
     func trackDrag(_ event: NSEvent, movesDockedWindows: Bool = false) {
@@ -142,8 +228,8 @@ final class PlayerWindow: NSWindow {
             let now = NSEvent.mouseLocation
             var moved = group.offsetBy(dx: now.x - startMouse.x, dy: now.y - startMouse.y)
             if !next.modifierFlags.contains(.option) {
-                let screen = (NSScreen.screens.first { $0.frame.intersects(moved) } ?? screen ?? NSScreen.main)?.visibleFrame ?? moved
-                moved = PlayerWindow.snapped(moved, to: others, screen: screen)
+                let display = PlayerWindow.display(for: moved, fallback: screen)
+                moved = PlayerWindow.snapped(moved, to: others, screen: display?.visible ?? moved, desktop: display?.full)
             }
             let dx = moved.minX - group.minX, dy = moved.minY - group.minY
             for (window, frame) in starts { window.setFrameOrigin(NSPoint(x: frame.minX + dx, y: frame.minY + dy)) }
@@ -159,30 +245,52 @@ class ClassicButton: NSButton {
         if window?.firstResponder === self { NSColor.darkGray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 3, dy: 3)).stroke() }
     }
 }
+/// A drop-down arrow drawn as a pixel triangle so it centres the same way in every control.
+private func dropArrow(in rect: NSRect, color: NSColor) {
+    let cx = rect.midX.rounded(), cy = rect.midY.rounded()
+    color.setFill()
+    for i in 0..<3 { NSRect(x: cx - 3 + CGFloat(i), y: cy - 1 + CGFloat(i), width: 7 - CGFloat(i) * 2, height: 1).fill() }
+}
 final class ClassicPopup: NSPopUpButton {
     override var isFlipped: Bool { true }
+    // The system bezel's alignment insets would make the drawn control larger than its constraints, so it would
+    // stand taller than a ClassicButton and crowd its neighbours.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
     override func draw(_ dirtyRect: NSRect) {
         ClassicUI.button(bounds, down: isHighlighted)
-        ClassicUI.caption(title, rect: NSRect(x: 2, y: 0, width: bounds.width - 17, height: bounds.height), color: ClassicUI.buttonText.withAlphaComponent(isEnabled ? 1 : 0.4), alignment: .left)
-        ClassicUI.caption("▾", rect: NSRect(x: bounds.width - 18, y: 0, width: 17, height: bounds.height), color: ClassicUI.buttonText)
+        let ink = ClassicUI.buttonText.withAlphaComponent(isEnabled ? 1 : 0.4)
+        ClassicUI.caption(title, rect: NSRect(x: 3, y: 0, width: bounds.width - 20, height: bounds.height), color: ink, alignment: .left)
+        dropArrow(in: NSRect(x: bounds.width - 16, y: 0, width: 12, height: bounds.height), color: ink)
     }
 }
-final class ClassicCombo: NSComboBox {
-    override var isFlipped: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-        ClassicUI.black.setFill(); bounds.fill()
-        NSColor.gray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)).stroke()
-        ClassicUI.caption(stringValue, rect: NSRect(x: 1, y: 0, width: bounds.width - 19, height: bounds.height), color: isEnabled ? ClassicUI.text : ClassicUI.dim, alignment: .left)
-        let arrow = NSRect(x: bounds.width - 18, y: 0, width: 18, height: bounds.height)
-        ClassicUI.button(arrow); ClassicUI.caption("▾", rect: arrow, color: ClassicUI.buttonText)
-    }
-}
-
 class ClassicChrome: NSView {
+    static let barHeight: CGFloat = 20
+    /// A shaded bar matches the player's and equalizer's 14-point title bar.
+    static let shadeHeight: CGFloat = 14
     var title = "MEDIA LIBRARY" { didSet { needsDisplay = true } }
+    /// The stand-in a shaded window shows: just the title bar, with a mini transport and the now-playing text on it.
+    var isShadeBar = false { didSet { if isShadeBar { addShadeControls() } } }
+    var shadeMinimizable = false
+    var shadeContent: ((ClassicChrome) -> Void)?
+    private func addShadeControls() {
+        var x = bounds.width - 12
+        for (caption, action) in [("×", #selector(shadeClose)), ("−", #selector(shadeMinimize))] {
+            if caption == "−", !shadeMinimizable { continue }
+            let button = ClassicWindowButton(title: caption, target: self, action: action)
+            button.isBordered = false; button.frame = NSRect(x: x, y: 3, width: 9, height: 9); button.autoresizingMask = .minXMargin
+            addSubview(button); x -= 11
+        }
+        if let shadeContent { shadeContent(self); return }
+        let transport = MiniTransport(frame: NSRect(x: 6, y: 2, width: MiniTransport.width, height: 10))
+        let label = MarqueeLabel(frame: NSRect(x: 50, y: 2, width: bounds.width - 50 - 30, height: 10), font: .monospacedSystemFont(ofSize: 8, weight: .medium)) { [weak self] in ClassicUI.nowPlaying() ?? self?.title ?? "" }
+        label.autoresizingMask = .width
+        addSubview(transport); addSubview(label)
+    }
+    @objc private func shadeClose() { window?.close() }
+    @objc private func shadeMinimize() { window?.miniaturize(nil) }
     private var resizeStart: (frame: NSRect, mouse: NSPoint, edges: Edges)?
     private struct Edges: OptionSet { let rawValue: Int; static let left = Edges(rawValue: 1), right = Edges(rawValue: 2), bottom = Edges(rawValue: 4) }
-    private var userResizable: Bool { (window as? PlayerWindow)?.isUserResizable == true }
+    private var userResizable: Bool { !isShadeBar && (window as? PlayerWindow)?.isUserResizable == true }
     /// Left, right and bottom edges plus the bottom-right grip. The top edge is left alone so the title buttons stay clickable.
     private func edges(at p: NSPoint) -> Edges {
         guard userResizable else { return [] }
@@ -206,6 +314,17 @@ class ClassicChrome: NSView {
         ClassicUI.panel.setFill(); bounds.fill()
         NSColor.gray.setStroke(); NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1)).stroke()
         let h = bounds.height, w = bounds.width
+        if isShadeBar, let sheet = ClassicUI.skin {
+            // The player's plain title bar (no WINAMP text or display): its two end caps with the stripes tiled between them.
+            func piece(_ sx: CGFloat, _ width: CGFloat, to x: CGFloat) -> Bool {
+                guard let image = sheet.sprite("titlebar.bmp", NSRect(x: sx, y: window?.isKeyWindow == false ? 15 : 0, width: width, height: 14)) else { return false }
+                image.draw(in: NSRect(x: x, y: 0, width: width, height: 14), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue]); return true
+            }
+            let cap: CGFloat = 25
+            var x = cap, ok = piece(27, cap, to: 0)
+            while ok, x < w - cap { ok = piece(27 + cap, min(25, w - cap - x), to: x); x += 25 }
+            if ok, piece(27 + 275 - cap, cap, to: w - cap) { return }
+        }
         func sprite(_ source: NSRect, _ target: NSRect) -> Bool {
             guard let image = ClassicUI.skin?.sprite("gen.bmp", source) else { return false }
             image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue]); return true
@@ -214,43 +333,54 @@ class ClassicChrome: NSView {
         let row: CGFloat = window?.isKeyWindow == false ? 21 : 0
         let titleFont = NSFont.monospacedSystemFont(ofSize: 9, weight: .bold)
         let textWidth = ceil((title as NSString).size(withAttributes: [.font: titleFont]).width) + 4
-        let middle = max(25, min(w - 150, (textWidth / 25).rounded(.up) * 25))
+        let middle = isShadeBar ? max(25, w - 150) : max(25, min(w - 150, (textWidth / 25).rounded(.up) * 25))
         let titleStart = ((w - middle) / 2 - 25).rounded(.down)
         func tile(_ sx: CGFloat, _ sy: CGFloat, _ sw: CGFloat, _ sh: CGFloat, from: CGFloat, to: CGFloat, y: CGFloat) {
             var x = from
             while x < to { let width = min(sw, to - x); _ = sprite(NSRect(x: sx, y: sy, width: width, height: sh), NSRect(x: x, y: y, width: width, height: sh)); x += width }
         }
         if sprite(NSRect(x: 0, y: row, width: 25, height: 20), NSRect(x: 0, y: 0, width: 25, height: 20)) {
+            if isShadeBar {
+                // A shaded bar has its own content, so it gets the plain title-bar filler without the skin's logo pieces.
+                tile(104, row, 25, 20, from: 25, to: w - 25, y: 0)
+            } else {
             tile(104, row, 25, 20, from: 25, to: titleStart, y: 0)
             _ = sprite(NSRect(x: 26, y: row, width: 25, height: 20), NSRect(x: titleStart, y: 0, width: 25, height: 20))
             tile(52, row, 25, 20, from: titleStart + 25, to: titleStart + 25 + middle, y: 0)
             _ = sprite(NSRect(x: 78, y: row, width: 25, height: 20), NSRect(x: titleStart + 25 + middle, y: 0, width: 25, height: 20))
             tile(104, row, 25, 20, from: titleStart + 50 + middle, to: w - 25, y: 0)
+            }
             _ = sprite(NSRect(x: 130, y: row, width: 25, height: 20), NSRect(x: w - 25, y: 0, width: 25, height: 20))
             var y: CGFloat = 20
-            while y < h - 14 {
+            while !isShadeBar, y < h - 14 {
                 let height = min(29, h - 14 - y)
                 _ = sprite(NSRect(x: 127, y: 42, width: 11, height: height), NSRect(x: 0, y: y, width: 11, height: height))
                 _ = sprite(NSRect(x: 139, y: 42, width: 8, height: height), NSRect(x: w - 8, y: y, width: 8, height: height))
                 y += height
             }
             let corner = min(125, w / 2)
+            if !isShadeBar {
             _ = sprite(NSRect(x: 0, y: 42, width: corner, height: 14), NSRect(x: 0, y: h - 14, width: corner, height: 14))
-            // The filler's 14th row (y 85) is the sheet's cyan divider, so take 13 rows and stretch them over the 14px strip.
+            // The filler's 14th row (y 85) is the sheet's cyan divider: draw its 13 real rows 1:1 so its lines meet the
+            // corners' lines, and take the last row from the corners' own last row.
             var fx = corner
             while fx < w - corner {
                 let width = min(25, w - corner - fx)
-                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 13), NSRect(x: fx, y: h - 14, width: width, height: 14)); fx += width
+                _ = sprite(NSRect(x: 127, y: 72, width: width, height: 13), NSRect(x: fx, y: h - 14, width: width, height: 13)); fx += width
             }
+            _ = sprite(NSRect(x: corner - 1, y: 55, width: 1, height: 1), NSRect(x: corner, y: h - 1, width: max(0, w - 2 * corner), height: 1))
             _ = sprite(NSRect(x: 125 - corner, y: 57, width: corner, height: 14), NSRect(x: w - corner, y: h - 14, width: corner, height: 14))
+            }
             let titleColor = ClassicUI.skin?.genTitleColor ?? ClassicUI.text
-            ClassicUI.caption(title, rect: NSRect(x: titleStart + 22, y: 3, width: middle + 6, height: 12), color: titleColor, font: titleFont)
+            if !isShadeBar { ClassicUI.caption(title, rect: NSRect(x: titleStart + 22, y: 3, width: middle + 6, height: 12), color: titleColor, font: titleFont) }
         } else {
             for y in [4, 7, 10, 13] { NSColor(white: 0.55, alpha: 1).setFill(); NSRect(x: 8, y: CGFloat(y), width: w - 16, height: 1).fill() }
-            let tw = min(w - 90, CGFloat(title.count * 7 + 20))
-            let label = NSRect(x: (w - tw)/2, y: 2, width: tw, height: 16)
-            ClassicUI.panel.setFill(); label.fill()
-            ClassicUI.caption(title, rect: label, color: ClassicUI.text, font: .monospacedSystemFont(ofSize: 10, weight: .bold))
+            if !isShadeBar {
+                let tw = min(w - 90, CGFloat(title.count * 7 + 20))
+                let label = NSRect(x: (w - tw)/2, y: 2, width: tw, height: 16)
+                ClassicUI.panel.setFill(); label.fill()
+                ClassicUI.caption(title, rect: label, color: ClassicUI.text, font: .monospacedSystemFont(ofSize: 10, weight: .bold))
+            }
         }
         ClassicUI.dim.setStroke()
         if userResizable { for i in 0..<3 { let p = NSBezierPath(); p.move(to: NSPoint(x: w-5-CGFloat(i*3), y: h-4)); p.line(to: NSPoint(x:w-4,y:h-5-CGFloat(i*3))); p.stroke() } }
@@ -259,7 +389,10 @@ class ClassicChrome: NSView {
         let p = convert(event.locationInWindow, from: nil)
         let hit = edges(at: p)
         if !hit.isEmpty, let window { resizeStart = (window.frame, NSEvent.mouseLocation, hit) }
-        else if p.y < 20 { (window as? PlayerWindow)?.trackDrag(event) }
+        else if p.y < Self.barHeight {
+            if event.clickCount == 2 { (window as? PlayerWindow)?.toggleShade() }
+            else { (window as? PlayerWindow)?.trackDrag(event) }
+        }
     }
     override func mouseDragged(with event: NSEvent) {
         guard let (start, point, edges) = resizeStart, let window else { return }
@@ -269,7 +402,17 @@ class ClassicChrome: NSView {
         if edges.contains(.right) { width = max(window.minSize.width, start.width + dx) }
         if edges.contains(.left) { width = max(window.minSize.width, start.width - dx); x = start.maxX - width }
         if edges.contains(.bottom) { height = max(window.minSize.height, start.height - dy) }
-        window.setFrame(NSRect(x: x, y: start.maxY - height, width: width, height: height), display: true)
+        var frame = NSRect(x: x, y: start.maxY - height, width: width, height: height)
+        if !event.modifierFlags.contains(.option), let player = window as? PlayerWindow {
+            frame = player.snappedResize(frame, left: edges.contains(.left), right: edges.contains(.right), bottom: edges.contains(.bottom))
+        }
+        if let player = window as? PlayerWindow {
+            let horizontal = edges.contains(.left) || edges.contains(.right)
+            frame = player.fittedToAspect(frame, widthLeads: horizontal)
+            // Dragging the left edge keeps the right edge fixed.
+            if edges.contains(.left) { frame.origin.x = start.maxX - frame.width }
+        }
+        window.setFrame(frame, display: true)
     }
     override func mouseUp(with event: NSEvent) { resizeStart = nil }
 }

@@ -47,8 +47,36 @@ final class EqualizerView: NSView {
     let equalizer: Equalizer
     var skin: ClassicSkin? { didSet { sliders.forEach { $0.skin = skin; $0.needsDisplay = true }; refresh() } }
     var shaded = false { didSet {
-        sliders.forEach { $0.isHidden = shaded }; buttons.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }; needsDisplay = true
+        sliders.forEach { $0.isHidden = shaded }; buttons.forEach { $0.isHidden = shaded && $0.frame.minY >= 14 }
+        miniToggle.isHidden = !shaded; miniPreset.isHidden = !shaded; miniSpectrum.isHidden = !shaded
+        needsDisplay = true
     } }
+    /// The shaded bar keeps just the essentials: the on/off switch, and the current preset as a menu.
+    private lazy var miniToggle: PixelButton = {
+        let button = PixelButton(frame: NSRect(x: 6, y: 2, width: 26, height: 10))
+        button.identifier = .init("on"); button.title = ""; button.isBordered = false
+        button.setButtonType(.momentaryPushIn); button.setAccessibilityLabel("Enable or bypass equalizer")
+        button.target = self; button.action = #selector(clicked(_:))
+        button.paint = { [weak self] rect, down in
+            guard let self else { return }
+            let on = self.equalizer.settings.enabled
+            ClassicUI.inset(rect)
+            if down { ClassicUI.green.withAlphaComponent(0.28).setFill(); rect.insetBy(dx: 1, dy: 1).fill() }
+            ClassicUI.caption(on ? "ON" : "OFF", rect: rect, color: on ? ClassicUI.green : ClassicUI.dim, font: .monospacedSystemFont(ofSize: 7, weight: .semibold))
+        }
+        button.isHidden = true; return button
+    }()
+    private lazy var miniPreset: MarqueeLabel = {
+        let label = MarqueeLabel(frame: NSRect(x: 36, y: 2, width: 126, height: 10), font: .monospacedSystemFont(ofSize: 7, weight: .medium)) { [weak self] in self?.equalizer.settings.preset ?? "" }
+        label.showsChevron = true; label.setAccessibilityLabel("Equalizer preset")
+        label.onClick = { [weak self] in self?.presetMenu() }
+        label.isHidden = true; return label
+    }()
+    /// A live spectrum beside the preset, so the shaded bar shows something no other panel's does.
+    private let miniSpectrum: MiniSpectrum = {
+        let view = MiniSpectrum(frame: NSRect(x: 166, y: 2, width: 79, height: 10)); view.isHidden = true; return view
+    }()
+    func attach(visualizer hub: VisualizerHub) { miniSpectrum.attach(to: hub) }
     var action: ((String) -> Void)?
     private var sliders: [EQSlider] = []
     private var buttons: [PixelButton] = []
@@ -73,6 +101,7 @@ final class EqualizerView: NSView {
         addButton("presets", "Choose equalizer preset", NSRect(x: 217, y: 18, width: 44, height: 12))
         addButton("shade", "Toggle compact equalizer title bar", NSRect(x: 254, y: 3, width: 9, height: 9))
         addButton("close", "Hide equalizer", NSRect(x: 264, y: 3, width: 9, height: 9))
+        addSubview(miniToggle); addSubview(miniPreset); addSubview(miniSpectrum)
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -93,7 +122,7 @@ final class EqualizerView: NSView {
             }
             if let source, self.sprite(source, target: rect) { return }
             ClassicUI.bevel(rect, down: down)
-            ClassicUI.caption(id == "on" ? (self.equalizer.settings.enabled ? "ON" : "OFF") : (id == "flat" ? "FLAT" : id == "close" ? "×" : "PRESETS"), rect: rect, font: .monospacedSystemFont(ofSize: 6, weight: .medium))
+            ClassicUI.caption(id == "on" ? (self.equalizer.settings.enabled ? "ON" : "OFF") : (id == "flat" ? "FLAT" : id == "close" ? "×" : id == "shade" ? "▱" : "PRESETS"), rect: rect, font: .monospacedSystemFont(ofSize: 6, weight: .medium))
         }
         buttons.append(button); addSubview(button)
     }
@@ -118,7 +147,7 @@ final class EqualizerView: NSView {
             slider.toolTip = "\(labels[i]): \(String(format: "%+.1f", slider.floatValue)) dB • Double-click to reset"
             slider.needsDisplay = true
         }
-        buttons.forEach { $0.needsDisplay = true }; needsDisplay = true
+        buttons.forEach { $0.needsDisplay = true }; miniToggle.needsDisplay = true; miniPreset.needsDisplay = true; needsDisplay = true
     }
     private func presetMenu() {
         let menu = NSMenu()
@@ -133,7 +162,7 @@ final class EqualizerView: NSView {
             let item = NSMenuItem(title: title, action: #selector(presetAction(_:)), keyEquivalent: "")
             item.representedObject = id; item.target = self; menu.addItem(item)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 217, y: 31), in: self)
+        menu.popUp(positioning: nil, at: shaded ? NSPoint(x: 36, y: 15) : NSPoint(x: 217, y: 31), in: self)
     }
     @objc private func selectPreset(_ sender: NSMenuItem) { equalizer.select((EQPreset.classic + equalizer.settings.custom)[sender.tag]) }
     @objc private func presetAction(_ sender: NSMenuItem) { action?(sender.representedObject as! String) }

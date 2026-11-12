@@ -1,0 +1,4 @@
+RadioPocket for iPhone 0.9
+* Added: The classic player in landscape, with the classic equalizer and playlist
+* Added: Stacked classic windows in portrait
+* Added: Station library with directory browsing

@@ -14,17 +14,22 @@ final class HTTPSource: NSObject, URLSessionDataDelegate, StreamSource, @uncheck
     var onData: ((Data) -> Void)?
     var onTitle: ((String) -> Void)?
     var onFailure: ((String) -> Void)?
+    /// The server refused this request (error status, a web page, a connection it couldn’t parse), so another User-Agent may succeed.
+    var onRejected: ((String) -> Void)?
     private(set) var lastActivity = Date()
     private let url: URL
+    private let userAgent: String?
     private let queue = OperationQueue()
+    private var gotResponse = false
     private var session: URLSession?
     private var stopped = false
     private var interval = 0, audioRemaining = 0, metadataRemaining = 0
     private var expectsLength = false
     private var metadataBytes = Data()
 
-    init(url: URL) {
+    init(url: URL, userAgent: String? = UserAgent.value) {
         self.url = url
+        self.userAgent = userAgent
         super.init()
         queue.maxConcurrentOperationCount = 1
         queue.qualityOfService = .userInitiated
@@ -37,14 +42,19 @@ final class HTTPSource: NSObject, URLSessionDataDelegate, StreamSource, @uncheck
         session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
         var request = URLRequest(url: url)
         request.setValue("1", forHTTPHeaderField: "Icy-MetaData")
-        request.setValue("RadioPocket/0.8", forHTTPHeaderField: "User-Agent")
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
+        if let userAgent { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
         session?.dataTask(with: request).resume()
     }
     func stop() { stopped = true; session?.invalidateAndCancel(); session = nil }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        gotResponse = true
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            completionHandler(.cancel); if !stopped { stopped = true; onFailure?("The radio server returned an error.") }; return
+            completionHandler(.cancel); reject("The radio server returned an error.", status: true); return
+        }
+        if (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased().hasPrefix("text/html") {
+            completionHandler(.cancel); reject("The station returned a web page instead of audio.", status: true); return
         }
         interval = Int(http.value(forHTTPHeaderField: "icy-metaint") ?? "0") ?? 0
         interval = (0...16_777_216).contains(interval) ? interval : 0
@@ -84,8 +94,17 @@ final class HTTPSource: NSObject, URLSessionDataDelegate, StreamSource, @uncheck
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard !stopped else { return }
+        let retryable: Set<Int> = [NSURLErrorNetworkConnectionLost, NSURLErrorCannotParseResponse, NSURLErrorBadServerResponse,
+                                   NSURLErrorZeroByteResource, NSURLErrorDataLengthExceedsMaximum]
+        let code = (error as NSError?)?.code ?? 0
+        reject(error?.localizedDescription ?? "The station closed the connection.", status: !gotResponse && retryable.contains(code))
+    }
+
+    /// Ends the connection; `status` marks a refusal another User-Agent might get past.
+    private func reject(_ message: String, status: Bool) {
+        guard !stopped else { return }
         stopped = true
-        onFailure?(error?.localizedDescription ?? "The station closed the connection.")
+        if status, let onRejected { onRejected(message) } else { onFailure?(message) }
     }
 }
 
@@ -94,6 +113,7 @@ final class HTTPSource: NSObject, URLSessionDataDelegate, StreamSource, @uncheck
 /// Fragmented MP4 and SAMPLE-AES streams report `unsupported` so the engine can fall back to AVPlayer.
 final class HLSSource: StreamSource, @unchecked Sendable {
     static let unsupportedPrefix = "HLS-UNSUPPORTED:"
+    static let statusError = "The HLS server returned an error."
     var onAudio: ((Data) -> Void)?
     var onTitle: ((String) -> Void)?
     var onFailure: ((String) -> Void)?
@@ -103,12 +123,12 @@ final class HLSSource: StreamSource, @unchecked Sendable {
     private let session: URLSession
     private var keys: [URL: Data] = [:]
 
-    init(url: URL) {
+    init(url: URL, userAgent: String? = UserAgent.value) {
         self.url = url
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         config.urlCache = nil
-        config.httpAdditionalHeaders = ["User-Agent": "RadioPocket/0.8"]
+        if let userAgent { config.httpAdditionalHeaders = ["User-Agent": userAgent] }
         session = URLSession(configuration: config)
     }
 
@@ -127,7 +147,7 @@ final class HLSSource: StreamSource, @unchecked Sendable {
             try Task.checkCancellation()
             do {
                 let (data, response) = try await session.data(from: url)
-                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw RadioError.message("The HLS server returned an error.") }
+                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw RadioError.message(Self.statusError) }
                 guard data.count <= limit else { throw RadioError.message("An HLS file exceeded its size limit.") }
                 lastActivity = Date()
                 return data

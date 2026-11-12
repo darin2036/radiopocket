@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import MediaPlayer
 
 /// Routes hardware media keys, AirPods/headset controls and Control Center buttons to the

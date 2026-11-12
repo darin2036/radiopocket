@@ -13,10 +13,13 @@ private final class FavoritesTable: NSTableView {
     }
 }
 
-final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     private let table = FavoritesTable()
     let library: Library
     var play: ((Station) -> Void)?
+    var panelTitles: (() -> [String])?
+    var playOnPanel: ((Station, Int?) -> Void)?
+    private let panelMenuItem = NSMenuItem(title: "Play on", action: nil, keyEquivalent: "")
     var edit: ((Station?) -> Void)?
     var report: ((Error) -> Void)?
     private var selectionButtons: [NSButton] = []
@@ -33,7 +36,7 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
         let content = chrome
         let close = ClassicWindowButton(title: "×", target: self, action: #selector(closePanel))
         close.frame = NSRect(x: 528, y: 3, width: 9, height: 9); close.autoresizingMask = [.minXMargin]; close.isBordered = false; close.setAccessibilityLabel("Close favorites"); content.addSubview(close)
-        let scroll = NSScrollView()
+        let scroll = FittedScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
         scroll.borderType = .lineBorder; scroll.scrollerStyle = .legacy; scroll.backgroundColor = ClassicUI.black
@@ -52,6 +55,8 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
         for (title, selector) in [("Play", #selector(playSelected)), ("Edit…", #selector(editSelected)), ("Remove from Favorites", #selector(remove))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; context.addItem(item)
         }
+        panelMenuItem.action = #selector(panelMenuParent); panelMenuItem.target = self
+        context.insertItem(panelMenuItem, at: 1)
         table.menu = context
         scroll.documentView = table
         content.addSubview(scroll)
@@ -98,6 +103,17 @@ final class FavoritesController: NSWindowController, NSTableViewDataSource, NSTa
     }
     private var selected: Station? { library.state.favorites.indices.contains(table.selectedRow) ? library.state.favorites[table.selectedRow] : nil }
     @objc private func playSelected() { if let selected { play?(selected) } }
+    @objc private func panelMenuParent() {}
+    @objc private func playOnPanelSelected(_ sender: NSMenuItem) {
+        if let selected, let index = sender.representedObject as? Int { playOnPanel?(selected, index < 0 ? nil : index) }
+    }
+    /// Only TV channels have a picture to put in a panel.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard item.action == #selector(panelMenuParent) else { return selected != nil || item.action == #selector(add) }
+        let titles = selected?.video == true ? panelTitles?() ?? [] : []
+        PanelMenu.fill(item, titles: titles, target: self, action: #selector(playOnPanelSelected(_:)))
+        return !titles.isEmpty
+    }
     @objc private func add() { edit?(nil) }
     @objc private func editSelected() { if let selected { edit?(selected) } }
     @objc private func remove() {
@@ -112,6 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var view: PlayerView!
     var library: Library!
     let engine = RadioEngine()
+    /// The engine whose audio is audible; the main player's display and transport follow it.
+    private(set) var focus: RadioEngine!
+    /// Extra video panels opened with "Tune In on New Panel"; each plays on its own engine.
+    private var panels: [(engine: RadioEngine, controller: VideoController)] = []
     var favorites: FavoritesController!
     private var discovery: DiscoveryController?
     private var preferences: PreferencesController?
@@ -127,6 +147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var smokePath: String? { argument("--smoke-result") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LegacyDefaults.migrate()
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didExposeNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.syncWindowLevels() }
+        }
         do {
             library = try Library(directory: argument("--data-dir").map { URL(fileURLWithPath: $0) })
         } catch {
@@ -139,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         engine.equalizer.spatial = library.state.spatial ?? SpatialSettings()
         engine.leveling = library.state.leveling ?? false
         buildMenu()
+        focus = engine
         view = PlayerView(engine: engine)
         window = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 232), styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
         window.title = "RadioPocket"
@@ -149,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.delegate = self
         configureVisualizer()
         window.level = library.state.alwaysOnTop == true ? .floating : .normal
+        ClassicUI.scrollSpeed = library.state.textScrollSpeed ?? 30
         scale(library.state.scale, save: false)
         window.center()
         window.setFrameAutosaveName("RadioPocket.Player")
@@ -159,15 +185,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         favorites = FavoritesController(library: library)
         favorites.play = { [weak self] in self?.play($0) }
+        favorites.panelTitles = { [weak self] in self?.panelTitles() ?? [] }
+        favorites.playOnPanel = { [weak self] in self?.playOnPanel($0, $1) }
         favorites.edit = { [weak self] in self?.openDialog(station: $0, favoriteOnly: true) }
         favorites.report = { [weak self] in self?.showError($0) }
         library.changed = { [weak self] in self?.favorites.refresh(); self?.discovery?.libraryChanged() }
+        ClassicUI.nowPlaying = { [weak self] in
+            guard let self, let station = self.focus.station else { return nil }
+            // A connecting or failed station says so, since there is no song to show.
+            let song = ([.connecting, .failed].contains(self.focus.status) ? self.focus.detail : self.focus.title).trimmingCharacters(in: .whitespacesAndNewlines)
+            return [station.name, song == station.name ? "" : song].filter { !$0.isEmpty }.joined(separator: " — ")
+        }
+        ClassicUI.isPlaying = { [weak self] in self.map { [.playing, .connecting].contains($0.focus.status) } ?? false }
+        ClassicUI.transport = { [weak self] in self?.handle($0) }
         updateBackgroundStations()
         startHousekeeping()
+        if smokePath == nil, argument("--preview") == nil { checkForUpdatesAtLaunch() }
         view.action = { [weak self] in self?.handle($0) }
         view.volumeChanged = { [weak self] value in
             guard let self else { return }
-            self.engine.setVolume(value)
+            self.focus.setVolume(value)
             if self.sleepBaseVolume != nil { self.sleepBaseVolume = value }   // the fade continues from the new level
             self.scheduleVolumeSave()
         }
@@ -175,17 +212,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self?.engine.setBalance(value)
             self?.scheduleVolumeSave()
         }
+        engine.playbackChecked = { [weak self] station, played in try? self?.library.recordPlayback(station, played: played) }
         engine.onGiveUp = { [weak self] station, message in self?.stationFailed(station, message) }
         nowPlaying.action = { [weak self] in self?.handle($0) }
-        nowPlaying.canSeek = { [weak self] in self?.engine.canTimeShift ?? false }
-        nowPlaying.canPlay = { [weak self] in self.map { $0.engine.station != nil || $0.library.state.lastStation != nil } ?? false }
+        nowPlaying.canSeek = { [weak self] in self?.focus.canTimeShift ?? false }
+        nowPlaying.canPlay = { [weak self] in self.map { $0.focus.station != nil || $0.library.state.lastStation != nil } ?? false }
         nowPlaying.canSkip = { [weak self] in !(self?.library.state.favorites.isEmpty ?? true) }
         engine.changed = { [weak self] in
             guard let self else { return }
             self.view.needsDisplay = true
+            NotificationCenter.default.post(name: ClassicUI.playbackChanged, object: nil)
             self.visuals.hub.refresh()
-            if self.smokePath == nil { self.nowPlaying.update(station: self.engine.station, title: self.engine.title, status: self.engine.status) }
+            self.syncVideo()
+            if self.smokePath == nil { self.nowPlaying.update(station: self.focus.station, title: self.focus.title, status: self.focus.status) }
             if self.engine.status == .playing, let station = self.engine.station {
+                let availability = DiscoveryAvailability.shared(directory: self.library.directory)
+                availability.recordPlayback(station.address)
                 self.refreshTried.remove(station.id)
                 // A moved station that plays: keep the working address in the favorite it came from.
                 if let moved = self.addressFix, moved.address == station.address {
@@ -211,6 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.smokePath != nil, self.engine.status == .failed { self.finishSmoke(success: false) }
         }
         eqView = EqualizerView(equalizer: engine.equalizer)
+        eqView.attach(visualizer: visuals.hub)
+        PlayerWindow.nestedShadeWidth = { [weak self] in self?.window.frame.width }
         eqWindow = PlayerWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 232), styleMask: [.borderless], backing: .buffered, defer: false)
         eqWindow.title = "RadioPocket Equalizer"
         eqWindow.level = window.level
@@ -297,6 +341,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     if self.view.bounds.height != 116 { failures.append("Player restore failed") }
                     self.presetAction("shade")
                     if self.eqView.bounds.height != 14 { failures.append("EQ shade failed") }
+                    let shown = self.eqView.subviews.filter { $0 is NSControl && !$0.isHidden }
+                    for (i, control) in shown.enumerated() {
+                        if !self.eqView.bounds.contains(control.frame) { failures.append("Shaded EQ control outside bar: \(control.identifier?.rawValue ?? "?")") }
+                        for other in shown[(i + 1)...] where control.frame.intersects(other.frame) { failures.append("Shaded EQ controls overlap") }
+                    }
                     self.presetAction("shade")
                     if self.eqView.bounds.height != 116 { failures.append("EQ restore failed") }
                     try? (failures.isEmpty ? "PASS: no overlapping or out-of-bounds controls at 1×/2×/3×; player and EQ shade/restore work.\n" : failures.joined(separator: "\n")).write(toFile: audit, atomically: true, encoding: .utf8)
@@ -419,6 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         visuals.hub.settings = library.state.visualizer ?? VisSettings()
         visuals.hub.source = { [weak self] out, count in self?.engine.readVisSamples(out, count: count) }
         visuals.hub.hasSignal = { [weak self] in self?.engine.hasVisSignal ?? false }
+        _ = visuals.dock
         visuals.perform = { [weak self] in self?.handle($0) }
         visuals.nowPlaying = { [weak self] in
             guard let self else { return ("", "", .idle) }
@@ -458,6 +508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         let app = add("RadioPocket")
         standard("About RadioPocket", #selector(aboutApp), target: self, to: app)
+        command("Check for Updates…", "updates", to: app)
         app.addItem(.separator())
         command("Preferences…", "preferences", ",", to: app)
         app.addItem(.separator())
@@ -487,8 +538,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         standard("Redo", Selector(("redo:")), "z", [.command, .shift], to: edit)
         edit.addItem(.separator())
         for (name, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v")] { standard(name, Selector(action), key, to: edit) }
-        standard("Delete", Selector(("delete:")), to: edit)
-        standard("Select All", Selector(("selectAll:")), "a", to: edit)
+        standard("Delete", #selector(NSText.delete(_:)), to: edit)
+        standard("Select All", #selector(NSText.selectAll(_:)), "a", to: edit)
 
         let controls = add("Controls")
         command("Play", "toggle", "p", to: controls)
@@ -510,7 +561,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             command(title, "sleep:\(minutes)", to: sleep)
             if minutes == 0 { sleep.addItem(.separator()) }
         }
-        command("Loudness Leveling", "leveling", to: controls)
 
         let view = add("View")
         for factor in [1.0, 1.5, 2.0, 3.0] {
@@ -518,11 +568,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             command("Size: \(name)×", "scale\(name)", factor == 1.5 ? "" : name, to: view)
         }
         view.addItem(.separator())
-        command("Compact Player", "shade", to: view)
         command("Always on Top", "ontop", "t", to: view)
-        view.addItem(.separator())
+        command("Compact Player", "shade", to: view)
         command("Choose Skin…", "skins", "k", to: view)
-        command("Use RadioPocket Theme", "resetSkin", to: view)
+        view.addItem(.separator())
+        command("Video Multiview", "multiview", "m", [.command, .control], to: view)
 
         let visualization = NSMenuItem(title: "Visualization", action: nil, keyEquivalent: "")
         visualization.submenu = visuals.menu(withKeys: true); menu.addItem(visualization)
@@ -541,6 +591,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let help = add("Help")
         command("Keyboard Shortcuts", "help:shortcuts", to: help)
         command("Version History", "help:history", to: help)
+        command("Check for Updates…", "updates", to: help)
+        help.addItem(.separator())
+        command("Report a Problem…", "help:report", to: help)
 
         NSApp.mainMenu = menu
         NSApp.helpMenu = help
@@ -574,21 +627,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         var enabled = true
         switch id {
         case "toggle":
-            item.title = engine.status == .playing || engine.status == .connecting ? "Pause" : "Play"
-            enabled = engine.station != nil || library.state.lastStation != nil
-        case "stop": enabled = engine.status != .stopped
-        case "favorite": item.title = (engine.station ?? library.state.lastStation).map { library.isFavorite($0) } == true ? "Remove Favorite" : "Save Favorite…"
-        case "back10", "forward10", "live": enabled = engine.canTimeShift
+            item.title = focus.status == .playing || focus.status == .connecting ? "Pause" : "Play"
+            enabled = focus.station != nil || library.state.lastStation != nil
+        case "stop": enabled = focus.status != .stopped
+        case "multiview": enabled = multiview != nil || openPanels().count > 1; mark(multiview != nil)
+        case "favorite": item.title = (focus.station ?? library.state.lastStation).map { library.isFavorite($0) } == true ? "Remove Favorite" : "Save Favorite…"
+        case "back10", "forward10", "live": enabled = focus.canTimeShift
         case "previous", "next": enabled = !library.state.favorites.isEmpty
-        case "leveling": mark(engine.leveling)
         case "ontop": mark(window.level == .floating)
         case "shade": mark(view.shaded)
-        case "resetSkin": mark(view.skin == nil)
+        case "scale1", "scale1.5", "scale2", "scale3": mark(library.state.scale == Double(id.dropFirst(5)))
         case "discovery": mark(discovery?.window?.isVisible == true)
         case "favorites": mark(favorites.window?.isVisible == true)
         case "equalizer": mark(eqWindow.isVisible)
         case "player": mark(window.isVisible)
-        case "scale1", "scale1.5", "scale2", "scale3": mark(library.state.scale == Double(id.dropFirst(5)))
         default:
             if id.hasPrefix("sleep:") { mark(Int(id.dropFirst(6)) == sleepMinutes) }
         }
@@ -597,6 +649,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var about: AboutController?
     private var jump: JumpToStationController?
     private var info: StationInfoController?
+    private var video: VideoController?
+    /// The TV channel whose window has already been shown, so closing the window sticks until another channel starts.
+    private var videoShownFor: UUID?
     private let nowPlaying = NowPlayingController()
     let visuals = VisualizerController()
     private var visSave: DispatchWorkItem?
@@ -607,7 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func handle(_ id: String) {
         switch id {
         case "copyLink":
-            guard let station = engine.station ?? library.state.lastStation else {
+            guard let station = focus.station ?? library.state.lastStation else {
                 showError(RadioError.message("Choose a station first to copy its Open-in-Player link.")); return
             }
             do {
@@ -616,20 +671,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 NSPasteboard.general.setString(url.absoluteString, forType: .string)
             } catch { showError(error) }
         case "open": openDialog()
+        case "updates": checkForUpdates(userInitiated: true)
+        case "help:report": NSWorkspace.shared.open(ProblemReport.url(version: AboutController.version))
         case "play":
-            if engine.station != nil { engine.resume() }
+            if focus.station != nil { focus.resume() }
             else if let last = library.state.lastStation { play(last) }
             else { openDialog() }
-        case "toggle": handle(engine.status == .playing || engine.status == .connecting ? "pause" : "play")
-        case "pause": engine.pause()
-        case "stop": engine.stop()
-        case "back10": engine.seek(by: -10)
-        case "forward10": engine.seek(by: 10)
-        case "live": engine.goLive()
-        case "volumeUp": view.volumeChanged?(min(1, engine.player.volume + 0.05))
-        case "volumeDown": view.volumeChanged?(max(0, engine.player.volume - 0.05))
+        case "toggle": handle(focus.status == .playing || focus.status == .connecting ? "pause" : "play")
+        case "multiview": toggleMultiview()
+        case "pause": focus.pause()
+        case "stop": focus.stop()
+        case "back10": focus.seek(by: -10)
+        case "forward10": focus.seek(by: 10)
+        case "live": focus.goLive()
+        case "volumeUp": view.volumeChanged?(min(1, focus.player.volume + 0.05))
+        case "volumeDown": view.volumeChanged?(max(0, focus.player.volume - 0.05))
         case "favorite":
-            if let current = engine.station ?? library.state.lastStation {
+            if let current = focus.station ?? library.state.lastStation {
                 if library.isFavorite(current) { do { try library.removeFavorite(current) } catch { showError(error) } }
                 else { openDialog(station: current, favoriteOnly: true) }
             }
@@ -656,9 +714,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 eqWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: window.frame.minY))
                 eqWindow.makeKeyAndOrderFront(nil)
             }
-        case "skins", "preferences", "directories", "visprefs":
+        case "tvlibrary": makeDiscovery().showTV()
+        case "skins", "preferences", "radioprefs", "tvprefs", "visprefs":
             if preferences == nil { preferences = PreferencesController(app: self) }
-            preferences?.present(skins: id == "skins", directories: id == "directories", visualization: id == "visprefs")
+            preferences?.present(skins: id == "skins", radio: id == "radioprefs", tv: id == "tvprefs", visualization: id == "visprefs")
         case "skin":
             let panel = NSOpenPanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "wsz") ?? .data, .zip]
@@ -677,7 +736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if jump == nil { jump = JumpToStationController(library: library); jump?.play = { [weak self] in self?.play($0) } }
             jump?.present(over: window)
         case "info":
-            if info == nil { info = StationInfoController(engine: engine, directory: directoryClient) }
+            if info == nil { info = StationInfoController(engine: engine, directory: directoryClient, library: library) }
             info?.present(over: window)
         case "leveling":
             engine.leveling.toggle()
@@ -700,9 +759,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let menu = NSMenu()
             for (title, id) in [("Open Stream…", "open"), ("Jump to Station…", "jump"), ("Save Favorite…", "favorite"), ("Station Info…", "info"), ("", ""),
                                 ("Station Library", "discovery"), ("Favorite Stations", "favorites"), ("Equalizer", "equalizer"), ("Visualization", "vis:panel"), ("Full Screen Visualization", "vis:fullscreen"), ("", ""),
-                                ("Loudness Leveling", "leveling"), ("", ""),
-                                ("Choose Skin…", "skins"), ("Import Classic Skin…", "skin"), ("Use RadioPocket Theme", "resetSkin"), ("", ""),
-                                ("Size: 1×", "scale1"), ("Size: 1.5×", "scale1.5"), ("Size: 2×", "scale2"), ("Size: 3×", "scale3")] {
+                                ("Preferences…", "preferences")] {
                 if id.isEmpty { menu.addItem(.separator()); continue }
                 let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = id; menu.addItem(item)
@@ -752,13 +809,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if StreamProbe.isUnreachable(message) { deadStations.record(station.address, .dead) }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            if !self.refreshTried.contains(station.id), let current = await self.directoryClient.refreshed(uuid: station.id.uuidString), current.address != station.address {
+            if station.video != true, !self.refreshTried.contains(station.id), let current = await self.directoryClient.refreshed(uuid: station.id.uuidString), current.address != station.address {
                 self.refreshTried.insert(station.id)
-                let moved = Station(id: station.id, name: station.name, address: current.address)
+                let moved = Station(id: station.id, name: station.name, address: current.address, video: station.video)
                 self.addressFix = moved
                 self.play(moved); return
             }
-            let alternates = await self.directoryClient.alternates(for: station)
+            let alternates = station.video == true ? [] : await self.directoryClient.alternates(for: station)
             guard self.engine.status == .failed, self.engine.station?.id == station.id, !self.offering else { return }
             self.offerAlternatives(for: station, message: message, alternates: alternates)
         }
@@ -805,28 +862,165 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     private func cancelSleep() {
         sleepTimer?.invalidate(); sleepTimer = nil; sleepDeadline = nil; sleepMinutes = 0
-        if let base = sleepBaseVolume { sleepBaseVolume = nil; engine.setVolume(base) }
+        if let base = sleepBaseVolume { sleepBaseVolume = nil; focus.setVolume(base) }
         engine.sleepRemaining = nil
         view?.needsDisplay = true
     }
     private func sleepTick() {
         guard let deadline = sleepDeadline else { return }
         let remaining = Int(ceil(deadline.timeIntervalSinceNow))
-        guard remaining > 0 else { cancelSleep(); engine.stop(); return }
+        guard remaining > 0 else { cancelSleep(); ([engine] + panels.map(\.engine)).forEach { $0.stop() }; return }
         engine.sleepRemaining = remaining
         if remaining <= 20, engine.status == .playing {
-            if sleepBaseVolume == nil { sleepBaseVolume = engine.player.volume }
-            engine.setVolume((sleepBaseVolume ?? 1) * Float(remaining) / 20)
+            if sleepBaseVolume == nil { sleepBaseVolume = focus.player.volume }
+            focus.setVolume((sleepBaseVolume ?? 1) * Float(remaining) / 20)
         }
         view.needsDisplay = true
     }
 
+    /// Shows the video window when a TV channel starts and puts it away when radio takes over.
+    private func syncVideo() {
+        guard smokePath == nil, library != nil else { return }
+        guard let station = engine.station, station.video == true else { video?.hide(); videoShownFor = nil; refreshAudioIcons(); return }
+        video?.retitle(station.name)
+        guard [.connecting, .playing].contains(engine.status), videoShownFor != station.id else { return }
+        videoShownFor = station.id
+        if video == nil {
+            let controller = VideoController(engine: engine)
+            controller.onTakeAudio = { [weak self] in self?.takeAudio(self?.engine) }
+            controller.onClose = { [weak self] in self?.panelClosed(nil) }
+            video = controller
+        }
+        video?.level = window.level
+        video?.present(title: station.name, below: window)
+        refreshAudioIcons()
+    }
+
     private func play(_ station: Station) {
         info?.stationChanged()
-        do { try library.update { $0.lastStation = station }; recordedStation = nil; engine.play(station) }
+        videoShownFor = nil
+        do { try library.update { $0.lastStation = station }; recordedStation = nil; takeAudio(engine); engine.play(station) }
         catch { showError(error) }
     }
+
+    /// Opens a TV channel in an additional video panel with its own player; the new panel takes the audio.
+    private func playInNewPanel(_ station: Station) {
+        guard station.video == true else { play(station); return }
+        let extra = RadioEngine()
+        extra.playbackChecked = { [weak self] station, played in
+            try? self?.library.recordPlayback(station, played: played)
+            if played { try? self?.library.recordRecent(station) }
+        }
+        extra.setVolume(focus.player.volume)
+        let controller = VideoController(engine: extra, extra: true)
+        controller.level = window.level
+        controller.onTakeAudio = { [weak self, weak extra] in self?.takeAudio(extra) }
+        controller.onClose = { [weak self, weak extra] in self?.panelClosed(extra) }
+        extra.changed = { [weak self, weak extra] in
+            guard let self, let extra else { return }
+            if let panel = self.panels.first(where: { $0.engine === extra }) {
+                let name = extra.station?.name ?? station.name
+                panel.controller.retitle(extra.status == .failed ? name + " — OFFLINE" : name)
+            }
+            self.refreshPlayer()
+        }
+        panels.append((extra, controller))
+        controller.present(title: station.name, below: window, offset: CGFloat(panels.count) * 28)
+        takeAudio(extra)
+        extra.play(station)
+    }
+
+    /// Gives the audio to one engine and mutes every other; the main player then follows that engine.
+    private func takeAudio(_ target: RadioEngine?) {
+        guard let target else { return }
+        focus = target
+        for other in [engine] + panels.map(\.engine) { other.setMuted(other !== target) }
+        view.engine = target
+        refreshAudioIcons()
+        refreshPlayer()
+    }
+
+    private func panelClosed(_ closed: RadioEngine?) {
+        if let closed { panels.removeAll { $0.engine === closed } }
+        if closed == nil || focus === closed || focus.status == .stopped {
+            // Audio goes to whatever is still playing: the main player first, then the newest extra panel.
+            let next = [engine] + panels.map(\.engine).reversed()
+            takeAudio(next.first { [.playing, .connecting].contains($0.status) } ?? engine)
+        } else { refreshAudioIcons() }
+    }
+
+    /// The open video panels in order: the main one (when it shows TV), then the extras.
+    private func openPanels() -> [(engine: RadioEngine, controller: VideoController)] {
+        var list: [(engine: RadioEngine, controller: VideoController)] = []
+        if let video, video.isShown { list.append((engine, video)) }
+        return list + panels.filter { $0.controller.isShown }.map { ($0.engine, $0.controller) }
+    }
+
+    private func panelTitles() -> [String] {
+        let open = openPanels()
+        return open.enumerated().map { index, panel in
+            (open.count == 1 ? "Video" : "Video \(index + 1)") + (panel.engine.station.map { " — " + $0.name } ?? "")
+        }
+    }
+
+    /// Tunes a station on the numbered panel from `panelTitles`, or on a new panel when none is given.
+    private func playOnPanel(_ station: Station, _ index: Int?) {
+        let open = openPanels()
+        guard let index, open.indices.contains(index) else { playInNewPanel(station); return }
+        let target = open[index].engine
+        if target === engine { play(station); return }
+        takeAudio(target)
+        target.play(station)
+        open[index].controller.retitle(station.name)
+        do { try library.recordRecent(station) } catch { showError(error) }
+    }
+
+    private func refreshAudioIcons() {
+        let open = openPanels()
+        for (index, panel) in open.enumerated() {
+            panel.controller.setLabel(open.count == 1 ? "Video" : "Video \(index + 1)")
+            panel.controller.setAudio(audible: focus === panel.engine, shown: open.count > 1)
+        }
+        multiview?.setAudible(focus)
+    }
+
+    private var multiview: MultiviewController?
+    /// Shows every open video panel at once on one screen; leaving puts the panels back where they were.
+    private func toggleMultiview() {
+        if let wall = multiview { wall.exit(); return }
+        let open = openPanels()
+        guard open.count > 1 else { return }
+        let screen = NSApp.keyWindow?.screen ?? open.first?.controller.window?.screen ?? NSScreen.main
+        guard let screen else { return }
+        let names = panelTitles()
+        let wall = MultiviewController(panels: zip(names, open).map { ($0, $1.engine) }, screen: screen)
+        wall.onTakeAudio = { [weak self] in self?.takeAudio($0) }
+        wall.onExit = { [weak self] in
+            self?.multiview = nil
+            self?.openPanels().forEach { $0.controller.resume() }
+        }
+        multiview = wall
+        open.forEach { $0.controller.suspend() }
+        wall.setAudible(focus)
+    }
+
+    private func refreshPlayer() {
+        view.needsDisplay = true
+        NotificationCenter.default.post(name: ClassicUI.playbackChanged, object: nil)
+        if smokePath == nil { nowPlaying.update(station: focus.station, title: focus.title, status: focus.status) }
+    }
+    /// Gives every ordinary RadioPocket window (library, visualizer, info, …) the player's level, so
+    /// "always on top" covers all panels. Windows already above it (Preferences, full-screen video) are left alone.
+    func syncWindowLevels() {
+        let level = window.level
+        for w in NSApp.windows where w !== window && (w.level == .normal || w.level == .floating) && w.level != level
+            && (w.isVisible || w.isMiniaturized) && !(w is NSPanel && w.styleMask.contains(.nonactivatingPanel)) {
+            w.level = level
+        }
+    }
     func saveWindowLevel() {
+        syncWindowLevels()
+        video?.level = window.level
         do { try library.update { $0.alwaysOnTop = window.level == .floating } } catch { showError(error) }
     }
     private func scheduleVolumeSave() {
@@ -896,10 +1090,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Opens the station lists from disk and keeps them fresh in the background; nothing happens in smoke or preview runs.
     func updateBackgroundStations() {
         guard smokePath == nil, argument("--preview") == nil else { return }
-        let client = directoryClient, sources = library.state.directories ?? [], checking = library.state.checkStations != false
+        let client = directoryClient, sources = library.state.directories ?? [], checking = library.state.checkStations != false, safety = library.state.tvSafety
         Task { await client.setChecking(checking) }
         if library.state.backgroundStations == false { Task { await client.stopBackgroundRefresh() } }
-        else { Task { await client.configure(sources); await client.startBackgroundRefresh() } }
+        else { Task { await client.configure(sources, safety: safety); await client.startBackgroundRefresh() } }
     }
     func clearSavedStations() { let client = directoryClient; Task { await client.clearSavedStations(); await client.forgetDeadStations() } }
     private var housekeeping: Housekeeping?
@@ -907,6 +1101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func startHousekeeping() {
         guard smokePath == nil, argument("--preview") == nil else { return }
         housekeeping = Housekeeping(directory: directoryClient)
+        housekeeping?.releaseDiscoveryMemory = { [weak self] pressure in self?.discovery?.releaseIdleMemory(underPressure: pressure) }
         housekeeping?.start()
     }
     private func makeDiscovery() -> DiscoveryController {
@@ -914,10 +1109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let client = directoryClient
         let browser = DiscoveryController(library: library, directory: client)
         browser.play = { [weak self] in self?.play($0) }
+        browser.panelTitles = { [weak self] in self?.panelTitles() ?? [] }
+        browser.playOnPanel = { [weak self] in self?.playOnPanel($0, $1) }
         browser.openStream = { [weak self] in self?.openDialog() }
         browser.inspect = { [weak self] entry in
             guard let self else { return }
-            if self.info == nil { self.info = StationInfoController(engine: self.engine, directory: self.directoryClient) }
+            if self.info == nil { self.info = StationInfoController(engine: self.engine, directory: self.directoryClient, library: self.library) }
             self.info?.present(inspecting: entry, over: self.discovery?.window)
         }
         browser.report = { [weak self] in self?.showError($0) }
@@ -976,7 +1173,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         } catch { showError(error) }
     }
     /// Tells an open library window that the user changed their directory list.
+    func compatibilityChanged() { discovery?.compatibilityChanged() }
+    func tvFiltersChanged() { discovery?.safetyChanged(); updateBackgroundStations() }
     func directoriesChanged() { discovery?.refreshSources(); updateBackgroundStations() }
+    private var updateTask: Task<Void, Never>?
+    private func checkForUpdatesAtLaunch() {
+        guard library.state.checkForUpdates != false, UpdateCheck.shouldCheckAtLaunch(last: library.state.lastUpdateCheck) else { return }
+        checkForUpdates(userInitiated: false)
+    }
+    /// Launch checks stay silent unless a newer version exists; a check the user asked for always answers.
+    func checkForUpdates(userInitiated: Bool) {
+        guard updateTask == nil else { return }
+        let installed = AboutController.version
+        updateTask = Task { @MainActor [weak self] in
+            defer { self?.updateTask = nil }
+            do {
+                let outcome = try await UpdateCheck.fetch(installed: installed)
+                guard let self, !Task.isCancelled else { return }
+                try? self.library.update { $0.lastUpdateCheck = Date() }
+                switch outcome {
+                case .available(let release): self.offerUpdate(release, installed: installed)
+                case .current:
+                    guard userInitiated else { return }
+                    let alert = NSAlert(); alert.messageText = "RadioPocket is up to date"
+                    alert.informativeText = "Version \(installed) is the newest version."
+                    alert.runModal()
+                }
+            } catch {
+                if userInitiated { self?.showError(error) }
+            }
+        }
+    }
+    private func offerUpdate(_ release: Release, installed: String) {
+        let alert = NSAlert(); alert.messageText = "RadioPocket \(release.version) is available"
+        let notes = release.sections.flatMap(\.items).prefix(6).map { "• " + $0 }.joined(separator: "\n")
+        alert.informativeText = "You have version \(installed)." + (notes.isEmpty ? "" : "\n\n" + notes)
+        alert.addButton(withTitle: "View on GitHub"); alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(UpdateCheck.repository) }
+    }
     func showError(_ error: Error) {
         let alert = NSAlert(); alert.alertStyle = .warning
         alert.messageText = "RadioPocket"; alert.informativeText = error.localizedDescription

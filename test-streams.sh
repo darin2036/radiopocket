@@ -21,6 +21,8 @@ scenario() {  # path flag timeout-seconds
   kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true
   if [[ -s "$result" ]] && grep -q '^PASS' "$result"; then echo "PASS $1 $2"; else echo "FAIL $1 $2: $(cat "$result" 2>/dev/null || echo 'no result')"; failures=$((failures+1)); fi
 }
+scenario /mirrors.pls --test-vis 45
+scenario /mirrors-hidden --test-vis 45
 scenario /aac-icy --test-vis 30
 scenario /opus --test-vis 30
 if [[ $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/vorbis") == 200 ]]; then

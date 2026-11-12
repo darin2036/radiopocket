@@ -1,5 +1,8 @@
-import AppKit
+import Foundation
 import AVFoundation
+#if os(macOS)
+import AppKit
+#endif
 import Network
 import CEQ
 
@@ -19,8 +22,19 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     /// Left/right balance, -1 to 1.
     private(set) var balance: Float = 0
     var changed: (() -> Void)?
+    /// Silenced while another panel has the audio; the stream keeps playing so switching back is instant.
+    private(set) var muted = false
+    func setMuted(_ value: Bool) {
+        guard value != muted else { return }
+        muted = value
+        player.isMuted = value
+        stream?.setVolume(value ? 0 : player.volume)
+        changed?()
+    }
     /// Called once when automatic reconnection gives up (or the stream can never play), so the app can offer alternatives.
     var onGiveUp: ((Station, String) -> Void)?
+    var playbackChecked: ((Station, Bool) -> Void)?
+    private var confirmedPlayback = false
     static let maxRetries = 8
     private let monitor = NWPathMonitor()
     private var networkAvailable = true
@@ -49,7 +63,16 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         }
         monitor.pathUpdateHandler = { [weak self] path in DispatchQueue.main.async { self?.pathChanged(path) } }
         monitor.start(queue: DispatchQueue(label: "radiopocket.network", qos: .utility))
+        #if os(macOS)
         notifications.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.didWake() })
+        #else
+        // Streams keep playing with the screen locked, and the session needs reclaiming after a call or Siri interrupts it.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        notifications.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            self?.didWake()
+        })
+        #endif
     }
     deinit { monitor.cancel() }
 
@@ -137,13 +160,23 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         detail = retries == 0 ? "CONNECTING TO STATION" : "RECONNECTING \(retries)/\(Self.maxRetries)"
         changed?()
         let token = generation
+        let attempt = retries
         task = Task { @MainActor [weak self] in
             do {
                 let source = try StreamAddress.parse(station.address)
-                let url = try await StreamAddress.resolve(source)
+                var url: URL
+                if attempt > 0, let playlist = StreamAddress.recoveryPlaylist(source) {
+                    // A fresh provider playlist can recover a failed saved mirror; fall back to the saved URL if lookup fails.
+                    do { url = try await StreamAddress.resolve(playlist, attempt: attempt - 1) }
+                    catch {
+                        try Task.checkCancellation()
+                        url = try await StreamAddress.resolve(source, attempt: attempt)
+                    }
+                } else { url = try await StreamAddress.resolve(source, attempt: attempt) }
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
-                self.install(url, token: token)
+                // TV channels are decoded by AVPlayer, which also draws the video.
+                if station.video == true { self.installAVPlayer(url, token: token) } else { self.install(url, token: token) }
             } catch {
                 guard let self, self.generation == token, !(error is CancellationError) else { return }
                 self.fail(error.localizedDescription)
@@ -153,7 +186,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     }
 
     private func install(_ url: URL, token: UUID) {
-        let direct = RadioStream(volume: player.volume, balance: balance, leveling: leveling)
+        let direct = RadioStream(volume: muted ? 0 : player.volume, balance: balance, leveling: leveling, playlistAttempt: retries)
         stream = direct
         equalizer.bind(direct.dsp)
         direct.playing = { [weak self] in
@@ -166,7 +199,11 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         }
         direct.failed = { [weak self] message in
             guard let self, self.generation == token else { return }
-            if message.contains("isn’t supported MP3/AAC") || message.hasPrefix(HLSSource.unsupportedPrefix) {
+            if message.hasPrefix(RadioStream.fallbackMarker) {
+                // Every User-Agent was refused by our own client; AVPlayer’s stack (Safari’s) may still get through.
+                self.stream?.stop(); self.stream = nil; self.equalizer.disconnect()
+                self.installAVPlayer(url, token: token, agent: UserAgent.browser)
+            } else if message.contains("isn’t supported MP3/AAC") || message.hasPrefix(HLSSource.unsupportedPrefix) {
                 self.stream?.stop(); self.stream = nil; self.equalizer.disconnect()
                 self.installAVPlayer(url, token: token)
             } else if message.hasPrefix(RadioStream.permanentMarker) { self.giveUp(String(message.dropFirst(RadioStream.permanentMarker.count))) }
@@ -187,6 +224,8 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         return StreamInfo(codec: format.codec, sampleRate: format.rate, channels: format.channels, kbps: stream.bitrate(),
                           bufferedSeconds: stream.rewindable, delay: stream.delay, levelDb: leveling ? stream.levelGain : 0)
     }
+    /// True while the current station is an Internet TV channel.
+    var isVideo: Bool { station?.video == true }
     /// True when playback runs through AVPlayer, which has no EQ, leveler or buffer to report.
     var usesFallbackPlayer: Bool { stream == nil && player.currentItem != nil }
 
@@ -200,8 +239,9 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         return nil
     }
 
-    private func installAVPlayer(_ url: URL, token: UUID) {
-        let item = AVPlayerItem(url: url)
+    private func installAVPlayer(_ url: URL, token: UUID, agent: String? = UserAgent.value) {
+        let headers = agent.map { ["User-Agent": $0] } ?? [:]
+        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers]))
         item.preferredForwardBufferDuration = 3
         let metadata = AVPlayerItemMetadataOutput(identifiers: nil)
         metadata.setDelegate(self, queue: .main)
@@ -243,6 +283,10 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     private func beginPlaying() {
         timeout?.cancel(); timeout = nil
         status = .playing
+        if !confirmedPlayback, let station {
+            confirmedPlayback = true
+            playbackChecked?(station, true)
+        }
         paused = false
         if playingSince == nil { playingSince = Date() }
         detail = liveDetail()
@@ -317,7 +361,10 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         detail = message
         resumeWhenOnline = retryOnNetwork
         changed?()
-        if let station { onGiveUp?(station, message) }
+        if let station {
+            if networkAvailable { playbackChecked?(station, false) }
+            onGiveUp?(station, message)
+        }
     }
 
     private func pausedDetail() -> String {
@@ -328,6 +375,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     /// With a direct stream, pause keeps the connection and buffers what the station sends (up to five minutes),
     /// so Play continues exactly where you stopped. AVPlayer streams still disconnect and return to live.
     func pause() {
+        resumeWhenOnline = false
         if let stream, status == .playing {
             stream.pause(); paused = true
             status = .paused
@@ -364,7 +412,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
 
     func setVolume(_ value: Float) {
         player.volume = min(1, max(0, value))
-        stream?.setVolume(player.volume)
+        stream?.setVolume(muted ? 0 : player.volume)
         refreshEQStatus()
         changed?()
     }
@@ -377,6 +425,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
 
     private func clearConnection() {
         generation = UUID()
+        confirmedPlayback = false
         equalizer.disconnect()
         stream?.stop(); stream = nil
         task?.cancel(); task = nil

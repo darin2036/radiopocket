@@ -14,18 +14,34 @@ enum StreamVerdict: Equatable {
 /// Stream addresses the app has found unreachable, kept on disk so the library leaves them out and tries them again later.
 /// Only reachability is recorded: a station that connects but can't be decoded is never listed here, so a gap in the
 /// app's own format support doesn't hide a working station.
+/// Wrapper for disposable on-disk caches: `{"version": n, "data": …}`. Files saved before versioning (the bare value) still load.
+/// A file from a newer version is ignored, and the cache simply rebuilds.
+enum CacheFile {
+    private struct Envelope<T: Codable>: Codable { var version: Int; var data: T }
+
+    static func read<T: Codable>(_ type: T.Type, from data: Data, version: Int) -> T? {
+        if let envelope = try? JSONDecoder().decode(Envelope<T>.self, from: data) { return envelope.version == version ? envelope.data : nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    static func encode<T: Codable>(_ value: T, version: Int) -> Data? {
+        try? JSONEncoder().encode(Envelope(version: version, data: value))
+    }
+}
+
 final class DeadStations: @unchecked Sendable {
     struct Record: Codable { var strikes: Int; var last: Date; var alive: Date? }
 
     static let strikeLimit = 2
     /// A dead address is left out this long, then checked again in case the station came back.
-    static let deadFor: TimeInterval = 14 * 86_400
+    static let deadFor: TimeInterval = 12 * 3600
     /// A station that answered is not asked again for this long.
     static let aliveFor: TimeInterval = 3 * 86_400
     /// A doubtful address waits this long before its next check, so two strikes are never the same hiccup.
     static let doubtfulGap: TimeInterval = 12 * 3600
     static let forgetAfter: TimeInterval = 30 * 86_400
     static let maximumRecords = 5_000
+    static let fileVersion = 1
 
     private let file: URL?
     private let lock = NSLock()
@@ -34,7 +50,7 @@ final class DeadStations: @unchecked Sendable {
     /// A nil file keeps everything in memory only.
     init(file: URL?) {
         self.file = file
-        if let file, let data = try? Data(contentsOf: file), let stored = try? JSONDecoder().decode([String: Record].self, from: data) { records = stored }
+        if let file, let data = try? Data(contentsOf: file), let stored = CacheFile.read([String: Record].self, from: data, version: Self.fileVersion) { records = stored }
         else { records = [:] }
     }
 
@@ -83,7 +99,7 @@ final class DeadStations: @unchecked Sendable {
                 case .dead: records[address] = Record(strikes: Self.strikeLimit, last: now, alive: nil)
                 case .doubtful:
                     let earlier = records[address].flatMap { now.timeIntervalSince($0.last) < Self.deadFor ? $0.strikes : nil } ?? 0
-                    records[address] = Record(strikes: min(Self.strikeLimit, earlier + 1), last: now, alive: nil)
+                    records[address] = Record(strikes: min(Self.strikeLimit - 1, earlier + 1), last: now, alive: nil)
                 case .unknown: break
                 }
             }
@@ -105,7 +121,7 @@ final class DeadStations: @unchecked Sendable {
 
     private func save() {
         guard let file else { return }
-        guard let data = try? JSONEncoder().encode(records) else { return }
+        guard let data = CacheFile.encode(records, version: Self.fileVersion) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
     }
@@ -113,7 +129,10 @@ final class DeadStations: @unchecked Sendable {
 
 /// Opens a stream just far enough to read its response headers, then lets go.
 enum StreamProbe {
-    static let concurrency = 6
+    static let concurrency = 2
+    // URLSession's preliminary hostname checks cannot bind DNS to the actual peer.
+    // Do not automatically contact arbitrary catalog stream URLs until that guarantee exists.
+    static let automaticProbingSupported = false
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -143,9 +162,9 @@ enum StreamProbe {
 
     static func verdict(status: Int, contentType: String) -> StreamVerdict {
         switch status {
-        case 200...299: return contentType.hasPrefix("text/html") ? .dead : .alive
+        case 200...299: return contentType.hasPrefix("text/html") ? .dead : contentType.hasPrefix("audio/") || contentType.hasPrefix("video/") ? .alive : .unknown
         case 404, 410: return .dead
-        case 429: return .unknown
+        case 401, 403, 429: return .unknown
         case 400...599: return .doubtful
         default: return .unknown
         }
@@ -153,7 +172,7 @@ enum StreamProbe {
 
     static func verdict(error: URLError) -> StreamVerdict {
         switch error.code {
-        case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost: return .dead
+        case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost: return .doubtful
         case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff, .cancelled, .callIsActive: return .unknown
         default: return .doubtful
         }
@@ -163,7 +182,7 @@ enum StreamProbe {
         guard canCheck(url) else { return .unknown }
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.setValue("1", forHTTPHeaderField: "Icy-MetaData")
-        request.setValue("RadioPocket/0.8", forHTTPHeaderField: "User-Agent")
+        request.setValue(UserAgent.value, forHTTPHeaderField: "User-Agent")
         do {
             let (bytes, response) = try await session.bytes(for: request)
             bytes.task.cancel()
@@ -177,7 +196,8 @@ enum StreamProbe {
     /// Directory entries that carry their own health data (Radio Browser) are left to that directory.
     @discardableResult
     static func vet(_ listings: [RadioListing], dead: DeadStations, limit: Int = 120) async -> Int {
-        let due = listings.filter { $0.directoryID == nil && !$0.hls }.compactMap { row -> (String, URL)? in
+        guard automaticProbingSupported else { return 0 }
+        let due = listings.filter { $0.directoryID == nil && !$0.hls && !$0.video }.compactMap { row -> (String, URL)? in
             guard dead.needsCheck(row.address), let url = URL(string: row.address), canCheck(url) else { return nil }
             return (row.address, url)
         }.prefix(limit)
@@ -202,5 +222,17 @@ enum StreamProbe {
         let appSide = ["audio format", "equalized", "oversized", "isn’t supported", "isn't supported", "not supported", "decoder", "could not be read",
                        "could not initialize", "could not allocate", "invalid", "too many", "playlist"]
         return !appSide.contains { lower.contains($0) }
+    }
+}
+
+/// Actual playback evidence is separate from reachability checks and expires quickly after failures.
+struct StreamPlaybackCheck: Codable, Hashable {
+    var address: String
+    var played: Bool
+    var time: Date
+    func rank(now: Date) -> Int {
+        let age = now.timeIntervalSince(time)
+        guard age >= 0, age < (played ? 7 * 86_400 : 3600) else { return 0 }
+        return played ? 1 : -1
     }
 }

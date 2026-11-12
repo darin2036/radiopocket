@@ -27,7 +27,7 @@ struct StationCache: Sendable {
     func key(for query: DirectoryQuery, sources: [String]) -> String? {
         guard query.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, (0...100_000).contains(query.offset), !sources.isEmpty else { return nil }
         let text = ["v\(Self.version)", sources.sorted().joined(separator: ","), query.genre.lowercased(), query.countryCode, query.codec,
-                    "\(query.minimumBitrate)", query.order, "\(query.reverse)", "\(query.supportedOnly)", "\(query.offset)"].joined(separator: "|")
+                    "\(query.minimumBitrate)", query.order, "\(query.reverse)", "\(query.supportedOnly)", "\(query.offset)"].joined(separator: "|") + (query.compatibleOnly ? "|compatible" : "") + (query.video ? "|tv" : "") + (query.language.isEmpty ? "" : "|lang:" + query.language)
         return SHA256.hash(data: Data(text.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -74,21 +74,33 @@ struct StationCache: Sendable {
         }
     }
 
+    /// Bounded migration into the local index; source attribution is verified by the caller.
+    func savedEntries() -> [Entry] {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return [] }
+        return files.filter { $0.pathExtension == "json" }.prefix(Self.maximumFiles).compactMap { url in
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 2_097_152 else { return nil }
+            return load(url.deletingPathExtension().lastPathComponent)
+        }
+    }
+
     func clear() { try? FileManager.default.removeItem(at: directory) }
 
     /// A deliberately terse on-disk shape; the API-shaped `RadioListing` coding is not a storage format.
     private struct Stored: Codable { var v: Int; var more: Bool; var raw: Int; var rows: [Row] }
     private struct Row: Codable {
         var i: String, n: String, a: String, t: String, c: String, cc: String, k: String
-        var b: Int, v: Int, l: Int, h: Bool, d: String?, w: String, s: String?
+        var b: Int, v: Int, l: Int, h: Bool, d: String?, w: String, s: String?, m: Bool?
+        var artworkURL: String?
+        var languages: [String]?
         init(_ r: RadioListing) {
             i = r.id; n = r.name; a = r.address; t = r.tags; c = r.country; cc = r.countryCode; k = r.codec
-            b = r.bitrate; v = r.votes; l = r.clicks; h = r.hls; d = r.directoryID; w = r.homepage; s = r.sourceName
+            b = r.bitrate; v = r.votes; l = r.clicks; h = r.hls; d = r.directoryID; w = r.homepage; s = r.sourceName; m = r.video ? true : nil; artworkURL = r.artworkURL; languages = r.languages
         }
         var listing: RadioListing? {
             guard let url = try? StreamAddress.parse(a) else { return nil }
             var row = RadioListing(id: i, name: n, address: url.absoluteString, tags: t, country: c, countryCode: cc, codec: k, bitrate: b, votes: v, clicks: l, hls: h, sourceName: s)
             row.directoryID = d.flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
+            row.video = m == true; row.artworkURL = artworkURL; row.languages = languages
             row.homepage = (try? StreamAddress.parse(w).absoluteString) ?? ""
             return row
         }

@@ -1,0 +1,82 @@
+name: RadioPocketiOS
+options:
+  bundleIdPrefix: com.radiopocket
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.9.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  RadioPocket:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: ../Sources/RadioPocket
+        includes:
+          - Platform.swift
+          - ZipReader.swift
+          - Skin.swift
+          - RadioEngine.swift
+          - NowPlaying.swift
+          - AudioOutput.swift
+          - Demux.swift
+          - Analyzer.swift
+          - Changelog.swift
+          - EQPresets.swift
+          - Directory.swift
+          - DiscoveryCatalog.swift
+          - DiscoveryIndex.swift
+          - DiscoveryRecommendations.swift
+          - DiscoveryAvailability.swift
+          - Library.swift
+          - MoodWeather.swift
+          - MoodPlanning.swift
+          - Equalizer.swift
+          - EQFile.swift
+          - DirectorySources.swift
+          - HLSPlaylist.swift
+          - StationCache.swift
+          - ExternalRadioLink.swift
+          - PacketRing.swift
+          - StationHealth.swift
+          - RadioStream.swift
+          - StreamSources.swift
+          - StationSearch.swift
+          - VorbisDecoder.swift
+      - path: ../Sources/CEQ
+        includes: [CEQ.c]
+      - path: ../Sources/CVorbis
+        includes: [stb_vorbis_impl.c]
+      - path: ../Resources/Skins
+        type: folder
+        buildPhase: resources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: RadioPocket
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIBackgroundModes: [audio]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.radiopocket.player.ios
+        PRODUCT_NAME: RadioPocket
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/../Sources/CEQ/include", "$(SRCROOT)/../Sources/CVorbis/include"]
+        SWIFT_INCLUDE_PATHS: ["$(SRCROOT)/../Sources/CEQ/include", "$(SRCROOT)/../Sources/CVorbis/include"]

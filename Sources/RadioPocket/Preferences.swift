@@ -9,7 +9,7 @@ private final class PreferencesBackground: NSView {
 /// A lazy, native preferences window; no web runtime or background polling.
 final class PreferencesController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
     private unowned let app: AppDelegate
-    private let categories = ["General Preferences", "    Appearance", "    Skins", "Playback", "Media Library", "    Directories", "Visualization"]
+    private let categories = ["General Preferences", "    Appearance", "    Skins", "Playback", "Internet Radio", "Internet TV", "Visualization"]
     private let sidebar = NSTableView()
     private let skins = NSTableView()
     private let directoryTable = NSTableView()
@@ -18,7 +18,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     private let page = NSView()
     private var entries: [(title: String, action: String, name: String?)] = []
     private var rebuilding = false
-    private var category = 2
+    private var category = 0
     private static let sizes = [1.0, 1.5, 2.0, 3.0]
 
     init(app: AppDelegate) {
@@ -27,6 +27,8 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         window.title = "RadioPocket Preferences"
         window.appearance = NSAppearance(named: .aqua)
         window.isReleasedWhenClosed = false
+        // Above the player, equalizer and always-on-top panels, and the full-screen video window.
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         super.init(window: window)
         window.contentView = PreferencesBackground(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
         guard let root = window.contentView else { return }
@@ -42,8 +44,8 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         window.setFrameAutosaveName("RadioPocket.Preferences")
     }
     required init?(coder: NSCoder) { fatalError() }
-    func present(skins: Bool = false, directories: Bool = false, visualization: Bool = false) {
-        if skins { category = 2 } else if directories { category = 5 } else if visualization { category = 6 }
+    func present(skins: Bool = false, radio: Bool = false, tv: Bool = false, visualization: Bool = false) {
+        if skins { category = 2 } else if radio { category = 4 } else if tv { category = 5 } else if visualization { category = 6 }
         sidebar.selectRowIndexes(IndexSet(integer: category), byExtendingSelection: false)
         refresh(); window?.makeKeyAndOrderFront(nil)
     }
@@ -53,7 +55,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         defer { rebuilding = false }
         page.subviews.forEach { $0.removeFromSuperview() }
         // The table pages fill the page top to bottom; the rest sit a little higher now there is no heading.
-        page.setBoundsOrigin(NSPoint(x: 0, y: category == 2 || category == 5 ? 0 : -40))
+        page.setBoundsOrigin(NSPoint(x: 0, y: category == 2 || category == 4 || category == 5 ? 0 : -40))
         switch category {
         case 2: skinPage()
         case 1:
@@ -64,20 +66,15 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             size.target = self; size.action = #selector(sizeChanged(_:)); page.addSubview(size)
             let top = NSButton(checkboxWithTitle: "Keep player and equalizer on top", target: self, action: #selector(topChanged(_:)))
             top.frame = NSRect(x: 0, y: 356, width: 480, height: 24); top.state = app.window.level == .floating ? .on : .off; page.addSubview(top)
+            label("Station and song scroll speed", x: 0, y: 322, width: 200)
+            let speed = NSPopUpButton(frame: NSRect(x: 210, y: 319, width: 160, height: 28), pullsDown: false)
+            speed.addItems(withTitles: ClassicUI.scrollSpeeds.map(\.title))
+            speed.selectItem(at: ClassicUI.scrollSpeeds.firstIndex { $0.value == ClassicUI.scrollSpeed } ?? 2)
+            speed.target = self; speed.action = #selector(scrollSpeedChanged(_:)); speed.setAccessibilityLabel("Station and song scroll speed"); page.addSubview(speed)
         case 3:
-            label("Output volume", x: 0, y: 422, width: 200)
-            let volume = NSSlider(value: Double(app.engine.player.volume), minValue: 0, maxValue: 1, target: self, action: #selector(volumeChanged(_:)))
-            volume.frame = NSRect(x: 210, y: 422, width: 220, height: 24); volume.setAccessibilityLabel("Output volume"); page.addSubview(volume)
             let eq = app.engine.equalizer
-            let enabled = NSButton(checkboxWithTitle: "Enable equalizer", target: self, action: #selector(eqChanged(_:)))
-            enabled.frame = NSRect(x: 0, y: 382, width: 400, height: 24); enabled.state = eq.settings.enabled ? .on : .off; page.addSubview(enabled)
-            label("Equalizer preset", x: 0, y: 352, width: 200)
-            let presets = NSPopUpButton(frame: NSRect(x: 210, y: 349, width: 220, height: 28), pullsDown: false)
-            presets.addItems(withTitles: (EQPreset.classic + eq.settings.custom).map(\.name))
-            presets.selectItem(withTitle: eq.settings.preset)
-            presets.target = self; presets.action = #selector(presetChanged(_:)); presets.setAccessibilityLabel("Equalizer preset"); page.addSubview(presets)
-            label("Spatial audio", x: 0, y: 306, width: 200)
-            let style = NSPopUpButton(frame: NSRect(x: 210, y: 303, width: 220, height: 28), pullsDown: false)
+            label("Spatial audio", x: 0, y: 422, width: 200)
+            let style = NSPopUpButton(frame: NSRect(x: 210, y: 419, width: 220, height: 28), pullsDown: false)
             style.addItems(withTitles: SpatialStyle.allCases.map(\.title)); style.selectItem(at: eq.spatial.style.rawValue)
             style.target = self; style.action = #selector(spatialStyleChanged(_:)); style.setAccessibilityLabel("Spatial audio"); page.addSubview(style)
             func slider(_ title: String, y: CGFloat, value: Float, max: Double, id: String) {
@@ -85,24 +82,41 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
                 let s = NSSlider(value: Double(value), minValue: 0, maxValue: max, target: self, action: #selector(spatialSliderChanged(_:)))
                 s.frame = NSRect(x: 210, y: y, width: 220, height: 24); s.identifier = NSUserInterfaceItemIdentifier(id); s.setAccessibilityLabel(title); page.addSubview(s)
             }
-            slider("Spatial amount", y: 274, value: eq.spatial.amount, max: 1, id: "amount")
-            slider("Stereo width", y: 246, value: eq.spatial.width, max: 2, id: "width")
+            slider("Spatial amount", y: 390, value: eq.spatial.amount, max: 1, id: "amount")
+            slider("Stereo width", y: 362, value: eq.spatial.width, max: 2, id: "width")
             let leveling = NSButton(checkboxWithTitle: "Loudness leveling", target: self, action: #selector(levelingChanged(_:)))
-            leveling.frame = NSRect(x: 0, y: 208, width: 400, height: 24); leveling.state = app.engine.leveling ? .on : .off; page.addSubview(leveling)
-            button("Open a stream…", "open", x: 0, y: 180)
-        case 5: directoriesPage()
-        case 6: visualizationPage()
+            leveling.frame = NSRect(x: 0, y: 324, width: 400, height: 24); leveling.state = app.engine.leveling ? .on : .off; page.addSubview(leveling)
+            button("Open a stream…", "open", x: 0, y: 296)
         case 4:
-            button("Station library…", "discovery", x: 0, y: 418)
-            button("Favorite stations…", "favorites", x: 200, y: 418)
-            button("Manage directories…", "directories", x: 0, y: 378)
+            button("Station library…", "discovery", x: 0, y: 452)
+            button("Favorite stations…", "favorites", x: 200, y: 452)
             let fresh = NSButton(checkboxWithTitle: "Keep station lists saved and up to date", target: self, action: #selector(freshChanged(_:)))
-            fresh.frame = NSRect(x: 0, y: 342, width: 480, height: 24); fresh.state = app.library.state.backgroundStations == false ? .off : .on; page.addSubview(fresh)
+            fresh.frame = NSRect(x: 0, y: 418, width: 480, height: 24); fresh.state = app.library.state.backgroundStations == false ? .off : .on; page.addSubview(fresh)
             let check = NSButton(checkboxWithTitle: "Hide stations that no longer respond", target: self, action: #selector(checkChanged(_:)))
-            check.frame = NSRect(x: 0, y: 314, width: 480, height: 24); check.state = app.library.state.checkStations == false ? .off : .on; page.addSubview(check)
-            button("Clear saved lists", "clearstations", x: 0, y: 276)
+            check.frame = NSRect(x: 0, y: 390, width: 480, height: 24); check.state = app.library.state.checkStations == false ? .off : .on; page.addSubview(check)
+            button("Clear saved lists", "clearstations", x: 0, y: 352)
+            label("Directories", x: 0, y: 322, bold: true)
+            directoriesPage(top: 316)
+        case 5:
+            button("Channel library…", "tvlibrary", x: 0, y: 452)
+            let adult = NSButton(checkboxWithTitle: "Hide adult channels", target: self, action: #selector(tvAdultChanged(_:)))
+            adult.frame = NSRect(x: 0, y: 418, width: 480, height: 24); adult.state = app.library.state.tvSafety.hideAdult ? .on : .off; page.addSubview(adult)
+            let unreliable = NSButton(checkboxWithTitle: "Hide geo-blocked and unreliable channels", target: self, action: #selector(tvUnreliableChanged(_:)))
+            unreliable.frame = NSRect(x: 0, y: 390, width: 480, height: 24); unreliable.state = app.library.state.tvSafety.hideUnreliable ? .on : .off; page.addSubview(unreliable)
+            label("Directories", x: 0, y: 358, bold: true)
+            directoriesPage(top: 352)
+        case 6: visualizationPage()
         default:
             button("Open a stream…", "open", x: 0, y: 418)
+            button("Check for updates…", "updates", x: 200, y: 418)
+            let updates = NSButton(checkboxWithTitle: "Check for updates when RadioPocket opens", target: self, action: #selector(updatesChanged(_:)))
+            updates.frame = NSRect(x: 0, y: 384, width: 480, height: 24); updates.state = app.library.state.checkForUpdates == false ? .off : .on; page.addSubview(updates)
+            let compatibility = NSButton(checkboxWithTitle: "Compatibility Mode", target: self, action: #selector(compatibilityChanged(_:)))
+            compatibility.frame = NSRect(x: 0, y: 340, width: 480, height: 24)
+            compatibility.state = app.library.state.compatibilityMode == true ? .on : .off
+            page.addSubview(compatibility)
+            label("Improves station list compatibility with more devices.", x: 20, y: 312, width: 500)
+            label("Applies to Internet Radio and Internet TV lists.", x: 20, y: 288, width: 500)
         }
     }
     /// One row per visualization option, each a popup that writes straight to the shared settings.
@@ -130,6 +144,8 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         row("Refresh rate", "refresh", VisRefresh.allCases.map(\.title), selected: VisRefresh.allCases.firstIndex(of: s.refresh) ?? 0)
         row("Oscilloscope style", "scope", ScopeStyle.allCases.map(\.title), selected: ScopeStyle.allCases.firstIndex(of: s.scope) ?? 0)
         check("Automatically cycle visualizations", "autocycle", s.autoCycle)
+        check("Animate Dock icon while playing", "dockicon", s.dockIcon)
+        check("Show title in full screen", "overlay", s.overlay)
         row("Change visualization every", "cycletime", VisCycleInterval.seconds.map(VisCycleInterval.title), selected: VisCycleInterval.seconds.firstIndex(of: s.cycleSeconds) ?? 0)
         label("Fire", x: 0, y: y, bold: true); y -= 30
         row("Flame height", "fireheight", levels, selected: s.fireHeight)
@@ -155,10 +171,14 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         app.visuals.handle("vis:\(key):\(value)")
     }
     @objc private func visToggled(_ sender: NSButton) { if let key = sender.identifier?.rawValue { app.visuals.handle("vis:\(key)") } }
-    private var directoryList: [DirectorySource] { DirectorySource.resolved(app.library.state.directories) }
-    private var removedBuiltIns: [DirectorySource] { (app.library.state.directories ?? []).filter { $0.removed == true && $0.builtIn } }
-    private func directoriesPage() {
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 64, width: 524, height: 424))
+    /// The Internet TV section lists TV directories; Internet Radio lists radio ones.
+    private var showsTV: Bool { category == 5 }
+    private var allDirectories: [DirectorySource] { DirectorySource.resolved(app.library.state.directories) }
+    private var directoryList: [DirectorySource] { allDirectories.filter { $0.isTV == showsTV } }
+    private var allRemovedBuiltIns: [DirectorySource] { (app.library.state.directories ?? []).filter { $0.removed == true && $0.builtIn } }
+    private var removedBuiltIns: [DirectorySource] { allRemovedBuiltIns.filter { $0.isTV == showsTV } }
+    private func directoriesPage(top: CGFloat) {
+        let scroll = FittedScrollView(frame: NSRect(x: 0, y: 64, width: 524, height: top - 64))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         if directoryTable.tableColumns.isEmpty { directoryTable.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("directory"))) }
         directoryTable.tableColumns[0].width = 500
@@ -179,10 +199,15 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         return control
     }
     private func updateDirectoryControl() {
-        directoryControl?.setEnabled(directoryTable.selectedRow >= 0 && directoryList.count > 1, forSegment: 1)
+        directoryControl?.setEnabled(directoryTable.selectedRow >= 0 && (showsTV || directoryList.count > 1), forSegment: 1)
     }
     private func saveDirectories(_ list: [DirectorySource], removed: [DirectorySource]? = nil) {
-        do { try app.library.update { $0.directories = list + (removed ?? removedBuiltIns) } } catch { app.showError(error); return }
+        let discarded = allDirectories.filter { old in [.localList, .localTVList].contains(old.kind) && !list.contains(where: { $0.id == old.id }) }
+        do { try app.library.update { $0.directories = list + (removed ?? allRemovedBuiltIns) } } catch { app.showError(error); return }
+        let importedFolder = app.library.directory.appendingPathComponent("Directories").standardizedFileURL.path + "/"
+        for source in discarded {
+            if let url = source.url.flatMap({ URL(string: $0) }), url.isFileURL, url.standardizedFileURL.path.hasPrefix(importedFolder) { try? FileManager.default.removeItem(at: url) }
+        }
         let position = page.subviews.compactMap { $0 as? NSScrollView }.first?.contentView.bounds.origin
         let selected = directoryTable.selectedRow
         app.directoriesChanged(); refresh()
@@ -192,10 +217,12 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         if directoryList.indices.contains(selected) { directoryTable.selectRowIndexes(IndexSet(integer: selected), byExtendingSelection: false) }
     }
     @objc private func directoryToggled(_ sender: NSButton) {
-        var list = directoryList
-        guard list.indices.contains(sender.tag) else { return }
-        list[sender.tag].enabled = sender.state == .on
-        if !list.contains(where: \.enabled) { list[sender.tag].enabled = true } // The library needs at least one source.
+        let shown = directoryList
+        var list = allDirectories
+        guard shown.indices.contains(sender.tag), let index = list.firstIndex(where: { $0.id == shown[sender.tag].id }) else { return }
+        list[index].enabled = sender.state == .on
+        // The radio library needs at least one source; the TV library can be left empty.
+        if !showsTV, !list.contains(where: { $0.enabled && !$0.isTV }) { list[index].enabled = true }
         saveDirectories(list)
     }
     @objc private func directoryPlusMinus(_ sender: NSSegmentedControl) {
@@ -204,7 +231,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         guard !gone.isEmpty else { addDirectory(); return }
         let menu = NSMenu(); menu.autoenablesItems = false
         let custom = NSMenuItem(title: "Custom Directory…", action: #selector(addDirectory), keyEquivalent: ""); custom.target = self
-        custom.isEnabled = directoryList.filter { !$0.builtIn }.count < DirectorySource.maximumCustom
+        custom.isEnabled = allDirectories.filter { !$0.builtIn }.count < DirectorySource.maximumCustom
         menu.addItem(custom); menu.addItem(.separator())
         for source in gone {
             let name = DirectorySource.defaults.first { $0.id == source.id }?.name ?? source.name
@@ -214,45 +241,51 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     }
     @objc private func restoreDirectory(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        saveDirectories(directoryList, removed: removedBuiltIns.filter { $0.id != id })
+        saveDirectories(allDirectories, removed: allRemovedBuiltIns.filter { $0.id != id })
     }
     private func removeDirectory() {
-        var list = directoryList
+        let shown = directoryList
+        var list = allDirectories
         let row = directoryTable.selectedRow
-        guard list.indices.contains(row), list.count > 1 else { return }
-        let gone = list.remove(at: row)
-        if !list.contains(where: \.enabled) { list[0].enabled = true }
-        var removed = removedBuiltIns
+        guard shown.indices.contains(row), showsTV || shown.count > 1, let index = list.firstIndex(where: { $0.id == shown[row].id }) else { return }
+        let gone = list.remove(at: index)
+        if !showsTV, !list.contains(where: { $0.enabled && !$0.isTV }), let first = list.firstIndex(where: { !$0.isTV }) { list[first].enabled = true }
+        var removed = allRemovedBuiltIns
         if gone.builtIn { var marker = gone; marker.removed = true; removed.append(marker) }
         directoryTable.deselectAll(nil)
         saveDirectories(list, removed: removed)
     }
     @objc private func addDirectory() {
         let alert = NSAlert()
-        alert.messageText = "Add a station directory"
-        alert.informativeText = "Only add directories you trust. RadioPocket reads station names and stream links from them."
+        let tv = showsTV
+        alert.messageText = tv ? "Add a TV channel list" : "Add a station directory"
+        alert.informativeText = tv ? "Only add lists you trust and have the right to watch. RadioPocket reads channel names and stream links from them."
+                                   : "Only add directories you trust. RadioPocket reads station names and stream links from them."
         let form = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 92))
         let name = NSTextField(frame: NSRect(x: 0, y: 66, width: 360, height: 24)); name.placeholderString = "Name (optional)"
         let url = NSTextField(frame: NSRect(x: 0, y: 34, width: 360, height: 24)); url.placeholderString = "https://…"
         let kind = NSPopUpButton(frame: NSRect(x: 0, y: 2, width: 360, height: 26), pullsDown: false)
-        kind.addItems(withTitles: ["M3U / PLS station list", "Radio Browser–compatible server"])
+        kind.addItems(withTitles: tv ? ["M3U TV channel list"] : ["M3U / PLS station list", "Radio Browser–compatible server"])
         [name, url, kind].forEach(form.addSubview)
         alert.accessoryView = form
         alert.addButton(withTitle: "Add"); alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = url
+        alert.window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
-            let source = try DirectorySource.custom(name: name.stringValue, url: url.stringValue, kind: kind.indexOfSelectedItem == 0 ? .stationList : .radioBrowserAPI)
-            guard let backend = source.makeBackend() else { return }
+            let source = try DirectorySource.custom(name: name.stringValue, url: url.stringValue, kind: (tv ? [.tvList] : [.stationList, .radioBrowserAPI] as [DirectorySource.Kind])[kind.indexOfSelectedItem])
+            guard let backend = source.makeBackend(safety: app.library.state.tvSafety) else { return }
             window?.title = "RadioPocket Preferences — Checking directory…"
             Task { @MainActor [weak self] in
                 defer { self?.window?.title = "RadioPocket Preferences" }
                 do {
-                    var probe = DirectoryQuery(); probe.supportedOnly = false
-                    let page = try await backend.search(probe, refresh: true)
+                    var probe = DirectoryQuery(); probe.supportedOnly = false; probe.video = tv
+                    var page = try await backend.search(probe, refresh: true)
+                    // A TV list may hold only radio streams, which belong to the radio library.
+                    if tv, page.stations.isEmpty { probe.video = false; page = try await backend.search(probe, refresh: false) }
                     guard let self else { return }
                     if page.rawCount == 0 && page.stations.isEmpty { throw RadioError.message("That directory returned no stations.") }
-                    self.saveDirectories(self.directoryList + [source])
+                    self.saveDirectories(self.allDirectories + [source])
                 } catch { self?.app.showError(error) }
             }
         } catch { app.showError(error) }
@@ -320,7 +353,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         table.headerView = nil; table.rowHeight = 24; table.intercellSpacing = NSSize(width: 0, height: 0)
         table.delegate = self; table.dataSource = self; table.allowsEmptySelection = false
         table.setAccessibilityLabel(table === sidebar ? "Preferences categories" : "Installed skins")
-        let scroll = NSScrollView(frame: frame); scroll.borderType = .bezelBorder; scroll.hasVerticalScroller = true; scroll.documentView = table
+        let scroll = FittedScrollView(frame: frame); scroll.borderType = .bezelBorder; scroll.hasVerticalScroller = true; scroll.documentView = table
         return scroll
     }
     private func label(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat = 500, height: CGFloat = 24, bold: Bool = false) {
@@ -359,9 +392,23 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     }
     @objc private func closePreferences() { window?.orderOut(nil) }
     @objc private func action(_ sender: NSButton) { if let id = sender.identifier?.rawValue { app.handle(id) } }
-    @objc private func volumeChanged(_ sender: NSSlider) { app.view.volumeChanged?(sender.floatValue) }
     @objc private func sizeChanged(_ sender: NSPopUpButton) { app.handle("scale" + String(format: "%g", Self.sizes[sender.indexOfSelectedItem])) }
+    @objc private func scrollSpeedChanged(_ sender: NSPopUpButton) {
+        let value = ClassicUI.scrollSpeeds[sender.indexOfSelectedItem].value
+        do { try app.library.update { $0.textScrollSpeed = value }; ClassicUI.scrollSpeed = value }
+        catch { app.showError(error) }
+    }
     @objc private func topChanged(_ sender: NSButton) { app.window.level = sender.state == .on ? .floating : .normal; app.eqWindow.level = app.window.level; app.saveWindowLevel() }
+    @objc private func updatesChanged(_ sender: NSButton) {
+        do { try app.library.update { $0.checkForUpdates = sender.state == .on } }
+        catch { app.showError(error) }
+    }
+    @objc private func compatibilityChanged(_ sender: NSButton) {
+        do {
+            try app.library.update { $0.compatibilityMode = sender.state == .on }
+            app.compatibilityChanged()
+        } catch { app.showError(error) }
+    }
     @objc private func freshChanged(_ sender: NSButton) {
         do { try app.library.update { $0.backgroundStations = sender.state == .on }; app.updateBackgroundStations() }
         catch { app.showError(error) }
@@ -369,6 +416,21 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func checkChanged(_ sender: NSButton) {
         do { try app.library.update { $0.checkStations = sender.state == .on }; app.updateBackgroundStations() }
         catch { app.showError(error) }
+    }
+    @objc private func tvAdultChanged(_ sender: NSButton) {
+        if sender.state == .off {
+            let alert = NSAlert()
+            alert.messageText = "Show adult channels?"
+            alert.informativeText = "Channels in your TV lists that look adult will no longer be hidden."
+            alert.addButton(withTitle: "Show Them"); alert.addButton(withTitle: "Keep Hiding")
+            alert.window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
+            guard alert.runModal() == .alertFirstButtonReturn else { sender.state = .on; return }
+        }
+        saveTVFilters { $0.tvHideAdult = sender.state == .on }
+    }
+    @objc private func tvUnreliableChanged(_ sender: NSButton) { saveTVFilters { $0.tvHideUnreliable = sender.state == .on } }
+    private func saveTVFilters(_ edit: (inout Library.State) -> Void) {
+        do { try app.library.update(edit); app.tvFiltersChanged() } catch { app.showError(error) }
     }
     @objc private func spatialStyleChanged(_ sender: NSPopUpButton) {
         if let style = SpatialStyle(rawValue: sender.indexOfSelectedItem) { app.engine.equalizer.spatial.style = style }
@@ -378,9 +440,4 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
         else { app.engine.equalizer.spatial.amount = sender.floatValue }
     }
     @objc private func levelingChanged(_ sender: NSButton) { if (sender.state == .on) != app.engine.leveling { app.handle("leveling") } }
-    @objc private func eqChanged(_ sender: NSButton) { app.engine.equalizer.settings.enabled = sender.state == .on }
-    @objc private func presetChanged(_ sender: NSPopUpButton) {
-        let presets = EQPreset.classic + app.engine.equalizer.settings.custom
-        if presets.indices.contains(sender.indexOfSelectedItem) { app.engine.equalizer.select(presets[sender.indexOfSelectedItem]); refresh() }
-    }
 }

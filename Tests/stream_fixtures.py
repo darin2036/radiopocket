@@ -193,6 +193,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send(("\n".join(lines) + "\n").encode(), "application/vnd.apple.mpegurl")
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path in ("/mirrors.pls", "/mirrors-hidden"):
+            return self.send(b"[playlist]\nFile1=/missing-audio\nFile2=/aac\n", "audio/x-scpls")
         if path in ("/aac", "/aac-icy"):
             icy = path == "/aac-icy"
             blob = b"".join(frames)
