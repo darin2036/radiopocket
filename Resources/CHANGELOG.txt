@@ -1,3 +1,5 @@
+RadioPocket 0.12.0
+
 RadioPocket 0.11.0
 * Added: Play several TV channels at once, each in its own video panel with its own player; right-click a channel in the library or Discover and choose Tune In on a panel or a new one
 * Added: Audio follows one panel at a time; click a panel's speaker icon to take the audio
