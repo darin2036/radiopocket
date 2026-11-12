@@ -27,7 +27,7 @@ struct StationCache: Sendable {
     func key(for query: DirectoryQuery, sources: [String]) -> String? {
         guard query.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, (0...100_000).contains(query.offset), !sources.isEmpty else { return nil }
         let text = ["v\(Self.version)", sources.sorted().joined(separator: ","), query.genre.lowercased(), query.countryCode, query.codec,
-                    "\(query.minimumBitrate)", query.order, "\(query.reverse)", "\(query.supportedOnly)", "\(query.offset)"].joined(separator: "|") + (query.video ? "|tv" : "") + (query.language.isEmpty ? "" : "|lang:" + query.language)
+                    "\(query.minimumBitrate)", query.order, "\(query.reverse)", "\(query.supportedOnly)", "\(query.offset)"].joined(separator: "|") + (query.compatibleOnly ? "|compatible" : "") + (query.video ? "|tv" : "") + (query.language.isEmpty ? "" : "|lang:" + query.language)
         return SHA256.hash(data: Data(text.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 

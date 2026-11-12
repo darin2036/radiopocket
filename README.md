@@ -112,6 +112,12 @@ Runtime footprint is small: eight fixed 16 KB audio buffers, a time-shift ring o
 
 **Help ▸ Report a Problem…** opens a prefilled GitHub issue with your RadioPocket and macOS versions. Station addresses are left out because issues are public.
 
+Compatibility Mode in Preferences ▸ General improves station list compatibility with more devices. It filters Internet Radio and Internet TV browsing to secure MP3/AAC, HLS, and compatible MP4 listings. It is off by default; saved favorites and direct URLs remain available. This is a conservative format filter, not a guarantee that a broadcaster is online or available in your region.
+
+Recommended and Best Quality ordering prioritize streams that recently played on this device and temporarily lower streams that exhausted playback recovery. Playback successes count for seven days and failures for one hour. TV recommendations also consider your preferred languages. Ranking applies to available listings and loaded directory pages, rather than claiming to rank an entire remote catalog.
+
+Playlist recovery tries alternate addresses on reconnect, including refreshed SomaFM mirror lists for recognized saved streams. Native rewind and wider codec support remain available.
+
 ## Build and test
 
 ```sh

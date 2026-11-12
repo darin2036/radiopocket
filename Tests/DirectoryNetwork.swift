@@ -86,6 +86,17 @@ import Foundation
             await afterRestart.configure(onlyFixture)
             let fromDisk = try await afterRestart.search(browse)
             try check(fromDisk.cached && fromDisk.stations.count == 100 && fromDisk.updated != nil, "After a restart the view opens from disk without the network")
+            var qualityView = browse; qualityView.order = "quality"
+            let qualityPage = try await firstRun.search(qualityView)
+            let promoted = qualityPage.stations.last!
+            qualityView.playbackChecks = [StreamPlaybackCheck(address: promoted.address, played: true, time: Date())]
+            let reranked = try await firstRun.search(qualityView)
+            try check(reranked.cached && reranked.stations.first?.address == promoted.address, "Cached quality views apply fresh playback evidence without refetching")
+            var compatibleView = browse; compatibleView.compatibleOnly = true
+            let filtered = try await firstRun.search(compatibleView)
+            try check(filtered.stations.allSatisfy(\.highlyCompatible) && store.key(for: compatibleView, sources: ["radio-browser@"]) != store.key(for: browse, sources: ["radio-browser@"]), "Compatibility uses a separate cached view and keeps incompatible streams out")
+            await firstRun.clearSavedStations()
+            _ = try await firstRun.search(browse, refresh: true)
             var typed = browse; typed.name = "network"
             let typedFirst = try await firstRun.search(typed)
             try check(typedFirst.stations.count == 100 && (try? FileManager.default.contentsOfDirectory(atPath: saveDir.path).count) == 1, "Typed searches are not saved")

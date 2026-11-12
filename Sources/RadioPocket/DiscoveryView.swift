@@ -200,6 +200,10 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         if !hasLoaded || (scope.curated && !(scope == .moods && wasVisible)) { load() }
     }
     /// The TV filters changed: reload the channels on screen, or the next time the library opens.
+    func compatibilityChanged() {
+        captureQuery()
+        if window?.isVisible == true { load() } else { hasLoaded = false }
+    }
     func safetyChanged() { if scope == .tv, window?.isVisible == true { load() } else { hasLoaded = false } }
     /// Opens the library on the Internet TV channels.
     func showTV() {
@@ -392,8 +396,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         search.setAccessibilityLabel("Search radio station names")
         search.heightAnchor.constraint(equalToConstant: 22).isActive = true
         search.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
-        popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Best quality"], width: 150)
-        for (i, sort) in ["clickcount:1", "votes:1", "name:0", "quality:1"].enumerated() { order.item(at: i)?.representedObject = sort }
+        popup(order, label: "Station ordering", values: ["Popular", "Top rated", "Name A–Z", "Best quality", "Recommended"], width: 150)
+        for (i, sort) in ["clickcount:1", "votes:1", "name:0", "quality:1", "recommended:1"].enumerated() { order.item(at: i)?.representedObject = sort }
         popup(genre, label: "Genre filter", values: ["All genres"] + genres, width: 96)
         popup(country, label: "Country filter", values: ["Any country"], width: 150)
         popup(language, label: "Language filter", values: ["Any language"], width: 150)
@@ -632,7 +636,9 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 await directory.configure(state.directories ?? [], safety: state.tvSafety)
                 var failures: [String] = []
                 if refresh { failures = try await directory.refreshDiscovery(video: video, genre: state.discoveryInterests?.last ?? "") }
-                let records = try await directory.discoveryRecords(video: video, text: text)
+                let records = try await directory.discoveryRecords(video: video, text: text).filter {
+                    state.compatibilityMode != true || $0.restored.highlyCompatible
+                }
                 try Task.checkCancellation()
                 let worker = Task.detached(priority: .userInitiated) { () -> (DiscoveryFeed, MoodPlanning.Context?, (key: String, plan: MoodPlan)?) in
                     if moods {
@@ -811,6 +817,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         query.language = scope.isTV ? language.selectedItem?.representedObject as? String ?? "" : ""
         updateFiltersButton()
         query.codec = ""; query.supportedOnly = true; query.video = scope.isTV
+        query.compatibleOnly = library.state.compatibilityMode == true
+        query.playbackChecks = library.state.playbackChecks ?? []
         query.sourceID = sourceMenu.selectedItem?.representedObject as? String ?? "all"
         query.minimumBitrate = 0
         let sorting = (order.selectedItem?.representedObject as? String ?? "clickcount:1").split(separator: ":")
@@ -824,6 +832,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         if scope.curated { loadDiscover(refresh: refresh); return }
         if scope.local { loadLocal(); return }
         let token = generation
+        query.compatibleOnly = library.state.compatibilityMode == true
+        query.playbackChecks = library.state.playbackChecks ?? []
         let request = query
         remoteSearch = refresh
         heading.stringValue = scope.title
@@ -870,9 +880,15 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
                 self.query.offset = request.offset; self.loadingMore = false
                 let known = Set(self.rows.map(\.id))
                 let fresh = page.stations.filter { !known.contains($0.id) }
-                let start = self.rows.count
+                let selectedID = self.selected?.id
                 self.rows += fresh; self.hasMore = page.hasMore
-                if !fresh.isEmpty { self.table.insertRows(at: IndexSet(integersIn: start..<self.rows.count), withAnimation: []) }
+                if ["quality", "recommended"].contains(request.order) {
+                    self.rows = RadioListing.ordered(self.rows, by: request.order, reverse: request.reverse, checks: request.playbackChecks)
+                }
+                self.table.reloadData()
+                if let selectedID, let index = self.rows.firstIndex(where: { $0.id == selectedID }) {
+                    self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                }
                 self.message.isHidden = !self.rows.isEmpty
                 if self.rows.isEmpty, !page.hasMore { self.message.stringValue = "No stations found" }
                 self.loadMoreIfNeeded()
@@ -1042,11 +1058,11 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
             if let selectedID, let index = rows.firstIndex(where: { $0.id == selectedID }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
             updateSelection()
         } else {
-            if order.numberOfItems > 4 { order.removeItem(at: 4) }
+            if order.numberOfItems > 5 { order.removeItem(at: 5) }
             let title = table.tableColumn(withIdentifier: .init(key))?.headerCell.stringValue ?? key
             order.addItem(withTitle: title + (sort.ascending ? " ↑" : " ↓"))
             order.lastItem?.representedObject = key + (sort.ascending ? ":0" : ":1")
-            order.selectItem(at: 4)
+            order.selectItem(at: 5)
             captureQuery(); load()
         }
     }
@@ -1079,7 +1095,8 @@ final class DiscoveryController: NSWindowController, NSWindowDelegate, NSTableVi
         case .genre(let tag), .tvGenre(let tag): chooseGenre(tag)
         case .popular: chooseGenre("All genres"); order.selectItem(at: 0)
         case .rated: chooseGenre("All genres"); order.selectItem(at: 1)
-        case .alphabetical, .tv: chooseGenre("All genres"); order.selectItem(at: 2)
+        case .alphabetical: chooseGenre("All genres"); order.selectItem(at: 2)
+        case .tv: chooseGenre("All genres"); order.selectItem(at: 4)
         default: break
         }
         refreshSources()

@@ -224,3 +224,15 @@ enum StreamProbe {
         return !appSide.contains { lower.contains($0) }
     }
 }
+
+/// Actual playback evidence is separate from reachability checks and expires quickly after failures.
+struct StreamPlaybackCheck: Codable, Hashable {
+    var address: String
+    var played: Bool
+    var time: Date
+    func rank(now: Date) -> Int {
+        let age = now.timeIntervalSince(time)
+        guard age >= 0, age < (played ? 7 * 86_400 : 3600) else { return 0 }
+        return played ? 1 : -1
+    }
+}

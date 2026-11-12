@@ -20,6 +20,8 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     private var demuxer: Demuxer?
     private var address: URL?
     private var stopped = false
+    private var playlistTask: Task<Void, Never>?
+    private let playlistAttempt: Int
     private var agents: [String?] = []
     private var agentAttempt = 0
     private var learned = false
@@ -31,7 +33,8 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     private var formatInfo: (codec: String, rate: Double, channels: Int)?
     private var rateMark: (date: Date, bytes: Int, kbps: Int)?
 
-    init(volume: Float, balance: Float = 0, leveling: Bool = false) {
+    init(volume: Float, balance: Float = 0, leveling: Bool = false, playlistAttempt: Int = 0) {
+        self.playlistAttempt = playlistAttempt
         super.init()
         rp_eq_volume(dsp, volume)
         rp_eq_balance(dsp, balance)
@@ -70,6 +73,8 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     // MARK: Control
 
     func start(_ url: URL) {
+        lock.lock(); let done = stopped; lock.unlock()
+        guard !done else { return }
         address = url
         agents = UserAgent.ladder(for: url.host)
         agentAttempt = 0; learned = false
@@ -155,16 +160,23 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     /// A station address that answered with a playlist: plays the stream it names.
     private func followPlaylist(_ text: String, at url: URL) {
         sniffDepth += 1
-        guard sniffDepth <= 3, let entry = try? StreamAddress.playlistEntry(text, base: url) else {
+        guard sniffDepth <= 3, let entry = try? StreamAddress.playlistEntry(text, base: url, attempt: playlistAttempt) else {
             sinkFailure("This playlist has no supported HTTP audio stream."); return
         }
         if entry == url { startHLS(url); return }
-        Task { [weak self] in
+        let attempt = playlistAttempt
+        let follow = Task { [weak self] in
             do {
-                let target = try await StreamAddress.resolve(entry)
+                let target = try await StreamAddress.resolve(entry, attempt: attempt)
+                try Task.checkCancellation()
                 self?.start(target)
-            } catch { self?.sinkFailure((error as? RadioError)?.errorDescription ?? error.localizedDescription) }
+            } catch {
+                if !Task.isCancelled { self?.sinkFailure((error as? RadioError)?.errorDescription ?? error.localizedDescription) }
+            }
         }
+        lock.lock()
+        if stopped { follow.cancel() } else { playlistTask = follow }
+        lock.unlock()
     }
 
     func pause() {
@@ -189,8 +201,10 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
         ring.goLive(); output?.flush()
     }
     func stop() {
-        lock.lock(); stopped = true; let source = self.source, output = self.output, demuxer = self.demuxer
-        self.source = nil; self.output = nil; self.demuxer = nil; lock.unlock()
+        lock.lock(); stopped = true
+        let source = self.source, output = self.output, demuxer = self.demuxer, playlistTask = self.playlistTask
+        self.source = nil; self.output = nil; self.demuxer = nil; self.playlistTask = nil; lock.unlock()
+        playlistTask?.cancel()
         source?.stop(); demuxer?.close()
         if let output { output.stop() } else { ring.close() }
     }

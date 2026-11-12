@@ -37,6 +37,16 @@ struct RadioListing: Codable, Equatable, Identifiable {
         // Lists that carry no codec (station lists, saved stations) get the benefit of the doubt.
         video || (directoryID == nil && codec.isEmpty) || hls || ["MP3", "AAC", "AAC+", "AAC-LC", "HE-AAC", "HE-AACV2", "OPUS", "OGG", "VORBIS"].contains(codec.uppercased())
     }
+    /// Broad device compatibility, independent of the native decoder's wider format support.
+    var highlyCompatible: Bool {
+        guard let url = URL(string: address), url.scheme?.lowercased() == "https",
+              url.user == nil, url.password == nil else { return false }
+        let format = codec.uppercased(), path = url.path.lowercased()
+        if hls || url.pathExtension.lowercased() == "m3u8" { return true }
+        if video { return path.hasSuffix(".mp4") && ["", "H264", "H.264", "AVC", "MP4"].contains(format) }
+        if ["MP3", "AAC", "AAC+", "AAC-LC", "HE-AAC", "HE-AACV2", "AACP", "M4A"].contains(format) { return true }
+        return format.isEmpty && [".mp3", "-mp3", ".aac", "-aac", ".m4a", ".mp4"].contains(where: path.hasSuffix)
+    }
     /// Quality on a 0–5 scale from codec and bitrate, so 64 kbps HE-AAC and 128 kbps MP3 compare fairly. 0 means unknown.
     var quality: Int {
         let name = codec.uppercased()
@@ -56,7 +66,16 @@ struct RadioListing: Codable, Equatable, Identifiable {
     }
     var qualityStars: String { quality == 0 ? "—" : String(repeating: "★", count: quality) + String(repeating: "☆", count: 5 - quality) }
     /// Orders listings by a column key; ties fall back to name so the order is stable.
-    static func ordered(_ rows: [RadioListing], by order: String, reverse: Bool) -> [RadioListing] {
+    static func ordered(_ rows: [RadioListing], by order: String, reverse: Bool,
+                        checks: [StreamPlaybackCheck] = [], now: Date = Date(),
+                        languages: [String] = Locale.preferredLanguages) -> [RadioListing] {
+        var outcomes: [String: Int] = [:]
+        for check in checks { outcomes[check.address] = check.rank(now: now) }
+        let preferred = languages.compactMap { Locale(identifier: $0).language.languageCode?.identifier }
+        func languageRank(_ row: RadioListing) -> Int {
+            let spoken = (row.languages ?? []).compactMap { Locale(identifier: $0).language.languageCode?.identifier }
+            return preferred.firstIndex(where: spoken.contains) ?? (preferred.count + (spoken.isEmpty ? 0 : 1))
+        }
         func number(_ r: RadioListing) -> Int? {
             switch order {
             case "bitrate": return r.bitrate
@@ -74,8 +93,28 @@ struct RadioListing: Codable, Equatable, Identifiable {
             default: return r.name
             }
         }
-        func name(_ a: RadioListing, _ b: RadioListing) -> Bool { a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending }
+        func name(_ a: RadioListing, _ b: RadioListing) -> Bool {
+            let result = a.name.localizedCaseInsensitiveCompare(b.name)
+            return result == .orderedSame ? a.address < b.address : result == .orderedAscending
+        }
         return rows.sorted { a, b in
+            if order == "quality" || order == "recommended" {
+                let x = outcomes[a.address] ?? 0, y = outcomes[b.address] ?? 0
+                if x != y { return x > y }
+                if a.likelyPlayable != b.likelyPlayable { return a.likelyPlayable }
+                let secureA = URL(string: a.address)?.scheme?.lowercased() == "https"
+                let secureB = URL(string: b.address)?.scheme?.lowercased() == "https"
+                if secureA != secureB { return secureA }
+                if order == "recommended" {
+                    if a.video || b.video {
+                        let x = languageRank(a), y = languageRank(b)
+                        if x != y { return x < y }
+                    }
+                    if a.clicks != b.clicks { return a.clicks > b.clicks }
+                    if a.votes != b.votes { return a.votes > b.votes }
+                    if a.quality != b.quality { return a.quality > b.quality }
+                }
+            }
             if let x = number(a), let y = number(b) { return x == y ? name(a, b) : (reverse ? x > y : x < y) }
             // Listings with no value for a text column always sink to the bottom.
             let x = text(a), y = text(b)
@@ -144,6 +183,8 @@ struct DirectoryQuery: Hashable {
     var order = "clickcount"
     var reverse = true
     var supportedOnly = true
+    var compatibleOnly = false
+    var playbackChecks: [StreamPlaybackCheck] = []
     /// Internet TV channels instead of radio stations.
     var video = false
     /// "all", or the identifier of one `DirectorySource`.
@@ -152,7 +193,7 @@ struct DirectoryQuery: Hashable {
     static let pageSize = 100
     var items: [URLQueryItem] {
         var result = [URLQueryItem(name: "hidebroken", value: "true"), .init(name: "limit", value: "\(Self.pageSize)"),
-                      .init(name: "offset", value: "\(max(0, offset))"), .init(name: "order", value: order == "quality" ? "bitrate" : order), .init(name: "reverse", value: reverse ? "true" : "false")]
+                      .init(name: "offset", value: "\(max(0, offset))"), .init(name: "order", value: order == "quality" ? "bitrate" : order == "recommended" ? "clickcount" : order), .init(name: "reverse", value: reverse ? "true" : "false")]
         for (key, value) in [("name", serverName), ("tag", genre), ("countrycode", countryCode), ("codec", codec)] {
             let value = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
             if !value.isEmpty { result.append(.init(name: key, value: value)) }
@@ -254,6 +295,7 @@ actor RadioBrowserDirectory: DirectoryBackend {
     static func decodePage(_ data: Data, query: DirectoryQuery) throws -> DirectoryPage {
         let values = try JSONDecoder().decode(DirectoryRows.self, from: data)
         var stations = query.supportedOnly ? values.rows.filter(\.likelyPlayable) : values.rows
+        if query.compatibleOnly { stations = stations.filter(\.highlyCompatible) }
         if query.searchWords.count > 1 { stations = stations.filter(query.matchesName) }
         return DirectoryPage(stations: Array(stations.prefix(DirectoryQuery.pageSize)), hasMore: values.count >= DirectoryQuery.pageSize, rawCount: values.count)
     }
@@ -467,10 +509,17 @@ actor RadioDirectory {
     /// Browsing views come from disk when saved: instantly, and offline. A page older than `freshFor` is still returned at once
     /// and queued for a quiet refresh, so what the user sees never waits on the network. Refresh and typed searches go live.
     func search(_ query: DirectoryQuery, refresh: Bool = false) async throws -> DirectoryPage {
-        let page = try await browse(query, refresh: refresh)
-        guard let dead else { return page }
-        checkInBackground(page.stations)
-        return dead.filter(page)
+        // Cache provider pages independently of this device's changing playback evidence.
+        var providerQuery = query; providerQuery.playbackChecks = []
+        var page = try await browse(providerQuery, refresh: refresh)
+        if let dead {
+            checkInBackground(page.stations)
+            page = dead.filter(page)
+        }
+        if ["quality", "recommended"].contains(query.order) {
+            page.stations = RadioListing.ordered(page.stations, by: query.order, reverse: query.reverse, checks: query.playbackChecks)
+        }
+        return page
     }
 
     private func browse(_ query: DirectoryQuery, refresh: Bool) async throws -> DirectoryPage {
@@ -639,7 +688,7 @@ actor RadioDirectory {
         }
         if pages.count == 1 {
             var only = pages[0]
-            if query.order != "clickcount" { only.stations = RadioListing.ordered(only.stations, by: query.order, reverse: query.reverse) }
+            if query.order != "clickcount" { only.stations = RadioListing.ordered(only.stations, by: query.order, reverse: query.reverse, checks: query.playbackChecks) }
             return only
         }
         // Interleave so no single directory fills the page, and drop streams several directories list.
@@ -650,7 +699,7 @@ actor RadioDirectory {
                 if seen.insert(DiscoveryIndex.matchKey(row.address)).inserted { merged.append(row) }
             }
         }
-        if query.order != "clickcount" { merged = RadioListing.ordered(merged, by: query.order, reverse: query.reverse) }
+        if query.order != "clickcount" { merged = RadioListing.ordered(merged, by: query.order, reverse: query.reverse, checks: query.playbackChecks) }
         return DirectoryPage(stations: merged, hasMore: pages.contains(where: \.hasMore), rawCount: pages.reduce(0) { $0 + $1.rawCount }, cached: pages.allSatisfy(\.cached))
     }
 

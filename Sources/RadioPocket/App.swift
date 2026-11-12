@@ -212,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self?.engine.setBalance(value)
             self?.scheduleVolumeSave()
         }
+        engine.playbackChecked = { [weak self] station, played in try? self?.library.recordPlayback(station, played: played) }
         engine.onGiveUp = { [weak self] station, message in self?.stationFailed(station, message) }
         nowPlaying.action = { [weak self] in self?.handle($0) }
         nowPlaying.canSeek = { [weak self] in self?.focus.canTimeShift ?? false }
@@ -906,6 +907,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func playInNewPanel(_ station: Station) {
         guard station.video == true else { play(station); return }
         let extra = RadioEngine()
+        extra.playbackChecked = { [weak self] station, played in
+            try? self?.library.recordPlayback(station, played: played)
+            if played { try? self?.library.recordRecent(station) }
+        }
         extra.setVolume(focus.player.volume)
         let controller = VideoController(engine: extra, extra: true)
         controller.level = window.level
@@ -923,7 +928,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         controller.present(title: station.name, below: window, offset: CGFloat(panels.count) * 28)
         takeAudio(extra)
         extra.play(station)
-        do { try library.recordRecent(station) } catch { showError(error) }
     }
 
     /// Gives the audio to one engine and mutes every other; the main player then follows that engine.
@@ -1169,6 +1173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         } catch { showError(error) }
     }
     /// Tells an open library window that the user changed their directory list.
+    func compatibilityChanged() { discovery?.compatibilityChanged() }
     func tvFiltersChanged() { discovery?.safetyChanged(); updateBackgroundStations() }
     func directoriesChanged() { discovery?.refreshSources(); updateBackgroundStations() }
     private var updateTask: Task<Void, Never>?

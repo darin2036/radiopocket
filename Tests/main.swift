@@ -30,6 +30,46 @@ let root = FileManager.default.temporaryDirectory.appendingPathComponent("RadioP
 do {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
+    let compatibilityNow = Date(timeIntervalSince1970: 1_800_000_000)
+    func profileRow(_ address: String, _ codec: String = "MP3", video: Bool = false) -> RadioListing {
+        var row = RadioListing(station: Station(name: "Profile", address: address))
+        row.codec = codec; row.video = video; row.bitrate = 128
+        return row
+    }
+    let compatibleRadio = profileRow("https://radio.example/live", "AAC")
+    let incompatibleRadio = profileRow("https://radio.example/live.opus", "OPUS")
+    let unknownRadio = profileRow("https://radio.example/stream", "")
+    let insecureRadio = profileRow("http://radio.example/live.mp3")
+    var compatibleTV = profileRow("https://tv.example/live.m3u8", "", video: true)
+    compatibleTV.languages = ["fr"]
+    let unsupportedTV = profileRow("https://tv.example/live.webm", "VP9", video: true)
+    try check(compatibleRadio.highlyCompatible && compatibleTV.highlyCompatible && !incompatibleRadio.highlyCompatible && !unknownRadio.highlyCompatible && !insecureRadio.highlyCompatible && !unsupportedTV.highlyCompatible, "Compatibility profile covers radio and TV conservatively")
+    try check(profileRow("https://radio.example/a.M4A?token=x", "").highlyCompatible && !profileRow("https://user:secret@radio.example/live.mp3").highlyCompatible, "Compatibility checks use the URL path and reject embedded credentials")
+    var profileQuery = DirectoryQuery(); profileQuery.compatibleOnly = true
+    let profileRows = [insecureRadio, unknownRadio, incompatibleRadio, compatibleRadio]
+    try check(DirectoryFilter.page(profileRows, query: profileQuery).stations == [compatibleRadio], "Compatibility filters apply before station-list paging")
+    profileQuery.compatibleOnly = false
+    try check(DirectoryFilter.page(profileRows, query: profileQuery).stations.count == 4, "Disabling compatibility restores the native player's wider formats")
+    let played = StreamPlaybackCheck(address: insecureRadio.address, played: true, time: compatibilityNow)
+    let failed = StreamPlaybackCheck(address: compatibleRadio.address, played: false, time: compatibilityNow)
+    let ranking = RadioListing.ordered([compatibleRadio, insecureRadio, unknownRadio], by: "quality", reverse: true, checks: [played, failed], now: compatibilityNow)
+    try check(ranking.map(\.address) == [insecureRadio.address, unknownRadio.address, compatibleRadio.address], "Real playback outranks codec estimates and temporary failures sink")
+    try check(failed.rank(now: compatibilityNow.addingTimeInterval(3600)) == 0 && played.rank(now: compatibilityNow.addingTimeInterval(7 * 86400)) == 0 && played.rank(now: compatibilityNow.addingTimeInterval(-1)) == 0, "Playback outcomes expire and future timestamps are ignored")
+    var englishTV = compatibleTV; englishTV.address = "https://tv.example/english.m3u8"; englishTV.languages = ["en"]
+    try check(RadioListing.ordered([englishTV, compatibleTV], by: "recommended", reverse: true, now: compatibilityNow, languages: ["fr-CA", "en-US"]).first == compatibleTV, "Recommended TV honors preferred language")
+    profileQuery.order = "recommended"
+    try check(profileQuery.items.first { $0.name == "order" }?.value == "clickcount", "Personalized sort names never reach the Radio Browser API")
+    let mirrorList = "[playlist]\nFile2=https://radio.example/good\nFile1=https://radio.example/bad\nFile3=https://radio.example/good\n"
+    let mirrorBase = URL(string: "https://radio.example/list.pls")!
+    try check(StreamAddress.playlistEntry(mirrorList, base: mirrorBase).path == "/bad" && StreamAddress.playlistEntry(mirrorList, base: mirrorBase, attempt: 1).path == "/good" && StreamAddress.playlistEntry(mirrorList, base: mirrorBase, attempt: 2).path == "/bad", "Playlist retries rotate unique mirrors in numeric order")
+    try check(StreamAddress.playlistEntry("#EXTM3U\n#EXT-X-TARGETDURATION:2\nsegment.aac", base: mirrorBase, attempt: 1) == mirrorBase, "HLS manifests are never treated as station mirror lists")
+    try check(StreamAddress.recoveryPlaylist(URL(string: "https://ice1.somafm.com/groovesalad-128-mp3")!)?.absoluteString == "https://api.somafm.com/groovesalad.pls" && StreamAddress.recoveryPlaylist(URL(string: "https://ice1.somafm.com.evil.example/groovesalad-128-mp3")!) == nil, "SomaFM mirror recovery uses only the exact provider mount")
+    let profileLibrary = try Library(directory: root.appendingPathComponent("profiles"))
+    try profileLibrary.update { $0.compatibilityMode = true }
+    try profileLibrary.recordPlayback(compatibleRadio.station, played: false, now: compatibilityNow)
+    try profileLibrary.recordPlayback(compatibleRadio.station, played: true, now: compatibilityNow)
+    let reloadedProfile = try Library(directory: root.appendingPathComponent("profiles"))
+    try check(reloadedProfile.state.compatibilityMode == true && reloadedProfile.state.playbackChecks?.count == 1 && reloadedProfile.state.playbackChecks?.first?.played == true, "Compatibility and latest playback evidence survive a library reload")
     try check(DirectoryCacheAge.isIdle(Date().addingTimeInterval(-DirectoryCacheAge.idle - 5)) && !DirectoryCacheAge.isIdle(Date().addingTimeInterval(-5)), "In-memory directory copies count as idle after two minutes")
     try check(StreamAddress.parse(" https://radio.example/live?token=abc \n").host == "radio.example", "HTTP URL normalization")
     for invalid in ["file:///etc/passwd", "ftp://radio.example/live", "radio.example", "https://", "https://example.org/has space"] {

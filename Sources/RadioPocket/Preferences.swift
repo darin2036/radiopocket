@@ -18,7 +18,7 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     private let page = NSView()
     private var entries: [(title: String, action: String, name: String?)] = []
     private var rebuilding = false
-    private var category = 2
+    private var category = 0
     private static let sizes = [1.0, 1.5, 2.0, 3.0]
 
     init(app: AppDelegate) {
@@ -111,6 +111,12 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
             button("Check for updates…", "updates", x: 200, y: 418)
             let updates = NSButton(checkboxWithTitle: "Check for updates when RadioPocket opens", target: self, action: #selector(updatesChanged(_:)))
             updates.frame = NSRect(x: 0, y: 384, width: 480, height: 24); updates.state = app.library.state.checkForUpdates == false ? .off : .on; page.addSubview(updates)
+            let compatibility = NSButton(checkboxWithTitle: "Compatibility Mode", target: self, action: #selector(compatibilityChanged(_:)))
+            compatibility.frame = NSRect(x: 0, y: 340, width: 480, height: 24)
+            compatibility.state = app.library.state.compatibilityMode == true ? .on : .off
+            page.addSubview(compatibility)
+            label("Improves station list compatibility with more devices.", x: 20, y: 312, width: 500)
+            label("Applies to Internet Radio and Internet TV lists.", x: 20, y: 288, width: 500)
         }
     }
     /// One row per visualization option, each a popup that writes straight to the shared settings.
@@ -396,6 +402,12 @@ final class PreferencesController: NSWindowController, NSTableViewDataSource, NS
     @objc private func updatesChanged(_ sender: NSButton) {
         do { try app.library.update { $0.checkForUpdates = sender.state == .on } }
         catch { app.showError(error) }
+    }
+    @objc private func compatibilityChanged(_ sender: NSButton) {
+        do {
+            try app.library.update { $0.compatibilityMode = sender.state == .on }
+            app.compatibilityChanged()
+        } catch { app.showError(error) }
     }
     @objc private func freshChanged(_ sender: NSButton) {
         do { try app.library.update { $0.backgroundStations = sender.state == .on }; app.updateBackgroundStations() }

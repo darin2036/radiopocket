@@ -155,6 +155,7 @@ enum DirectoryFilter {
     static func page(_ all: [RadioListing], query: DirectoryQuery) -> DirectoryPage {
         let genre = query.genre.lowercased()
         var rows = all.filter { listing in
+            if query.compatibleOnly && !listing.highlyCompatible { return false }
             if listing.video != query.video { return false }
             if !query.matchesName(listing) { return false }
             if !genre.isEmpty, !listing.tags.lowercased().contains(genre) { return false }
@@ -167,7 +168,7 @@ enum DirectoryFilter {
             if query.minimumBitrate > 0, listing.bitrate < query.minimumBitrate { return false }
             return !query.supportedOnly || listing.likelyPlayable
         }
-        rows = RadioListing.ordered(rows, by: query.order, reverse: query.reverse)
+        rows = RadioListing.ordered(rows, by: query.order, reverse: query.reverse, checks: query.playbackChecks)
         let start = min(max(0, query.offset), rows.count)
         let slice = Array(rows[start..<min(rows.count, start + DirectoryQuery.pageSize)])
         return DirectoryPage(stations: slice, hasMore: start + DirectoryQuery.pageSize < rows.count, rawCount: slice.count)

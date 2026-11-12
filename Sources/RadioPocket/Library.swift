@@ -26,7 +26,7 @@ enum StreamAddress {
         return url
     }
 
-    static func playlistEntry(_ text: String, base: URL) throws -> URL {
+    static func playlistEntry(_ text: String, base: URL, attempt: Int = 0) throws -> URL {
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         if lines.contains(where: { $0.hasPrefix("#EXT-X-") }) { return base }
         let candidates: [String]
@@ -44,11 +44,22 @@ enum StreamAddress {
         } else {
             candidates = lines.filter { !$0.isEmpty && !$0.hasPrefix("#") }
         }
-        for entry in candidates {
-            if let absolute = URL(string: entry, relativeTo: base)?.absoluteURL,
-               let valid = try? parse(absolute.absoluteString) { return valid }
+        var seen = Set<URL>()
+        let entries = candidates.compactMap { entry -> URL? in
+            guard let absolute = URL(string: entry, relativeTo: base)?.absoluteURL,
+                  let valid = try? parse(absolute.absoluteString), seen.insert(valid).inserted else { return nil }
+            return valid
         }
-        throw RadioError.message("This playlist has no supported HTTP audio stream.")
+        guard !entries.isEmpty else { throw RadioError.message("This playlist has no supported HTTP audio stream.") }
+        return entries[max(0, attempt) % entries.count]
+    }
+
+    static func recoveryPlaylist(_ url: URL) -> URL? {
+        guard url.query == nil, url.user == nil, url.password == nil,
+              let host = url.host?.lowercased(), host.range(of: "^ice[0-9]+\\.somafm\\.com$", options: .regularExpression) != nil,
+              url.path.range(of: "^/[a-z0-9-]+-128-mp3$", options: .regularExpression) != nil else { return nil }
+        let channel = String(url.path.dropFirst().dropLast("-128-mp3".count))
+        return URL(string: "https://api.somafm.com/\(channel).pls")
     }
 
     private static func capture(_ pattern: String, in text: String) -> [String] {
@@ -59,7 +70,7 @@ enum StreamAddress {
         }
     }
 
-    static func resolve(_ url: URL, depth: Int = 0) async throws -> URL {
+    static func resolve(_ url: URL, depth: Int = 0, attempt: Int = 0) async throws -> URL {
         guard ["m3u", "pls", "asx", "xspf"].contains(url.pathExtension.lowercased()) else { return url }
         guard depth < 3 else { throw RadioError.message("Too many nested radio playlists.") }
         let agents = UserAgent.ladder(for: url.host)
@@ -82,9 +93,9 @@ enum StreamAddress {
             throw RadioError.message("The playlist couldn’t be read.")
         }
         let base = response.url ?? url
-        let next = try playlistEntry(text, base: base)
+        let next = try playlistEntry(text, base: base, attempt: attempt)
         if next == base { return base }
-        return try await resolve(next, depth: depth + 1)
+        return try await resolve(next, depth: depth + 1, attempt: attempt)
     }
 }
 
@@ -118,6 +129,9 @@ final class Library {
         var backgroundStations: Bool?
         /// Leaves out directory stations that no longer answer. On unless turned off.
         var checkStations: Bool?
+        /// Conservative radio and TV browsing profile. Off unless enabled.
+        var compatibilityMode: Bool?
+        var playbackChecks: [StreamPlaybackCheck]?
         /// Internet TV filters: adult channels, and geo-blocked or unidentifiable streams. Both on unless turned off.
         var tvHideAdult: Bool?
         var tvHideUnreliable: Bool?
@@ -198,6 +212,16 @@ final class Library {
 
     func removeFavorite(_ station: Station) throws {
         try update { $0.favorites.removeAll { $0.address == station.address || $0.id == station.id } }
+    }
+
+    func recordPlayback(_ station: Station, played: Bool, now: Date = Date()) throws {
+        try update { state in
+            var checks = (state.playbackChecks ?? []).filter {
+                $0.address != station.address && $0.rank(now: now) != 0
+            }
+            checks.append(StreamPlaybackCheck(address: station.address, played: played, time: now))
+            state.playbackChecks = Array(checks.suffix(500))
+        }
     }
 
     func save(_ station: Station) throws {

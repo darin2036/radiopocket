@@ -33,6 +33,8 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     }
     /// Called once when automatic reconnection gives up (or the stream can never play), so the app can offer alternatives.
     var onGiveUp: ((Station, String) -> Void)?
+    var playbackChecked: ((Station, Bool) -> Void)?
+    private var confirmedPlayback = false
     static let maxRetries = 8
     private let monitor = NWPathMonitor()
     private var networkAvailable = true
@@ -158,10 +160,19 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         detail = retries == 0 ? "CONNECTING TO STATION" : "RECONNECTING \(retries)/\(Self.maxRetries)"
         changed?()
         let token = generation
+        let attempt = retries
         task = Task { @MainActor [weak self] in
             do {
                 let source = try StreamAddress.parse(station.address)
-                let url = try await StreamAddress.resolve(source)
+                var url: URL
+                if attempt > 0, let playlist = StreamAddress.recoveryPlaylist(source) {
+                    // A fresh provider playlist can recover a failed saved mirror; fall back to the saved URL if lookup fails.
+                    do { url = try await StreamAddress.resolve(playlist, attempt: attempt - 1) }
+                    catch {
+                        try Task.checkCancellation()
+                        url = try await StreamAddress.resolve(source, attempt: attempt)
+                    }
+                } else { url = try await StreamAddress.resolve(source, attempt: attempt) }
                 try Task.checkCancellation()
                 guard let self, self.generation == token else { return }
                 // TV channels are decoded by AVPlayer, which also draws the video.
@@ -175,7 +186,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     }
 
     private func install(_ url: URL, token: UUID) {
-        let direct = RadioStream(volume: muted ? 0 : player.volume, balance: balance, leveling: leveling)
+        let direct = RadioStream(volume: muted ? 0 : player.volume, balance: balance, leveling: leveling, playlistAttempt: retries)
         stream = direct
         equalizer.bind(direct.dsp)
         direct.playing = { [weak self] in
@@ -272,6 +283,10 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     private func beginPlaying() {
         timeout?.cancel(); timeout = nil
         status = .playing
+        if !confirmedPlayback, let station {
+            confirmedPlayback = true
+            playbackChecked?(station, true)
+        }
         paused = false
         if playingSince == nil { playingSince = Date() }
         detail = liveDetail()
@@ -346,7 +361,10 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         detail = message
         resumeWhenOnline = retryOnNetwork
         changed?()
-        if let station { onGiveUp?(station, message) }
+        if let station {
+            if networkAvailable { playbackChecked?(station, false) }
+            onGiveUp?(station, message)
+        }
     }
 
     private func pausedDetail() -> String {
@@ -357,6 +375,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
     /// With a direct stream, pause keeps the connection and buffers what the station sends (up to five minutes),
     /// so Play continues exactly where you stopped. AVPlayer streams still disconnect and return to live.
     func pause() {
+        resumeWhenOnline = false
         if let stream, status == .playing {
             stream.pause(); paused = true
             status = .paused
@@ -406,6 +425,7 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
 
     private func clearConnection() {
         generation = UUID()
+        confirmedPlayback = false
         equalizer.disconnect()
         stream?.stop(); stream = nil
         task?.cancel(); task = nil

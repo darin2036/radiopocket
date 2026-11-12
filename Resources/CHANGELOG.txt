@@ -1,4 +1,8 @@
 RadioPocket 0.12.0
+* Added: Compatibility Mode for radio and TV station lists in General Preferences.
+* Changed: Rank station quality and TV recommendations using recent playback results.
+* Fixed: Try alternate playlist mirrors when a stream fails to connect.
+* Fixed: Cancel offline reconnection intent when playback is paused.
 
 RadioPocket 0.11.0
 * Added: Play several TV channels at once, each in its own video panel with its own player; right-click a channel in the library or Discover and choose Tune In on a panel or a new one
