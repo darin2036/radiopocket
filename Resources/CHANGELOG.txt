@@ -4,6 +4,7 @@ RadioPocket 0.12.0
 * Fixed: Try alternate playlist mirrors when a stream fails to connect.
 * Fixed: Cancel offline reconnection intent when playback is paused.
 * Fixed: Align mood-ranking regression checks with station deduplication across moods.
+* Fixed: About buttons no longer appear pressed when the window opens.
 
 RadioPocket 0.11.0
 * Added: Play several TV channels at once, each in its own video panel with its own player; right-click a channel in the library or Discover and choose Tune In on a panel or a new one

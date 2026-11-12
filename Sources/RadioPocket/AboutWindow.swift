@@ -30,6 +30,7 @@ final class AboutController: NSObject {
         for (index, button) in tabs.enumerated() {
             let width = CGFloat(Tab(rawValue: index)!.title.count * 6 + 16)
             button.frame = NSRect(x: x, y: 32, width: width, height: 22); x += width + 4
+            button.setButtonType(.momentaryPushIn)
             button.isBordered = false; button.tag = index; button.target = self; button.action = #selector(selectTab(_:))
             root.addSubview(button)
         }
@@ -66,7 +67,8 @@ final class AboutController: NSObject {
 
     private func show(_ tab: Tab) {
         selected = tab
-        for (index, button) in tabs.enumerated() { button.isHighlighted = index == tab.rawValue }
+        // Highlight is the transient mouse-down state, not the selected page.
+        for button in tabs { button.isHighlighted = false }
         let history = tab == .history
         versions.isHidden = !history
         if history { selectVersion() } else { setText(body(for: tab)) }
