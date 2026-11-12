@@ -5,7 +5,7 @@ Moods is a separate Mac My Library entry immediately below Discover. It is an on
 1. A local greeting (“Good evening, Darin”) and a few mood/activity cards, such as Happy hour, Party time or Rainy-day retreat. The first name comes from the Mac profile and never enters the model prompt or weather request.
 2. Selecting a mood immediately shows its playable station cards. There is no collection selection step. All moods returns to the greeting and mood cards.
 
-These are ephemeral collections of live stations, not hosted song playlists. Station endpoints always come from enabled installed directories. Empty collections and moods are omitted. Curation preserves discovery's quality floor, safe metadata rules, language choices, feedback, favorites and optional recent-listening signals. Each mood independently chooses up to four suitable stations. Overlap across moods is allowed; endpoints are deduplicated only within a mood. The four slots are shared across the mood’s musical directions. Empty moods are omitted. Mood genre fit leads ranking, with personal affinity as a bounded secondary signal.
+These are ephemeral collections of live stations, not hosted song playlists. Station endpoints always come from enabled installed directories. Empty collections and moods are omitted. Curation preserves discovery's quality floor, safe metadata rules, language choices, feedback, favorites and optional recent-listening signals. Each mood chooses up to four suitable stations from the candidates still available in plan order. A station already shown in a mood is withheld from later moods, matching both normalized endpoints and station names so alternate stream addresses do not repeat the station. The four slots are shared across the mood’s musical directions. Empty moods are omitted. Mood genre fit leads ranking, with personal affinity as a bounded secondary signal.
 
 ## Onboard AI planning
 
@@ -41,7 +41,7 @@ Weather attribution links to Open-Meteo; the attribution tooltip credits GeoName
 
 ## Verification
 
-Offline regression checks cover time boundaries, weekends, known occasions, greeting, canonical context/cache keys, weather code handling, persistence, location-coordinate rounding, first-use skip, later weather enable/disable, draft application, structural validation, contradictory AI context, language eligibility, endpoint membership and hierarchy construction. Native fixture QA covers regular/compact layouts, sidebar placement, mood → playable stations and back navigation. Live city/weather requests and live onboard model generation are also exercised.
+Offline regression checks cover time boundaries, weekends, known occasions, greeting, canonical context/cache keys, weather code handling, persistence, location-coordinate rounding, first-use skip, later weather enable/disable, draft application, structural validation, contradictory AI context, language eligibility, endpoint membership, hierarchy construction, unique stations across moods (including alternate addresses), sparse-catalog omission, and genre fit when the plan order changes. Native fixture QA covers regular/compact layouts, sidebar placement, mood → playable stations and back navigation. Live city/weather requests and live onboard model generation are also exercised.
 
 Inspiration: [Songza's contextual Concierge](https://www.afb.org/aw/15/9/15537). Foundation Models sampling reference: [Apple's greedy sampling documentation](https://developer.apple.com/documentation/foundationmodels/generationoptions/samplingmode-swift.struct/greedy).
 

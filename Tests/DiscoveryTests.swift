@@ -234,9 +234,9 @@ func checkDiscovery(at root: URL) throws {
     let overlapPlan = MoodPlan(activities: ["Coffee", "Dinner", "Unwind"].map { .init(title: $0, detail: "Jazz for this moment", artwork: "sun", collections: [.init(title: $0, genres: ["jazz"])]) })
     let overlapFeed = MoodPlanning.build(records: overlapRecords, state: Library.State(), context: overlapContext, plan: overlapPlan)
     let overlapEndpoints = overlapFeed.moodGroups.flatMap(\.collections).flatMap(\.picks).map { DiscoveryIndex.endpointKey($0.listing.address) }
-    try check(overlapFeed.moodGroups.count == 3 && overlapEndpoints.count == 12 && Set(overlapEndpoints).count == 4, "Each mood independently keeps its four best fits, allowing appropriate overlap")
+    try check(overlapFeed.moodGroups.count == 3 && overlapEndpoints.count == 12 && Set(overlapEndpoints).count == 12 && overlapFeed.moodGroups.allSatisfy { $0.collections.flatMap(\.picks).count == 4 }, "Matching moods each get four suitable stations without repeating endpoints")
     let sparseFeed = MoodPlanning.build(records: Array(overlapRecords.prefix(2)), state: Library.State(), context: overlapContext, plan: overlapPlan)
-    try check(sparseFeed.moodGroups.count == 3 && sparseFeed.moodGroups.allSatisfy { $0.collections.flatMap(\.picks).count == 2 }, "A station used by one mood remains eligible for other matching moods")
+    try check(sparseFeed.moodGroups.count == 1 && sparseFeed.moodGroups.first?.title == "Coffee" && sparseFeed.shelves.flatMap(\.picks).count == 2, "Sparse catalogs omit later empty moods instead of repeating the same stations")
     let reversedFeed = MoodPlanning.build(records: overlapRecords.reversed(), state: Library.State(), context: overlapContext, plan: overlapPlan)
     try check(overlapEndpoints == reversedFeed.shelves.flatMap(\.picks).map { DiscoveryIndex.endpointKey($0.listing.address) }, "Mood matching remains stable across directory ordering")
     let mixedRows = (0..<12).map { listing("Style fixture \($0)", $0 < 6 ? "ambient" : "dance", "https://style\($0).example/live") }
@@ -252,7 +252,21 @@ func checkDiscovery(at root: URL) throws {
     try check(mixedFeed.moodGroups[0].collections.flatMap(\.picks).allSatisfy { $0.listing.tags == "ambient" } && mixedFeed.moodGroups[1].collections.flatMap(\.picks).allSatisfy { $0.listing.tags == "dance" }, "Contrasting moods select matching musical styles")
     try check(mixedFeed.moodGroups[2].collections.map { $0.picks.count } == [2, 2], "Four options represent both musical directions instead of only the first")
     let reorderedMoods = MoodPlanning.build(records: mixedRecords, state: Library.State(), context: mixedContext, plan: MoodPlan(activities: mixedPlan.activities.reversed()))
-    try check(mixedFeed.moodGroups.allSatisfy { group in group.collections.flatMap(\.picks).map { $0.listing.address } == reorderedMoods.moodGroups.first { $0.title == group.title }?.collections.flatMap(\.picks).map { $0.listing.address } }, "Mood order never changes another mood's eligible stations")
+    let reorderedPicks = reorderedMoods.shelves.flatMap(\.picks)
+    try check(reorderedMoods.moodGroups.count == 3 && reorderedMoods.moodGroups.allSatisfy { $0.collections.flatMap(\.picks).count == 4 } && Set(reorderedPicks.map { DiscoveryIndex.matchKey($0.listing.address) }).count == 12, "Reordering moods preserves full nonrepeating groups while earlier moods choose first")
+    try check(reorderedMoods.moodGroups.first { $0.title == "Focus" }?.collections.flatMap(\.picks).allSatisfy { $0.listing.tags == "ambient" } == true && reorderedMoods.moodGroups.first { $0.title == "Party" }?.collections.flatMap(\.picks).allSatisfy { $0.listing.tags == "dance" } == true, "Mood genre fit survives changes in plan order")
+    var aliasRows = overlapRows
+    for (i, row) in overlapRows.enumerated() {
+        var alias = row; alias.id = UUID().uuidString
+        alias.address = "https://mirror\(i).example/live"
+        alias.name = row.name.uppercased() + "!"
+        aliasRows.append(alias)
+    }
+    try index.ingest(aliasRows, source: "mood-aliases", name: "Mood aliases")
+    let aliasRecords = try index.records(sources: ["mood-aliases"])
+    let aliasFeed = MoodPlanning.build(records: aliasRecords, state: Library.State(), context: overlapContext, plan: overlapPlan)
+    let aliasPicks = aliasFeed.shelves.flatMap(\.picks)
+    try check(aliasPicks.count == 12 && Set(aliasPicks.map { DiscoveryRecommendations.nameKey($0.listing.name) }).count == 12, "Alternate stream addresses and cosmetic station-name variants never repeat across moods")
     let nearby = MoodCity.approximate(name: "Nearby city", latitude: 47.61234, longitude: -122.33456)
     try check(abs(nearby.latitude - 47.6) < 0.00001 && abs(nearby.longitude + 122.35) < 0.00001 && nearby.valid, "Device location is rounded to an area before storage or weather requests")
     var firstUse = Library.State()
