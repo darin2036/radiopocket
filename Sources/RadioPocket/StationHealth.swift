@@ -220,7 +220,7 @@ enum StreamProbe {
     static func isUnreachable(_ message: String) -> Bool {
         let lower = message.lowercased()
         let appSide = ["audio format", "equalized", "oversized", "isn’t supported", "isn't supported", "not supported", "decoder", "could not be read",
-                       "could not initialize", "could not allocate", "invalid", "too many", "playlist"]
+                       "unsupported", "unrecognized", "could not initialize", "could not allocate", "invalid", "too many", "playlist"]
         return !appSide.contains { lower.contains($0) }
     }
 }

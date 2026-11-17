@@ -185,9 +185,12 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         armTimeout(token: token)
     }
 
+    private var directURL: URL?
+
     private func install(_ url: URL, token: UUID) {
         let direct = RadioStream(volume: muted ? 0 : player.volume, balance: balance, leveling: leveling, playlistAttempt: retries)
         stream = direct
+        directURL = url
         equalizer.bind(direct.dsp)
         direct.playing = { [weak self] in
             guard let self, self.generation == token else { return }
@@ -203,7 +206,8 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
                 // Every User-Agent was refused by our own client; AVPlayer’s stack (Safari’s) may still get through.
                 self.stream?.stop(); self.stream = nil; self.equalizer.disconnect()
                 self.installAVPlayer(url, token: token, agent: UserAgent.browser)
-            } else if message.contains("isn’t supported MP3/AAC") || message.hasPrefix(HLSSource.unsupportedPrefix) {
+            } else if NativeDecoder.isLimitation(message) {
+                // Our own decoder can't take this stream; the system's player may still.
                 self.stream?.stop(); self.stream = nil; self.equalizer.disconnect()
                 self.installAVPlayer(url, token: token)
             } else if message.hasPrefix(RadioStream.permanentMarker) { self.giveUp(String(message.dropFirst(RadioStream.permanentMarker.count))) }
@@ -319,6 +323,14 @@ final class RadioEngine: NSObject, AVPlayerItemMetadataOutputPushDelegate {
         guard timeout == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.generation == token else { return }
+            // Audio bytes arrived but never became sound: the native decoder is stuck, so let the system player try.
+            if let direct = self.stream, direct.bytesReceived > 0, let url = self.directURL {
+                self.stream?.stop(); self.stream = nil; self.equalizer.disconnect()
+                self.timeout = nil
+                self.installAVPlayer(url, token: token)
+                self.armTimeout(token: token)
+                return
+            }
             self.fail("The station did not respond. Check the stream URL or try again.")
         }
         timeout = work

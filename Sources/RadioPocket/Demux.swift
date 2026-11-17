@@ -16,32 +16,77 @@ protocol Demuxer: AnyObject {
 
 // MARK: - MP3 / AAC (ADTS) byte streams through AudioFileStream
 
+enum NativeDecoder {
+    /// Failures that are about this app's own decoder rather than the station, so the system player is worth a try.
+    static func isLimitation(_ message: String) -> Bool {
+        message.contains("isn’t supported MP3/AAC") || message.hasPrefix(HLSSource.unsupportedPrefix)
+            || message.hasPrefix("Unsupported stream audio format") || message.hasPrefix("The stream audio format could not be read")
+            || message.hasPrefix("Invalid or oversized radio packet") || message.hasPrefix("Could not initialize the stream decoder")
+    }
+}
+
 final class FileStreamDemuxer: Demuxer {
     static let maxPacket = 16384
+    /// How much of the opening bytes is kept so the stream can be re-read under another format hint.
+    static let headLimit = 65_536
     private weak var sink: PacketSink?
     private var parser: AudioFileStreamID?
     private var format = AudioStreamBasicDescription()
     private var reported = false
+    private var hints: [AudioFileTypeID]
+    private var head = Data()
 
-    init(sink: PacketSink) { self.sink = sink }
+    /// Format hints to try in order. A stream joined mid-frame has no header for the parser to recognize on its own;
+    /// a hint makes it resynchronize instead of giving up, the way a browser does.
+    init(sink: PacketSink, contentType: String = "") {
+        self.sink = sink
+        hints = Self.hints(for: contentType)
+    }
     deinit { close() }
+
+    static func hints(for contentType: String) -> [AudioFileTypeID] {
+        let type = contentType.lowercased()
+        var order: [AudioFileTypeID] = [0]
+        if type.contains("aac") { order = [kAudioFileAAC_ADTSType, 0, kAudioFileMP3Type] }
+        else if type.contains("mpeg") || type.contains("mp3") { order = [0, kAudioFileMP3Type, kAudioFileAAC_ADTSType] }
+        else { order = [0, kAudioFileMP3Type, kAudioFileAAC_ADTSType] }
+        return order
+    }
 
     func close() { if let parser { AudioFileStreamClose(parser) }; parser = nil }
 
+    private func open() -> Bool {
+        let info = Unmanaged.passUnretained(self).toOpaque()
+        let hint = hints.removeFirst()
+        let status = AudioFileStreamOpen(info, { info, stream, property, _ in
+            if property == kAudioFileStreamProperty_ReadyToProducePackets { Unmanaged<FileStreamDemuxer>.fromOpaque(info).takeUnretainedValue().ready(stream) }
+        }, { info, bytes, count, data, descriptions in
+            Unmanaged<FileStreamDemuxer>.fromOpaque(info).takeUnretainedValue().packets(bytes: bytes, count: count, data: data, descriptions: descriptions)
+        }, hint, &parser)
+        guard status == noErr else { sink?.sinkFailure("Could not initialize the stream decoder (\(status))."); return false }
+        return true
+    }
+
     func feed(_ data: Data) {
         guard !data.isEmpty, !reported || parser != nil else { return }
-        if parser == nil {
-            let info = Unmanaged.passUnretained(self).toOpaque()
-            let status = AudioFileStreamOpen(info, { info, stream, property, _ in
-                if property == kAudioFileStreamProperty_ReadyToProducePackets { Unmanaged<FileStreamDemuxer>.fromOpaque(info).takeUnretainedValue().ready(stream) }
-            }, { info, bytes, count, data, descriptions in
-                Unmanaged<FileStreamDemuxer>.fromOpaque(info).takeUnretainedValue().packets(bytes: bytes, count: count, data: data, descriptions: descriptions)
-            }, 0, &parser)
-            guard status == noErr else { sink?.sinkFailure("Could not initialize the stream decoder (\(status))."); return }
+        if parser == nil, !open() { return }
+        if !reported, head.count < Self.headLimit { head.append(data.prefix(Self.headLimit - head.count)) }
+        if parse(data) != noErr { retryWithNextHint() }
+    }
+
+    private func parse(_ data: Data) -> OSStatus {
+        guard let parser else { return noErr }
+        return data.withUnsafeBytes { AudioFileStreamParseBytes(parser, UInt32($0.count), $0.baseAddress!, []) }
+    }
+
+    /// Re-reads the opening bytes under the next format hint; reports the failure once every hint has been tried.
+    private func retryWithNextHint() {
+        while !reported, !hints.isEmpty {
+            close()
+            guard open() else { return }
+            if parse(head) == noErr { return }
         }
-        guard let parser else { return }
-        let status = data.withUnsafeBytes { AudioFileStreamParseBytes(parser, UInt32($0.count), $0.baseAddress!, []) }
-        if status != noErr { sink?.sinkFailure("This direct stream isn’t supported MP3/AAC audio (\(status)).") }
+        sink?.sinkFailure("This direct stream isn’t supported MP3/AAC audio.")
     }
 
     private func ready(_ stream: AudioFileStreamID) {

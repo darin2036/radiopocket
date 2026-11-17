@@ -588,6 +588,17 @@ do {
     try check(recorder.formats.count == 1 && recorder.formats[0].mFormatID == kAudioFormatOpus && recorder.formats[0].mChannelsPerFrame == 2 && recorder.formats[0].mSampleRate == 48000, "Ogg Opus header becomes an Opus stream format")
     try check(recorder.titles == ["Band - Song"], "OpusTags artist and title become the station title")
     try check(recorder.packets.count == 2 && recorder.packets.allSatisfy { $0.frames == 960 } && recorder.packets[1].data.count == 401, "Ogg packets reassemble across lacing values and arbitrary chunking")
+    // A stream joined mid-frame still decodes: the demuxer retries under MP3/ADTS hints instead of failing on 'typ?'.
+    let mp3Frame = Data([0xFF, 0xFB, 0x90, 0x64]) + Data(count: 413)
+    let midStream = Data(repeating: 0x55, count: 150) + Data((0..<30).flatMap { _ in mp3Frame })
+    let midSink = Recorder()
+    let midDemuxer = FileStreamDemuxer(sink: midSink, contentType: "audio/mpeg")
+    var midOffset = 0
+    while midOffset < midStream.count { midDemuxer.feed(midStream[midOffset..<min(midStream.count, midOffset + 1024)]); midOffset += 1024 }
+    try check(midSink.failures.isEmpty && midSink.formats.first?.mFormatID == kAudioFormatMPEGLayer3 && !midSink.packets.isEmpty, "An MP3 stream joined mid-frame still decodes")
+    try check(FileStreamDemuxer.hints(for: "audio/aacp").first == kAudioFileAAC_ADTSType && FileStreamDemuxer.hints(for: "audio/mpeg").first == 0, "Content types choose the first format hint")
+    try check(NativeDecoder.isLimitation("Unsupported stream audio format (1718449215).") && !NativeDecoder.isLimitation("The radio server returned an error."), "Only decoder limitations fall back to the system player")
+    try check(!StreamProbe.isUnreachable("Unsupported stream audio format (1718449215).") && StreamProbe.isUnreachable("Could not connect to the server."), "A decoder limitation never marks a station dead")
     let unknownSink = Recorder()
     OggOpusDemuxer(sink: unknownSink).feed(oggPage(flags: 2, sequence: 0, packets: [Data([0x7F]) + Data("FLAC".utf8) + Data(count: 20)]))
     try check(unknownSink.failures.first?.hasPrefix("\u{1}") == true && unknownSink.failures.first?.contains("Opus or Vorbis") == true, "Other Ogg codecs fail permanently with a clear message")
@@ -746,6 +757,8 @@ do {
     let deadPage = DirectoryPage(stations: [listing("http://a.example.com/s"), listing("http://c.example.com/s"), listing("http://z.example.com/s", directoryID: UUID().uuidString)], hasMore: true, rawCount: 3)
     let deadFiltered = deadList.filter(deadPage, now: t0)
     try check(deadFiltered.stations.map { $0.address } == ["http://c.example.com/s", "http://z.example.com/s"] && deadFiltered.hasMore && deadFiltered.rawCount == 3, "Pages leave out dead stations and keep their paging")
+    try check(DiscoveryIndex.matchKey("https://breakz-high.rautemusik.fm/?ref=a") == DiscoveryIndex.matchKey("http://breakz-high.rautemusik.fm?ref=b"), "Referral parameters do not make a stream distinct")
+    try check(DiscoveryIndex.matchKey("https://x.example/p.m3u8?vid=1") != DiscoveryIndex.matchKey("https://x.example/p.m3u8?vid=2"), "Identifying parameters still distinguish streams")
     deadList.clear()
     try check(!deadList.isDead("http://a.example.com/s", now: t0) && !FileManager.default.fileExists(atPath: deadFile.path), "Forgetting dead stations clears the saved list")
     print("\(checks) checks passed.")
