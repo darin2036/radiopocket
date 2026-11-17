@@ -63,6 +63,14 @@ final class DiscoveryIndex {
         if (url.scheme == "https" && url.port == 443) || (url.scheme == "http" && url.port == 80) { url.port = nil }
         return url.string ?? address
     }
+    private static let volatileParameters: Set<String> = [
+        "ref", "referer", "referrer", "cfid", "cftoken", "t302", "uuid", "n", "pl", "ampt302", "ampuuid", "upd-scheme", "_art",
+        "gdpr", "gdpr_consent", "us_privacy", "partnertok", "dist", "tgt", "maxservers", "amsparams", "listenerid", "playsessionid",
+        "nopreroll", "awparams", "sabc", "nocache", "cb"]
+    private static func volatileParameter(_ name: String) -> Bool {
+        let name = name.lowercased()
+        return volatileParameters.contains(name) || name.hasPrefix("utm_") || name.hasPrefix("aw_")
+    }
     /// Looser identity for spotting the same stream listed by different directories; saved votes and availability keep using `endpointKey`.
     static func matchKey(_ address: String) -> String {
         guard var url = URLComponents(string: address) else { return address }
@@ -70,6 +78,11 @@ final class DiscoveryIndex {
         if (secure && url.port == 443) || (!secure && url.port == 80) { url.port = nil }
         url.scheme = "http"; url.host = url.host?.lowercased(); url.fragment = nil
         while url.path.hasSuffix("/") { url.path.removeLast() }
+        // Referral, session, ad and cache-busting parameters (e.g. rautemusik's `?ref=…`) give one stream many addresses.
+        if let items = url.queryItems {
+            let kept = items.filter { !Self.volatileParameter($0.name) }
+            url.queryItems = kept.isEmpty ? nil : kept
+        }
         if url.query?.isEmpty == true { url.query = nil }
         return url.string ?? address
     }

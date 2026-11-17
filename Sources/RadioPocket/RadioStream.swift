@@ -27,6 +27,7 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     private var learned = false
     private var sniffDepth = 0
     private var announced = false
+    private var contentType = ""
     private var baselineDelay = 0.0
     private(set) var isPaused = false
     private var received = 0
@@ -99,6 +100,7 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
     private func startHTTP(_ url: URL) {
         let http = HTTPSource(url: url, userAgent: agents[agentAttempt])
         http.onResponse = { [weak self, weak http] type in
+            self?.contentType = type
             guard let self, let http, type.hasPrefix("application/"), type.contains("mpegurl") else { return }
             http.stop(); self.startHLS(url)       // an HLS playlist behind a non-.m3u8 address
         }
@@ -145,7 +147,7 @@ final class RadioStream: NSObject, PacketSink, @unchecked Sendable {
                     reject("The station returned a web page instead of audio.") { [weak self] in self?.startHTTP(url) }
                 } else { followPlaylist(text, at: url) }
                 return
-            } else { noteSuccess(); demuxer = FileStreamDemuxer(sink: self) }
+            } else { noteSuccess(); demuxer = FileStreamDemuxer(sink: self, contentType: contentType) }
         }
         demuxer?.feed(data)
     }
