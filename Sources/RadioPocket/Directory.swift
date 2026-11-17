@@ -688,6 +688,8 @@ actor RadioDirectory {
         }
         if pages.count == 1 {
             var only = pages[0]
+            var seen = Set<String>()
+            only.stations = only.stations.filter { seen.insert(DiscoveryIndex.matchKey($0.address)).inserted }
             if query.order != "clickcount" { only.stations = RadioListing.ordered(only.stations, by: query.order, reverse: query.reverse, checks: query.playbackChecks) }
             return only
         }
